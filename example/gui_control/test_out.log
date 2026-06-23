@@ -1,19 +1,48 @@
-2026-06-23 12:00:42  [1;32;40mCurrent SDK version: 3.1.0[0m
+[RPSGame] state IDLE -> IDLE
+2026-06-23 18:12:52  [1;32;40mCurrent SDK version: 3.1.0[0m
 uptime library not available, timestamps are relative to boot time and not to Epoch UTC
-2026-06-23 12:00:42  [1;32;40m成功连接: interface='pcan', channel='PCAN_USBBUS1'[0m
-2026-06-23 12:00:43  [1;32;40mEmbedded:[1, 2, 4][0m
-2026-06-23 12:00:43  [1;32;40mLinker Hand Serial Number: LHO6-03-1074-L-Z-1-E[0m
-2026-06-23 12:00:43  [1;32;40mleft O6 set speed to [255, 255, 255, 255, 255, 255][0m
-2026-06-23 12:00:43  [1;32;40mleft O6 set maximum torque to [255, 255, 255, 255, 255, 255][0m
-2026-06-23 12:00:55  [1;32;40mCurrent SDK version: 3.1.0[0m
-2026-06-23 12:00:55  [1;32;40m成功连接: interface='pcan', channel='PCAN_USBBUS1'[0m
-2026-06-23 12:00:56  [1;33;40mWarning: Hardware version number not recognized, it is recommended to terminate the program and re insert USB to CAN conversion[0m
-2026-06-23 12:00:56  [1;32;40mLinker Hand Serial Number: -1[0m
-2026-06-23 12:00:56  [1;32;40mleft O6 set speed to [255, 255, 255, 255, 255, 255][0m
-2026-06-23 12:00:56  [1;32;40mleft O6 set maximum torque to [255, 255, 255, 255, 255, 255][0m
-2026-06-23 12:01:19  [1;32;40mCurrent SDK version: 3.1.0[0m
-2026-06-23 12:01:19  [1;32;40m成功连接: interface='pcan', channel='PCAN_USBBUS1'[0m
-2026-06-23 12:01:20  [1;32;40mEmbedded:[1, 2, 4][0m
-2026-06-23 12:01:20  [1;32;40mLinker Hand Serial Number: LHO6-03-1074-L-Z-1-ELHO6-03-1074-L-Z-1-E[0m
-2026-06-23 12:01:20  [1;32;40mleft O6 set speed to [255, 255, 255, 255, 255, 255][0m
-2026-06-23 12:01:20  [1;32;40mleft O6 set maximum torque to [255, 255, 255, 255, 255, 255][0m
+2026-06-23 18:12:52  [1;33;40mpcan 接口连接失败，尝试回退到 'candle': The value of a handle (PCAN-Channel, PCAN-Hardware, PCAN-Net, PCAN-Client) is invalid[0m
+2026-06-23 18:12:52  [1;31;40m致命错误：所有 CAN 接口连接尝试均失败或平台不受支持。请检查设备连接或驱动安装和配置文件中CAN参数的配置。
+错误详情: not enough values to unpack (expected 2, got 1)[0m
+[GestureRecord] test_out verification begin
+[GestureRecord] record start
+[GestureRecord] frame recorded t=0.001 pose=[240, 80, 220, 210, 200, 190]
+[GestureRecord] frame recorded t=0.132 pose=[233, 87, 213, 203, 193, 183]
+[GestureRecord] record stop frames=2 duration=0.132
+[GestureRecord] saved path=C:\Users\王浩然\AppData\Local\Temp\gesture_record_test_out_verify.json
+[GestureRecord] loaded path=C:\Users\王浩然\AppData\Local\Temp\gesture_record_test_out_verify.json frames=2 duration=0.132
+[GestureRecord] playback start frames=2 speed=1.0
+[VisionSync] pose slot received
+[VisionJoint] ema pose: [151, 57, 139, 133, 127, 121]
+[GestureRecord] live emit blocked by playback
+[GestureRecord] playback send idx=0 t=0.001 pose=[240, 80, 220, 210, 200, 190]
+[GestureRecord] playback send idx=1 t=0.132 pose=[233, 87, 213, 203, 193, 183]
+[GestureRecord] playback finished
+[GestureRecord] playback start frames=2 speed=1.0
+[GestureRecord] playback send idx=0 t=0.000 pose=[0, 0, 0, 0, 0, 0]
+[GestureRecord] playback send idx=1 t=0.100 pose=[35, 35, 35, 35, 35, 35]
+[GestureRecord] playback stopped
+[GestureRecord] test_out verification end
+[GestureRecord] audit verification begin
+[GestureRecord] record start
+[GestureRecord] waiting hand to record
+[GestureRecord] frame recorded t=0.000 pose=[240, 80, 220, 210, 200, 190]
+[GestureRecord] frame skipped duplicate delta=0
+[GestureRecord] frame recorded t=0.001 pose=[233, 87, 213, 203, 193, 183]
+[GestureRecord] frame recorded t=0.121 pose=[217, 102, 197, 187, 177, 167]
+[GestureRecord] record stop frames=3 duration=0.121
+[GestureRecord] saved path=C:\Users\王浩然\AppData\Local\Temp\gesture_record_audit_log_verify.json
+[GestureRecord] loaded path=C:\Users\王浩然\AppData\Local\Temp\gesture_record_audit_log_verify.json frames=3 duration=0.121
+[GestureRecord] playback start frames=3 speed=1.0
+[VisionSync] pose slot received
+[VisionJoint] ema pose: [142, 67, 129, 123, 117, 111]
+[GestureRecord] live emit blocked by playback
+[GestureRecord] playback send idx=0 t=0.000 pose=[240, 80, 220, 210, 200, 190]
+[GestureRecord] playback send idx=1 t=0.001 pose=[233, 87, 213, 203, 193, 183]
+[GestureRecord] playback send idx=2 t=0.121 pose=[217, 102, 197, 187, 177, 167]
+[GestureRecord] playback finished
+[GestureRecord] playback start frames=2 speed=1.0
+[GestureRecord] playback send idx=0 t=0.000 pose=[0, 0, 0, 0, 0, 0]
+[GestureRecord] playback send idx=1 t=0.100 pose=[30, 18, 30, 30, 30, 30]
+[GestureRecord] playback stopped
+[GestureRecord] audit verification end

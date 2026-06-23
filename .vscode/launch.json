@@ -1,0 +1,17 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "GUI: LinkerHand O6",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}\\example\\gui_control\\main.py",
+            "python": "D:\\develop_tools\\mini\\envs\\linkerhand_py39\\python.exe",
+            "cwd": "${workspaceFolder}\\example\\gui_control",
+            "env": {
+                "PYTHONPATH": "D:\\Work Space\\FFocalors-linkerhand-python-sdk"
+            },
+            "console": "integratedTerminal"
+        }
+    ]
+}
