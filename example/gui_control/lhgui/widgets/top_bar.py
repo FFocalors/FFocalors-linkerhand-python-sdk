@@ -109,6 +109,10 @@ class TopBar(QWidget):
             self.status_badge.set_level("connected")
             self.status_badge.setText("已连接")
             self.reconnect_btn.setEnabled(True)
+        elif conn == ConnectionState.OFFLINE:
+            self.status_badge.set_level("warning")
+            self.status_badge.setText("离线调试")
+            self.reconnect_btn.setEnabled(True)
         elif conn == ConnectionState.CONNECTING:
             self.status_badge.set_level("connecting")
             self.status_badge.setText("连接中")

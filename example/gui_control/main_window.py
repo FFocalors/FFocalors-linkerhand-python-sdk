@@ -103,6 +103,7 @@ class MainWindow(QMainWindow):
         mapping = {
             "connected": ConnectionState.CONNECTED,
             "connecting": ConnectionState.CONNECTING,
+            "offline": ConnectionState.OFFLINE,
             "error": ConnectionState.ERROR,
             "disconnected": ConnectionState.DISCONNECTED,
         }

@@ -1,5 +1,0 @@
-2026-06-23 11:23:18  [1;32;40mCurrent SDK version: 3.1.0[0m
-uptime library not available, timestamps are relative to boot time and not to Epoch UTC
-2026-06-23 11:23:18  [1;32;40m成功连接: interface='pcan', channel='PCAN_USBBUS1'[0m
-2026-06-23 11:23:18  [1;32;40mEmbedded:[1, 2, 4][0m
-2026-06-23 11:23:18  [1;32;40mLinker Hand Serial Number: LHO6-03-1074-L-Z-1-E[0m

@@ -410,6 +410,7 @@ QSlider:disabled {
 #StatusBadge[level="error"]      { background-color: #fff1f1; color: #e14c4c; border-color: #ffd1d1; }
 #StatusBadge[level="running"]    { background-color: #eaf1ff; color: #4f82ff; border-color: #cce0ff; }
 #StatusBadge[level="warning"]    { background-color: #fff8e6; color: #d99000; border-color: #ffe8b3; }
+#StatusBadge[level="disconnected"] { background-color: #fff1f1; color: #e14c4c; border-color: #ffd1d1; }
 
 /* ---- QTextEdit 日志区 ---- */
 QTextEdit#LogView {

@@ -27,6 +27,7 @@ class ConnectionState(Enum):
     DISCONNECTED = auto()
     CONNECTING = auto()
     CONNECTED = auto()
+    OFFLINE = auto()
     ERROR = auto()
 
 

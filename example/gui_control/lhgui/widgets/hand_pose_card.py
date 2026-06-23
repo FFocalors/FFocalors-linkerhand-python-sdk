@@ -30,6 +30,7 @@ class HandPoseCard(QWidget):
         self.joint_names_short = [SHORT_NAMES.get(n, n[:2]) for n in full_names]
         self._build()
         signal_bus.joint_state_updated.connect(self._on_state)
+        signal_bus.ui_state_changed.connect(self._on_ui_state)
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -132,3 +133,18 @@ class HandPoseCard(QWidget):
     def _reset_camera(self):
         if hasattr(self.pose_view, "reset_camera"):
             self.pose_view.reset_camera()
+
+    def _on_ui_state(self, snapshot):
+        from lhgui.utils.ui_state import ConnectionState
+        conn = snapshot.connection
+        
+        if conn == ConnectionState.CONNECTED:
+            device_info = f"当前模型: {self.hand_joint} · 在线"
+        elif conn == ConnectionState.OFFLINE:
+            device_info = f"当前模型: {self.hand_joint} · 离线调试模式"
+        elif conn == ConnectionState.CONNECTING:
+            device_info = f"当前模型: {self.hand_joint} · 正在连接..."
+        else:
+            device_info = f"当前模型: {self.hand_joint} · 设备未连接"
+            
+        self.subtitle_lbl.setText(device_info)

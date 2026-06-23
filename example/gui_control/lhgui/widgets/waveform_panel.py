@@ -26,10 +26,24 @@ class WaveformPanel(QWidget):
     MAX_POINTS = 200
     fullscreen_requested = pyqtSignal()
     collapse_changed = pyqtSignal(bool)
+    
+    COLORS = [
+        "#4f82ff",  # 高亮蓝
+        "#22a06b",  # 翠绿
+        "#e14c4c",  # 朱红
+        "#d99000",  # 琥珀金
+        "#a855f7",  # 紫罗兰
+        "#06b6d4",  # 青蓝
+        "#ec4899",  # 玫瑰粉
+        "#f97316",  # 活力橙
+        "#14b8a6",  # 松石绿
+        "#6366f1"   # 靛蓝
+    ]
 
-    def __init__(self, parent=None):
+    def __init__(self, hand_joint: str = "O6", parent=None):
         super().__init__(parent)
         self.setObjectName("WaveformPanel")
+        self.hand_joint = hand_joint
         self._collapsed = False
         self._is_fullscreen = False
         self._placeholder = QWidget()
@@ -41,10 +55,19 @@ class WaveformPanel(QWidget):
         self._orig_stretch = 0
         self._prev_collapsed = False
 
-        self._buf_state = deque(maxlen=self.MAX_POINTS)
-        self._buf_current = deque(maxlen=self.MAX_POINTS)
-        self._buf_speed = deque(maxlen=self.MAX_POINTS)
-        self._show = {"state": True, "current": True, "speed": True}
+        from lhgui.config.constants import HAND_CONFIGS
+        self.config = HAND_CONFIGS.get(hand_joint)
+        self.joint_names = list(self.config.joint_names)[:6] if self.config else []
+        self.joint_count = len(self.joint_names)
+
+        # 映射为简写
+        from lhgui.widgets.hand_pose_card import SHORT_NAMES
+        self.joint_names_short = [SHORT_NAMES.get(n, n[:2]) for n in self.joint_names]
+
+        # 为每个关节建立独立的时序缓冲区
+        self._buf_joints = [deque(maxlen=self.MAX_POINTS) for _ in range(self.joint_count)]
+        self._show = [True] * self.joint_count
+        
         self._build()
         signal_bus.waveform_updated.connect(self._on_data)
 
@@ -55,23 +78,21 @@ class WaveformPanel(QWidget):
 
         # 标题栏
         header = QHBoxLayout()
-        header.setSpacing(8)
-        title = QLabel("实时数据曲线")
+        header.setSpacing(6)
+        title = QLabel("实时关节曲线")
         title.setObjectName("CardTitle")
         header.addWidget(title)
         header.addStretch()
 
-        self.checks = {}
-        for key, text, color in [
-            ("state", "位置", "#4f8cff"),
-            ("current", "电流", "#da3633"),
-            ("speed", "速度", "#2ea043"),
-        ]:
-            cb = QCheckBox(text)
+        self.checks = []
+        for i, name in enumerate(self.joint_names_short):
+            color = self.COLORS[i % len(self.COLORS)]
+            cb = QCheckBox(name)
             cb.setChecked(True)
-            cb.setProperty("color", color)
-            cb.toggled.connect(lambda v, k=key: self._toggle(k, v))
-            self.checks[key] = cb
+            cb.setStyleSheet(f"QCheckBox {{ color: {color}; font-weight: 500; }}")
+            # 使用默认参数绑定当前索引
+            cb.toggled.connect(lambda checked, idx=i: self._toggle(idx, checked))
+            self.checks.append(cb)
             header.addWidget(cb)
 
         self.collapse_btn = QPushButton()
@@ -101,7 +122,7 @@ class WaveformPanel(QWidget):
         self.ax.set_ylim(0, 260)
         self.ax.set_xlim(0, self.MAX_POINTS)
         self.ax.set_xlabel("采样点", color="#64748b", fontsize=9)
-        self.ax.set_ylabel("值", color="#64748b", fontsize=9)
+        self.ax.set_ylabel("反馈位置", color="#64748b", fontsize=9)
         self.ax.tick_params(colors="#64748b", labelsize=8)
         self.ax.grid(True, color="#f1f5f9", linewidth=0.6)
         
@@ -110,23 +131,26 @@ class WaveformPanel(QWidget):
         self.ax.spines['left'].set_color("#cbd5e1")
         self.ax.spines['bottom'].set_color("#cbd5e1")
 
-        self.line_state, = self.ax.plot([], [], color="#4f82ff", label="位置", linewidth=1.5)
-        self.line_current, = self.ax.plot([], [], color="#e14c4c", label="电流", linewidth=1.5)
-        self.line_speed, = self.ax.plot([], [], color="#22a06b", label="速度", linewidth=1.5)
+        self.lines = []
+        for i in range(self.joint_count):
+            color = self.COLORS[i % len(self.COLORS)]
+            name = self.joint_names_short[i]
+            line, = self.ax.plot([], [], color=color, label=name, linewidth=1.5)
+            self.lines.append(line)
+            
         layout.addWidget(self.canvas, stretch=1)
 
-    def _toggle(self, key: str, on: bool):
-        self._show[key] = on
-        self.line_state.set_visible(self._show["state"])
-        self.line_current.set_visible(self._show["current"])
-        self.line_speed.set_visible(self._show["speed"])
-        if not self._collapsed:
-            self.canvas.draw_idle()
+    def _toggle(self, idx: int, on: bool):
+        if idx < len(self._show):
+            self._show[idx] = on
+            self.lines[idx].set_visible(on)
+            if not self._collapsed:
+                self.canvas.draw_idle()
 
     def _toggle_collapse(self):
         self._collapsed = not self._collapsed
         self.canvas.setVisible(not self._collapsed)
-        for cb in self.checks.values():
+        for cb in self.checks:
             cb.setVisible(not self._collapsed)
         icon = "expand" if self._collapsed else "collapse"
         self.collapse_btn.setIcon(get_icon(icon, size=16))
@@ -136,13 +160,32 @@ class WaveformPanel(QWidget):
             self.canvas.draw_idle()
 
     def _on_data(self, data: dict):
-        self._buf_state.append(_mean(data.get("state")))
-        self._buf_current.append(_mean(data.get("current")))
-        self._buf_speed.append(_mean(data.get("speed")))
-        self.line_state.set_data(range(len(self._buf_state)), list(self._buf_state))
-        self.line_current.set_data(range(len(self._buf_current)), list(self._buf_current))
-        self.line_speed.set_data(range(len(self._buf_speed)), list(self._buf_speed))
-        self.ax.set_xlim(0, max(self.MAX_POINTS, len(self._buf_state)))
+        state = data.get("state")
+        if not isinstance(state, (list, tuple)) or len(state) < self.joint_count:
+            return
+
+        for i in range(self.joint_count):
+            self._buf_joints[i].append(float(state[i]))
+            self.lines[i].set_data(range(len(self._buf_joints[i])), list(self._buf_joints[i]))
+        
+        # 限制 X 轴的滚动范围
+        max_len = max(len(buf) for buf in self._buf_joints) if self._buf_joints else 0
+        self.ax.set_xlim(0, max(self.MAX_POINTS, max_len))
+        
+        # 动态计算 Y 轴自适应上限和下限，避免越界
+        all_vals = []
+        for i in range(self.joint_count):
+            if self._show[i]:
+                all_vals.extend(list(self._buf_joints[i]))
+                
+        if all_vals:
+            ymin = min(all_vals)
+            ymax = max(all_vals)
+            margin = (ymax - ymin) * 0.15 if ymax != ymin else 15.0
+            self.ax.set_ylim(ymin - margin, ymax + margin)
+        else:
+            self.ax.set_ylim(0, 260)
+            
         if not self._collapsed:
             self.canvas.draw_idle()
 
@@ -178,7 +221,7 @@ class WaveformPanel(QWidget):
         self.hide()
 
         self._dialog = QDialog(self.window())
-        self._dialog.setWindowTitle("实时数据曲线 - 全屏监控")
+        self._dialog.setWindowTitle("实时关节数据曲线 - 全屏监控")
         self._dialog.setWindowState(Qt.WindowMaximized)
         dlg_layout = QVBoxLayout(self._dialog)
         dlg_layout.setContentsMargins(16, 16, 16, 16)
@@ -236,7 +279,7 @@ def _mean(seq) -> float:
     if not seq:
         return 0.0
     try:
-        vals = [float(v) for v in seq if v is not None and v >= 0]
+        vals = [float(v) for v in seq if v is not None]
     except Exception:
         return 0.0
     return sum(vals) / len(vals) if vals else 0.0

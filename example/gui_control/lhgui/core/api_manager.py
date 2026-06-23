@@ -110,6 +110,15 @@ class ApiManager(QObject):
                 
                 signal_bus.connection_changed.emit("connected")
                 signal_bus.connection_message.emit("success", "已连接设备")
+                
+                # 初始化电机速度与扭矩（默认 255），避免手部固件默认状态为 0 导致不动
+                try:
+                    joint_count = len(HAND_CONFIGS[self.hand_joint].init_pos)
+                    self.api.set_speed([255] * joint_count)
+                    self.api.set_torque([255] * joint_count)
+                except Exception as ex:
+                    print(f"Failed to set initial speed/torque: {ex}")
+                    
                 version = None
                 serial = None
                 try:
@@ -125,7 +134,7 @@ class ApiManager(QObject):
                 config = HAND_CONFIGS.get(self.hand_joint)
                 self._virtual_pose = list(config.init_pos) if config else [250] * 6
                 
-                signal_bus.connection_changed.emit("connected")
+                signal_bus.connection_changed.emit("offline")
                 signal_bus.connection_message.emit(
                     "warning", f"物理连接失败：{e}。已自动切入虚拟/离线调试模式。"
                 )
@@ -193,6 +202,7 @@ class ApiManager(QObject):
             return
         try:
             self.api.finger_move(pose)
+            signal_bus.connection_message.emit("info", f"已发送关节位置: {pose}")
         except Exception as e:
             signal_bus.connection_message.emit("error", f"发送关节位置失败：{e}")
 

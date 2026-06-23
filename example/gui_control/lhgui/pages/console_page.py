@@ -120,7 +120,7 @@ class ConsolePage(QWidget):
         self.joint_panel.values_changed.connect(self._on_local_values)
 
         # 左下：实时曲线面板
-        self.waveform_panel = WaveformPanel(self)
+        self.waveform_panel = WaveformPanel(self.hand_joint, self)
 
         self.left_layout.addWidget(self.joint_panel, stretch=1)
         self.left_layout.addWidget(self.waveform_panel, stretch=0)
