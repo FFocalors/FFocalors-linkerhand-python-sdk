@@ -39,8 +39,8 @@ class JointRow(QFrame):
 
     def _build(self):
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(14, 8, 14, 8)
-        outer.setSpacing(5)
+        outer.setContentsMargins(14, 4, 14, 4)
+        outer.setSpacing(2)
 
         # ── Row 1: 关节名称 + 目标值 ──
         row1 = QHBoxLayout()
@@ -71,6 +71,9 @@ class JointRow(QFrame):
         row2.setContentsMargins(0, 0, 0, 0)
 
         self.slider = QSlider(Qt.Horizontal)
+        self.slider.setObjectName("JointControlSlider")
+        # 为圆形手柄预留稳定的上下绘制空间，避免 Qt 按默认 sizeHint 裁切。
+        self.slider.setFixedHeight(24)
         self.slider.setRange(self.min_val, self.max_val)
         self.slider.setToolTip(f"{self.name}\n范围 {self.min_val}–{self.max_val}")
         self.slider.valueChanged.connect(self._slider_changed)

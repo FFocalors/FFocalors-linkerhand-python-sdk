@@ -6,10 +6,10 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}\\example\\gui_control\\main.py",
-            "python": "D:\\develop_tools\\mini\\envs\\linkerhand_py39\\python.exe",
+            "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
             "cwd": "${workspaceFolder}\\example\\gui_control",
             "env": {
-                "PYTHONPATH": "D:\\Work Space\\FFocalors-linkerhand-python-sdk"
+                "PYTHONPATH": "${workspaceFolder}"
             },
             "console": "integratedTerminal"
         }

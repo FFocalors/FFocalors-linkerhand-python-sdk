@@ -433,230 +433,272 @@ class GamePage(QFrame):
         self._set_state(self.STATE_IDLE)
 
     @staticmethod
-    def _section_card(title_text):
+    def _section_card(title_text, subtitle=""):
         card = QFrame()
         card.setObjectName("GameSectionCard")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 13, 14, 14)
+        layout.setSpacing(10)
         title_lbl = QLabel(title_text)
-        title_lbl.setObjectName("CardTitle")
+        title_lbl.setObjectName("SectionTitle")
         layout.addWidget(title_lbl)
+        if subtitle:
+            subtitle_lbl = QLabel(subtitle)
+            subtitle_lbl.setObjectName("SectionDescription")
+            subtitle_lbl.setWordWrap(True)
+            layout.addWidget(subtitle_lbl)
         return card, layout
 
     def _build_ui(self):
-        from PyQt5.QtWidgets import QScrollArea
         main = QHBoxLayout(self)
-        main.setContentsMargins(12, 12, 12, 12)
-        main.setSpacing(12)
+        main.setContentsMargins(16, 16, 16, 16)
+        main.setSpacing(16)
 
-        # ═══ 左侧: 摄像头主区域 (卡片包装) ═══
+        # ═══ 左侧：互动主视图 ═══
         left_card = QFrame()
         left_card.setObjectName("GameLeftCard")
-        ll = QVBoxLayout(left_card)
-        ll.setContentsMargins(16, 16, 16, 16)
-        ll.setSpacing(12)
+        left_layout = QVBoxLayout(left_card)
+        left_layout.setContentsMargins(18, 16, 18, 18)
+        left_layout.setSpacing(12)
 
-        left_header = QHBoxLayout()
-        left_header.setContentsMargins(0, 0, 0, 0)
-        left_header.setSpacing(8)
-        left_title = QLabel("猜拳小游戏")
-        left_title.setObjectName("CardTitle")
-        left_header.addWidget(left_title)
-        left_header.addStretch()
+        hero = QHBoxLayout()
+        hero.setSpacing(12)
+        hero_copy = QVBoxLayout()
+        hero_copy.setSpacing(2)
+        eyebrow = QLabel("INTERACTION / RPS")
+        eyebrow.setObjectName("PageEyebrow")
+        title = QLabel("猜拳互动")
+        title.setObjectName("PageTitle")
+        subtitle = QLabel("实时手势识别 · 机械手同步出拳")
+        subtitle.setObjectName("PageSubtitle")
+        hero_copy.addWidget(eyebrow)
+        hero_copy.addWidget(title)
+        hero_copy.addWidget(subtitle)
+        hero.addLayout(hero_copy)
+        hero.addStretch()
         self.cam_status_lbl = QLabel("等待启动")
-        self.cam_status_lbl.setStyleSheet("color:#64748B; font-size:11px;")
-        left_header.addWidget(self.cam_status_lbl)
-        ll.addLayout(left_header)
+        self.cam_status_lbl.setObjectName("CameraStatusPill")
+        self.cam_status_lbl.setProperty("state", "idle")
+        self.cam_status_lbl.setAlignment(Qt.AlignCenter)
+        hero.addWidget(self.cam_status_lbl, alignment=Qt.AlignTop)
+        left_layout.addLayout(hero)
 
         preview_card = QFrame()
         preview_card.setObjectName("CameraPreviewCard")
-        pv = QVBoxLayout(preview_card)
-        pv.setContentsMargins(8, 8, 8, 8)
-        self.cam_view = QLabel()
-        self.cam_view.setMinimumSize(480, 360)
+        preview_layout = QVBoxLayout(preview_card)
+        preview_layout.setContentsMargins(8, 8, 8, 8)
+        preview_layout.setSpacing(8)
+        self.cam_view = QLabel("等待摄像头画面")
+        self.cam_view.setObjectName("GameCameraView")
+        self.cam_view.setMinimumSize(500, 350)
         self.cam_view.setAlignment(Qt.AlignCenter)
-        self.cam_view.setStyleSheet("background:#1E1E2E; border-radius:8px; color:#64748B; font-size:13px;")
-        self.cam_view.setText("等待启动")
-        pv.addWidget(self.cam_view, stretch=1)
-        ll.addWidget(preview_card, stretch=1)
+        preview_layout.addWidget(self.cam_view, stretch=1)
+        preview_meta = QLabel("请将手掌保持在画面中央 · 支持石头 / 剪刀 / 布")
+        preview_meta.setObjectName("CameraMeta")
+        preview_layout.addWidget(preview_meta)
+        left_layout.addWidget(preview_card, stretch=1)
 
-        # 摄像头叠加层 (倒计时 / 庆祝)
+        # 摄像头叠加层（倒计时 / 庆祝），沿用原业务引用。
         self.cam_overlay = QLabel(self.cam_view)
+        self.cam_overlay.setObjectName("GameCountdownOverlay")
         self.cam_overlay.setAlignment(Qt.AlignCenter)
-        self.cam_overlay.setStyleSheet("font-size:72px; font-weight:bold; color:white; background:rgba(0,0,0,100);")
         self.cam_overlay.hide()
-
         self.celebrate = QLabel(self.cam_view)
+        self.celebrate.setObjectName("GameCelebrateOverlay")
         self.celebrate.setAlignment(Qt.AlignCenter)
         self.celebrate.setWordWrap(True)
         self.celebrate.hide()
 
-        main.addWidget(left_card, stretch=3)
+        left_hint = QFrame()
+        left_hint.setObjectName("GameHintBar")
+        hint_layout = QHBoxLayout(left_hint)
+        hint_layout.setContentsMargins(10, 7, 10, 7)
+        hint_icon = QLabel("●")
+        hint_icon.setObjectName("GameHintDot")
+        hint_text = QLabel("开始游戏后，将依次进行倒计时、识别与判定")
+        hint_text.setObjectName("GameHintText")
+        hint_layout.addWidget(hint_icon)
+        hint_layout.addWidget(hint_text)
+        hint_layout.addStretch()
+        left_layout.addWidget(left_hint)
+        main.addWidget(left_card, stretch=7)
 
-        # ═══ 右侧: 卡片式游戏面板 (可滚动) ═══
+        # ═══ 右侧：比赛控制面板 ═══
         right_scroll = QScrollArea()
+        right_scroll.setObjectName("ControlPanelScroll")
         right_scroll.setWidgetResizable(True)
         right_scroll.setFrameShape(QFrame.NoFrame)
-        right_scroll.setStyleSheet("background:transparent; border:none;")
-
+        right_scroll.setMinimumWidth(390)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         right_content = QWidget()
-        right_content.setStyleSheet("background:transparent;")
+        right_content.setObjectName("ControlPanelContent")
         right = QVBoxLayout(right_content)
-        right.setContentsMargins(0, 0, 4, 0)
+        right.setContentsMargins(0, 0, 5, 0)
         right.setSpacing(12)
         right_scroll.setWidget(right_content)
 
-        # ── Card 1: GameScoreCard (精致大号比分栏) ──
-        card1, c1 = self._section_card("比分")
-        score_layout = QHBoxLayout()
-        score_layout.setSpacing(10)
-        
-        score_config = [
-            ("你赢", "#22A06B"),
-            ("机械手", "#E5484D"),
-            ("平局", "#64748B"),
+        # 1. 比分
+        score_card, score = self._section_card("本场比分", "比分会在每轮判定完成后自动更新。")
+        score_grid = QGridLayout()
+        score_grid.setSpacing(8)
+        self.lbl_human_score = QLabel("0")
+        self.lbl_machine_score = QLabel("0")
+        self.lbl_draw_score = QLabel("0")
+        score_defs = [
+            ("你赢", "human", self.lbl_human_score),
+            ("机械手赢", "machine", self.lbl_machine_score),
+            ("平局", "draw", self.lbl_draw_score),
         ]
-        self.lbl_human_score = self._sc("0", score_config[0][1])
-        self.lbl_machine_score = self._sc("0", score_config[1][1])
-        self.lbl_draw_score = self._sc("0", score_config[2][1])
-        
-        for col, (title, color) in enumerate(score_config):
-            col_card = QFrame()
-            col_card.setObjectName("ParameterBlock")
-            col_layout = QVBoxLayout(col_card)
-            col_layout.setContentsMargins(6, 8, 6, 8)
-            col_layout.setSpacing(4)
-            
-            title_lbl = QLabel(title)
-            title_lbl.setAlignment(Qt.AlignCenter)
-            title_lbl.setStyleSheet("color:#64748B; font-size:10px; font-weight:600;")
-            
-            lbl = self.lbl_human_score if col == 0 else (self.lbl_machine_score if col == 1 else self.lbl_draw_score)
-            col_layout.addWidget(title_lbl)
-            col_layout.addWidget(lbl)
-            score_layout.addWidget(col_card)
-            
-        c1.addLayout(score_layout)
-        right.addWidget(card1)
+        for index, (label, kind, value) in enumerate(score_defs):
+            tile = QFrame()
+            tile.setObjectName("ScoreTile")
+            tile.setProperty("kind", kind)
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(8, 9, 8, 9)
+            tile_layout.setSpacing(2)
+            caption = QLabel(label)
+            caption.setObjectName("ScoreLabel")
+            caption.setAlignment(Qt.AlignCenter)
+            value.setObjectName("ScoreValue")
+            value.setProperty("kind", kind)
+            value.setAlignment(Qt.AlignCenter)
+            tile_layout.addWidget(caption)
+            tile_layout.addWidget(value)
+            score_grid.addWidget(tile, 0, index)
+        score.addLayout(score_grid)
+        right.addWidget(score_card)
 
-        # ── Card 2: GameStatusCard (键值格栅化状态展示) ──
-        card2, c2 = self._section_card("游戏状态")
+        # 2. 状态
+        status_card, status = self._section_card("游戏状态", "当前轮次、识别结果与机械手动作一目了然。")
+        self.d_state = QLabel("IDLE")
+        self.d_round = QLabel("0")
+        self.d_human = QLabel("--")
+        self.d_timer = QLabel("--")
+        self.d_candidate = QLabel("-- stable=0/6")
+        self.d_machine = QLabel("--")
+        status_defs = [
+            ("状态", self.d_state, "state"),
+            ("轮次", self.d_round, "round"),
+            ("你的手势", self.d_human, "human"),
+            ("倒计时", self.d_timer, "timer"),
+            ("识别候选", self.d_candidate, "candidate"),
+            ("机械手", self.d_machine, "machine"),
+        ]
         status_grid = QGridLayout()
-        status_grid.setSpacing(8)
-        self.d_state = self._d("IDLE")
-        self.d_round = self._d("0")
-        self.d_human = self._d("--")
-        self.d_timer = self._d("--")
-        self.d_candidate = self._d("-- stable=0/6")
-        self.d_machine = self._d("--")
-        self.d_hw = self._d("未启用")
-        self.d_hw.setStyleSheet("color:#E5484D; font-size:12px; font-weight:600;")
-        
-        status_items = [
-            ("游戏状态", self.d_state), ("当前轮次", self.d_round), ("人类出拳", self.d_human),
-            ("倒计时", self.d_timer), ("识别候选", self.d_candidate), ("机械出拳", self.d_machine),
-        ]
-        for i, (label, widget) in enumerate(status_items):
-            lbl = QLabel(label)
-            lbl.setStyleSheet("color:#64748B; font-size:11px; font-weight:600;")
-            status_grid.addWidget(lbl, i, 0)
-            status_grid.addWidget(widget, i, 1)
-        c2.addLayout(status_grid)
-        
-        hw_widget = QFrame()
-        hw_widget.setObjectName("ParamBlock")
-        hw_layout = QHBoxLayout(hw_widget)
-        hw_layout.setContentsMargins(8, 4, 8, 4)
-        hw_layout.setSpacing(8)
-        hw_lbl = QLabel("机械手通信")
-        hw_lbl.setStyleSheet("color:#64748B; font-size:11px; font-weight:600;")
-        hw_layout.addWidget(hw_lbl)
-        hw_layout.addWidget(self.d_hw)
-        hw_layout.addStretch()
-        c2.addWidget(hw_widget)
-        
-        self.d_status = QLabel("提示: 点击开始游戏")
-        self.d_status.setStyleSheet("color:#64748B; font-size:11px; font-weight:500; padding:2px 0;")
-        c2.addWidget(self.d_status)
-        right.addWidget(card2)
+        status_grid.setSpacing(7)
+        for index, (label, value, kind) in enumerate(status_defs):
+            tile = QFrame()
+            tile.setObjectName("GameStatusTile")
+            tile.setProperty("kind", kind)
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(9, 7, 9, 8)
+            tile_layout.setSpacing(2)
+            caption = QLabel(label)
+            caption.setObjectName("GameStatusLabel")
+            value.setObjectName("GameStatusValue")
+            tile_layout.addWidget(caption)
+            tile_layout.addWidget(value)
+            row, column = divmod(index, 2)
+            status_grid.addWidget(tile, row, column)
+        status_grid.setColumnStretch(0, 1)
+        status_grid.setColumnStretch(1, 1)
+        status.addLayout(status_grid)
 
-        # ── Card 3: TestActionCard ──
-        card3, c3 = self._section_card("动作测试")
-        test_grid = QGridLayout()
-        test_grid.setSpacing(6)
-        
-        self.btn_test_rock = QPushButton("测试石头")
-        self.btn_test_rock.setProperty("category", "secondary")
-        self.btn_test_scissors = QPushButton("测试剪刀")
-        self.btn_test_scissors.setProperty("category", "secondary")
-        self.btn_test_paper = QPushButton("测试布")
-        self.btn_test_paper.setProperty("category", "secondary")
-        self.btn_home = QPushButton("复位")
+        hardware_row = QFrame()
+        hardware_row.setObjectName("StatusStrip")
+        hardware_layout = QHBoxLayout(hardware_row)
+        hardware_layout.setContentsMargins(10, 6, 10, 6)
+        hardware_label = QLabel("机械手通信")
+        hardware_label.setObjectName("StatusStripLabel")
+        self.d_hw = QLabel("未启用")
+        self.d_hw.setObjectName("StatusStripValue")
+        hardware_layout.addWidget(hardware_label)
+        hardware_layout.addStretch()
+        hardware_layout.addWidget(self.d_hw)
+        status.addWidget(hardware_row)
+
+        self.d_status = QLabel("点击“开始游戏”进入第一轮")
+        self.d_status.setObjectName("GamePrompt")
+        self.d_status.setWordWrap(True)
+        status.addWidget(self.d_status)
+        right.addWidget(status_card)
+
+        # 3. 动作测试
+        action_card, action = self._section_card("动作测试", "单独验证三种出拳姿态，不影响当前比分。")
+        action_grid = QGridLayout()
+        action_grid.setSpacing(7)
+        self.btn_test_rock = QPushButton("石头")
+        self.btn_test_scissors = QPushButton("剪刀")
+        self.btn_test_paper = QPushButton("布")
+        self.btn_home = QPushButton("恢复初始")
+        for index, button in enumerate((self.btn_test_rock, self.btn_test_scissors, self.btn_test_paper, self.btn_home)):
+            button.setProperty("category", "secondary")
+            button.setProperty("variant", "gameAction")
+            button.setCursor(Qt.PointingHandCursor)
+            button.setMinimumHeight(32)
+            action_grid.addWidget(button, index // 2, index % 2)
         self.btn_home.setProperty("category", "warning")
-        
-        test_btns = [self.btn_test_rock, self.btn_test_scissors, self.btn_test_paper, self.btn_home]
-        for idx, btn in enumerate(test_btns):
-            btn.setFixedHeight(30)
-            btn.setCursor(Qt.PointingHandCursor)
-            test_grid.addWidget(btn, idx // 2, idx % 2)
-            
-        c3.addLayout(test_grid)
-        right.addWidget(card3)
+        action.addLayout(action_grid)
+        right.addWidget(action_card)
 
-        # ── Card 4: GameControlCard ──
-        card4, c4 = self._section_card("游戏控制")
-
-        self.chk_hw = QCheckBox("启用机械手出拳")
+        # 4. 游戏控制
+        control_card, control = self._section_card("游戏控制", "开始为主操作；停止后保留当前比分。")
+        output_row = QFrame()
+        output_row.setObjectName("ToggleRow")
+        output_layout = QHBoxLayout(output_row)
+        output_layout.setContentsMargins(10, 8, 10, 8)
+        output_copy = QVBoxLayout()
+        output_copy.setSpacing(1)
+        output_title = QLabel("机械手同步出拳")
+        output_title.setObjectName("ToggleTitle")
+        output_note = QLabel("启用前请确认设备和 CAN 连接状态")
+        output_note.setObjectName("ToggleDescription")
+        output_copy.addWidget(output_title)
+        output_copy.addWidget(output_note)
+        output_layout.addLayout(output_copy)
+        output_layout.addStretch()
+        self.chk_hw = QCheckBox("启用")
+        self.chk_hw.setObjectName("SwitchCheck")
         self.chk_hw.setChecked(False)
-        self.chk_hw.setStyleSheet("font-weight:500; font-size:12px; margin-bottom:4px;")
-        c4.addWidget(self.chk_hw)
+        output_layout.addWidget(self.chk_hw)
+        control.addWidget(output_row)
 
-        control_row = QHBoxLayout()
-        control_row.setSpacing(8)
+        control_grid = QGridLayout()
+        control_grid.setSpacing(8)
         self.btn_start = QPushButton("开始游戏")
         self.btn_start.setProperty("category", "primary")
-        self.btn_start.setFixedHeight(34)
-        self.btn_start.setCursor(Qt.PointingHandCursor)
-        
         self.btn_stop = QPushButton("停止游戏")
         self.btn_stop.setProperty("category", "danger")
-        self.btn_stop.setFixedHeight(34)
-        self.btn_stop.setCursor(Qt.PointingHandCursor)
-        
         self.btn_reset = QPushButton("重置比分")
         self.btn_reset.setProperty("category", "secondary")
-        self.btn_reset.setFixedHeight(34)
-        self.btn_reset.setCursor(Qt.PointingHandCursor)
-        
-        control_row.addWidget(self.btn_start)
-        control_row.addWidget(self.btn_stop)
-        control_row.addWidget(self.btn_reset)
-        control_row.addStretch()
-        c4.addLayout(control_row)
+        for button in (self.btn_start, self.btn_stop, self.btn_reset):
+            button.setCursor(Qt.PointingHandCursor)
+            button.setMinimumHeight(35)
+        control_grid.addWidget(self.btn_start, 0, 0, 1, 2)
+        control_grid.addWidget(self.btn_stop, 1, 0)
+        control_grid.addWidget(self.btn_reset, 1, 1)
+        control.addLayout(control_grid)
 
-        # 结果展示
         self.result_card = QFrame()
         self.result_card.setObjectName("GameResultCard")
         result_layout = QVBoxLayout(self.result_card)
-        result_layout.setSpacing(4)
+        result_layout.setContentsMargins(10, 8, 10, 8)
+        result_layout.setSpacing(3)
         self.lbl_celebration = QLabel("")
+        self.lbl_celebration.setObjectName("GameResultTitle")
         self.lbl_celebration.setAlignment(Qt.AlignCenter)
         self.lbl_celebration.setWordWrap(True)
-        self.lbl_celebration.setStyleSheet("font-size:15px; font-weight:600; color:#1E293B; padding:4px 0;")
         self.lbl_round_info = QLabel("")
+        self.lbl_round_info.setObjectName("GameResultDescription")
         self.lbl_round_info.setAlignment(Qt.AlignCenter)
         self.lbl_round_info.setWordWrap(True)
-        self.lbl_round_info.setStyleSheet("font-size:12px; color:#64748B;")
         result_layout.addWidget(self.lbl_celebration)
         result_layout.addWidget(self.lbl_round_info)
         self.result_card.hide()
-        c4.addWidget(self.result_card)
-
-        right.addWidget(card4)
+        control.addWidget(self.result_card)
+        right.addWidget(control_card)
         right.addStretch()
-        main.addWidget(right_scroll, stretch=2)
-
+        main.addWidget(right_scroll, stretch=4)
     def _lbl_title(self, text):
         label = QLabel(text)
         label.setObjectName("CardTitle")

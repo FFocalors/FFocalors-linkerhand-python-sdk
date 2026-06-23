@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""实时曲线面板（可复用 matplotlib 封装，统一 Fluent 卡片风格）。
+"""实时曲线面板（可复用 matplotlib 封装，统一 Fluent 数据面板风格）。
 
 开关使用紧凑彩色胶囊按钮；matplotlib 配色与 UI 统一。
 """
@@ -30,15 +30,16 @@ class WaveformPanel(QWidget):
     fullscreen_requested = pyqtSignal()
     collapse_changed = pyqtSignal(bool)
 
-    # 低饱和可分辨专业配色（柔和科技风，不再刺眼）
-    COLORS = [
-        "#5B8DEF",  # 拇弯 — 柔和蓝
-        "#60A5C8",  # 拇摆 — 柔和青蓝
-        "#5FAF8F",  # 食指 — 柔和青绿
-        "#D6A25E",  # 中指 — 柔和橙金
-        "#8B7FD1",  # 无名 — 柔和紫
-        "#6D8AE6",  # 小指 — 柔和靛蓝
+    # 同时定义折线、选中底色与边框色，避免依赖透明十六进制颜色。
+    PALETTE = [
+        ("#5B7FC7", "#EDF3FC", "#B8C9EA"),  # 拇弯 — 雾蓝
+        ("#558EAA", "#EDF6F8", "#B8D5E0"),  # 拇摆 — 灰青
+        ("#568F78", "#EEF7F3", "#B7D8CA"),  # 食指 — 鼠尾草绿
+        ("#B78345", "#FBF4E9", "#E4C9A3"),  # 中指 — 沙金
+        ("#756AA8", "#F3F0FA", "#CAC3E1"),  # 无名 — 灰紫
+        ("#6279B7", "#EFF2FA", "#BEC9E5"),  # 小指 — 柔靛
     ]
+    COLORS = [entry[0] for entry in PALETTE]
 
     def __init__(self, hand_joint: str = "O6", parent=None):
         super().__init__(parent)
@@ -74,57 +75,19 @@ class WaveformPanel(QWidget):
         layout.setContentsMargins(14, 14, 14, 12)
         layout.setSpacing(8)
 
-        # ── Header ──
-        header = QHBoxLayout()
-        header.setSpacing(8)
+        # ── Header：标题与筛选器分层，避免图例和工具按钮挤在一行 ──
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
 
         title = QLabel("实时关节曲线")
         title.setObjectName("CardTitle")
-        header.addWidget(title)
-        header.addStretch()
+        title_row.addWidget(title)
 
-        # 紧凑胶囊开关按钮（低饱和 filter-chip 风格）
-        self.toggles = []
-        _JOINT_LABELS = ["拇弯", "拇摆", "食指", "中指", "无名", "小指"]
-        for i in range(self.joint_count):
-            name = _JOINT_LABELS[i] if i < len(_JOINT_LABELS) else self.joint_names_short[i]
-            color = self.COLORS[i % len(self.COLORS)]
-            btn = QPushButton(name)
-            btn.setCheckable(True)
-            btn.setChecked(True)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setToolTip(f"开关 {name} 曲线")
-            btn.setFixedHeight(22)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    border: 1px solid #E2E8F0;
-                    border-radius: 11px;
-                    padding: 1px 9px;
-                    font-size: 11px;
-                    font-weight: 500;
-                    background: #F8FAFC;
-                    color: #64748B;
-                }}
-                QPushButton:hover {{
-                    border-color: #CBD5E1;
-                    color: #1E293B;
-                    background: #F1F5F9;
-                }}
-                QPushButton:checked {{
-                    color: {color};
-                    border-color: {color};
-                    background: {color}12;
-                    font-weight: 600;
-                }}
-                QPushButton:checked:hover {{
-                    background: {color}1C;
-                }}
-            """)
-            btn.toggled.connect(lambda checked, idx=i: self._toggle(idx, checked))
-            self.toggles.append(btn)
-            header.addWidget(btn)
+        subtitle = QLabel("最近 200 个采样点")
+        subtitle.setObjectName("WaveformMeta")
+        title_row.addWidget(subtitle)
+        title_row.addStretch()
 
-        # 工具按钮
         self.collapse_btn = QPushButton()
         self.collapse_btn.setProperty("category", "tool")
         self.collapse_btn.setIcon(get_icon("collapse", size=16))
@@ -132,7 +95,7 @@ class WaveformPanel(QWidget):
         self.collapse_btn.setFlat(True)
         self.collapse_btn.setFixedSize(28, 28)
         self.collapse_btn.clicked.connect(self._toggle_collapse)
-        header.addWidget(self.collapse_btn)
+        title_row.addWidget(self.collapse_btn)
 
         self.fullscreen_btn = QPushButton()
         self.fullscreen_btn.setProperty("category", "tool")
@@ -141,9 +104,62 @@ class WaveformPanel(QWidget):
         self.fullscreen_btn.setFlat(True)
         self.fullscreen_btn.setFixedSize(28, 28)
         self.fullscreen_btn.clicked.connect(self._enter_fullscreen)
-        header.addWidget(self.fullscreen_btn)
+        title_row.addWidget(self.fullscreen_btn)
+        layout.addLayout(title_row)
 
-        layout.addLayout(header)
+        self.filter_bar = QWidget()
+        self.filter_bar.setObjectName("WaveformFilterBar")
+        filter_row = QHBoxLayout(self.filter_bar)
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.setSpacing(6)
+
+        filter_label = QLabel("显示曲线")
+        filter_label.setObjectName("WaveformFilterLabel")
+        filter_row.addWidget(filter_label)
+
+        self.toggles = []
+        joint_labels = ["拇弯", "拇摆", "食指", "中指", "无名", "小指"]
+        for i in range(self.joint_count):
+            name = joint_labels[i] if i < len(joint_labels) else self.joint_names_short[i]
+            color, tint, border = self.PALETTE[i % len(self.PALETTE)]
+            btn = QPushButton(f"●  {name}")
+            btn.setObjectName("WaveformToggle")
+            btn.setCheckable(True)
+            btn.setChecked(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(f"显示或隐藏{name}曲线")
+            btn.setFixedHeight(24)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    border: 1px solid #E2E8F0;
+                    border-radius: 12px;
+                    padding: 1px 9px;
+                    background: #F8FAFC;
+                    color: #94A3B8;
+                    font-size: 10px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    background: #F1F5F9;
+                    border-color: {border};
+                    color: {color};
+                }}
+                QPushButton:checked {{
+                    background: {tint};
+                    border-color: {border};
+                    color: {color};
+                    font-weight: 600;
+                }}
+                QPushButton:checked:hover {{
+                    background: #FFFFFF;
+                    border-color: {color};
+                }}
+            """)
+            btn.toggled.connect(lambda checked, idx=i: self._toggle(idx, checked))
+            self.toggles.append(btn)
+            filter_row.addWidget(btn)
+        filter_row.addStretch()
+        layout.addWidget(self.filter_bar)
 
         # ── Matplotlib 图表 ──
         self.figure = Figure(figsize=(6, 3), tight_layout=True, facecolor="#FAFBFD")

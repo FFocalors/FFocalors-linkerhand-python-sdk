@@ -9,27 +9,31 @@
   - add:    添加预设（虚线边框）
 """
 from PyQt5.QtWidgets import (
-    QAbstractButton, QVBoxLayout, QLabel, QStyle, QStyleOption, QWidget, QHBoxLayout
+    QAbstractButton, QVBoxLayout, QLabel, QStyle, QStyleOption, QWidget, QHBoxLayout, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QEvent
-from PyQt5.QtGui import QPainter, QColor
+from PyQt5.QtGui import QPainter, QColor, QPixmap, QPen
 
 from lhgui.utils.icon_helper import get_pixmap
 from lhgui.utils.style_utils import set_dynamic_property
 
 _ICON_MAP = {
     "张开": "hand_open", "握拳": "hand_fist", "OK": "hand_ok", "点赞": "hand_like",
-    "壹": "number_one", "贰": "number_two", "叁": "number_three",
-    "肆": "number_four", "伍": "number_five",
     "添加预设": "add_preset",
+}
+
+_NUMBER_GLYPHS = {"壹": "1", "贰": "2", "叁": "3", "肆": "4", "伍": "5"}
+_CORE_TONES = {"张开": "blue", "握拳": "slate", "OK": "teal", "点赞": "indigo"}
+_CORE_ICON_COLORS = {
+    "张开": "#4F73BA", "握拳": "#59697D", "OK": "#4F8876", "点赞": "#746BA3",
 }
 
 # (min_w, min_h)
 _SIZES = {
     "core":   (140, 92),
-    "number": (64, 60),
+    "number": (58, 70),
     "custom": (64, 60),
-    "add":    (64, 60),
+    "add":    (80, 60),
 }
 
 
@@ -45,6 +49,8 @@ class PresetCard(QAbstractButton):
         self.preset_id = preset_id
         self.setObjectName("PresetCard")
         self.setProperty("variant", variant)
+        if variant == "core":
+            self.setProperty("tone", _CORE_TONES.get(name, "blue"))
         self.setCheckable(False)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -81,14 +87,19 @@ class PresetCard(QAbstractButton):
             lo.setContentsMargins(6, 8, 6, 6)
             lo.setSpacing(4)
 
-        # ── 图标容器 (圆角蓝底) ──
+        # ── 图形区域：核心动作用图标面板，数字手势使用数字徽标 ──
         self.icon_container = QWidget()
-        self.icon_container.setObjectName("PresetIconContainer")
+        self.icon_container.setObjectName(
+            "PresetNumberBadge" if self.variant == "number" else "PresetIconContainer"
+        )
         ic = QHBoxLayout(self.icon_container)
         ic.setContentsMargins(0, 0, 0, 0)
         ic.setSpacing(0)
 
         self.icn_lbl = QLabel()
+        self.icn_lbl.setObjectName(
+            "PresetNumberGlyph" if self.variant == "number" else "PresetIconGlyph"
+        )
         self.icn_lbl.setAlignment(Qt.AlignCenter)
         self.icn_lbl.setStyleSheet("background:transparent; border:none;")
         ic.addWidget(self.icn_lbl)
@@ -105,6 +116,11 @@ class PresetCard(QAbstractButton):
         lo.addWidget(self.nm_lbl)
 
     def _refresh_icon(self):
+        if self.variant == "number":
+            self.icn_lbl.setPixmap(QPixmap())
+            self.icn_lbl.setText(_NUMBER_GLYPHS.get(self.name, self.name))
+            return
+
         k = _ICON_MAP.get(self.name)
         if not k:
             if self.preset_id:
@@ -112,12 +128,12 @@ class PresetCard(QAbstractButton):
             else:
                 return
 
-        sz = 36 if self.variant == "core" else (24 if self.variant == "number" else 20)
-        color = "#4F7FF7" if self.variant == "core" else "#64748B"
+        sz = 34 if self.variant == "core" else 20
+        color = _CORE_ICON_COLORS.get(self.name, "#64748B") if self.variant == "core" else "#64748B"
 
+        self.icn_lbl.setText("")
         px = get_pixmap(k, sz, color, target_widget=self)
         self.icn_lbl.setPixmap(px)
-
     def contextMenuEvent(self, event):
         if not self.preset_id:
             super().contextMenuEvent(event)
@@ -159,16 +175,43 @@ class PresetCard(QAbstractButton):
         if event.type() in (QEvent.FontChange, QEvent.StyleChange):
             self._refresh_icon()
 
+    def _surface_colors(self):
+        """返回自绘卡片表面的背景色和边框色。"""
+        if self.property("error") == "true":
+            return "#FFF1F1", "#E5484D"
+        if self.property("running") == "true" or self.isDown():
+            return "#E4ECFA", "#6F8FCE"
+
+        hovered = self.underMouse() and self.isEnabled()
+        if self.variant == "number":
+            return ("#EEF4FC", "#88A2D0") if hovered else ("#F7FAFE", "#C8D5E7")
+
+        core_surfaces = {
+            "blue": ("#EDF3FC", "#B7C8E7"),
+            "slate": ("#F0F3F7", "#C9D3DF"),
+            "teal": ("#ECF6F2", "#BFDACE"),
+            "indigo": ("#F1EFF8", "#D0C9E2"),
+        }
+        background, border = core_surfaces.get(self.property("tone"), core_surfaces["blue"])
+        return ("#FFFFFF", "#88A2D0") if hovered else (background, border)
+
     def paintEvent(self, event):
-        opt = QStyleOption()
-        opt.initFrom(self)
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
 
         if self.isDown():
             p.translate(0, 1)
 
-        self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
+        if self.variant in ("core", "number"):
+            background, border = self._surface_colors()
+            p.setBrush(QColor(background))
+            p.setPen(QPen(QColor(border), 1))
+            radius = 12 if self.variant == "core" else 10
+            p.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), radius, radius)
+        else:
+            opt = QStyleOption()
+            opt.initFrom(self)
+            self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
 
         # running 状态呼吸点
         if self.property("running") == "true":
@@ -177,7 +220,6 @@ class PresetCard(QAbstractButton):
             p.drawEllipse(self.width() - 10, 6, 6, 6)
 
         p.end()
-
     def sizeHint(self) -> QSize:
         w, h = _SIZES.get(self.variant, (100, 72))
         return QSize(w, h)

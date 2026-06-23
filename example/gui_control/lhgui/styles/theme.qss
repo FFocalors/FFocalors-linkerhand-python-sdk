@@ -262,26 +262,26 @@ QPushButton[category="tool"]:disabled, #IconActionButton:disabled {
    Slider — 精密关节控制滑动条
    ================================================================ */
 QSlider::groove:horizontal {
-    height: 6px;
-    border-radius: 3px;
+    height: 4px;
+    border-radius: 2px;
     background: #E6ECF3;
     border: none;
 }
 QSlider::sub-page:horizontal {
     background: #4F7FF7;
-    border-radius: 3px;
+    border-radius: 2px;
 }
 QSlider::add-page:horizontal {
     background: #E6ECF3;
-    border-radius: 3px;
+    border-radius: 2px;
 }
 QSlider::handle:horizontal {
     background: #FFFFFF;
     border: 2px solid #4F7FF7;
-    width: 16px;
-    height: 16px;
-    margin: -5px 0;
-    border-radius: 8px;
+    width: 12px;
+    height: 12px;
+    margin: -4px 0;
+    border-radius: 6px;
 }
 QSlider::handle:horizontal:hover {
     background: #EAF1FF;
@@ -302,6 +302,21 @@ QSlider::sub-page:horizontal:disabled {
     background: #CBD5E1;
 }
 
+/* JointControlSlider — 给圆形手柄保留完整绘制区域，防止上下边缘被裁切 */
+QSlider#JointControlSlider {
+    min-height: 24px;
+    max-height: 24px;
+}
+QSlider#JointControlSlider::groove:horizontal {
+    height: 6px;
+    border-radius: 3px;
+}
+QSlider#JointControlSlider::handle:horizontal {
+    width: 18px;
+    margin: -6px 0;
+    border-radius: 9px;
+}
+
 /* ================================================================
    JointRow — 关节控制行
    ================================================================ */
@@ -309,8 +324,7 @@ QSlider::sub-page:horizontal:disabled {
     background-color: transparent;
     border: none;
     border-bottom: 1px solid #E8EDF3;
-    min-height: 56px;
-    max-height: 64px;
+    min-height: 54px;
 }
 #JointRow:hover {
     background-color: #F8FAFC;
@@ -548,6 +562,117 @@ QSpinBox#JointRowValue:disabled {
     margin: 0;
 }
 
+/* Preset actions v3 — 核心动作与数字手势使用可感知但克制的卡片背景 */
+#PresetCard[variant="core"] {
+    background-color: #F4F7FB;
+    border: 1px solid #D9E2EE;
+    border-radius: 12px;
+}
+#PresetCard[variant="core"][tone="blue"] {
+    background-color: #F0F4FC;
+    border-color: #D2DDF1;
+}
+#PresetCard[variant="core"][tone="slate"] {
+    background-color: #F3F5F8;
+    border-color: #D9E0E8;
+}
+#PresetCard[variant="core"][tone="teal"] {
+    background-color: #EFF7F4;
+    border-color: #CEE5DC;
+}
+#PresetCard[variant="core"][tone="indigo"] {
+    background-color: #F3F2F8;
+    border-color: #DDD9EA;
+}
+#PresetCard[variant="core"]:hover {
+    background-color: #FFFFFF;
+    border-color: #91A9D8;
+}
+#PresetCard[variant="core"]:pressed,
+#PresetCard[variant="core"][running="true"] {
+    background-color: #E8EFFB;
+    border-color: #6F8FCE;
+}
+#PresetCard[variant="core"]:disabled {
+    color: #536176;
+}
+#PresetCard[variant="core"] #PresetIconContainer {
+    min-height: 44px;
+    max-height: 50px;
+    background-color: #E5ECF8;
+    border: 1px solid #D2DDF0;
+    border-radius: 9px;
+}
+#PresetCard[variant="core"][tone="slate"] #PresetIconContainer {
+    background-color: #E8ECF1;
+    border-color: #D7DEE7;
+}
+#PresetCard[variant="core"][tone="teal"] #PresetIconContainer {
+    background-color: #E1F0EA;
+    border-color: #C9E1D7;
+}
+#PresetCard[variant="core"][tone="indigo"] #PresetIconContainer {
+    background-color: #E9E6F2;
+    border-color: #D8D2E7;
+}
+#PresetCard[variant="core"]:hover #PresetIconContainer {
+    background-color: #F8FAFC;
+}
+#PresetCard[variant="core"] #PresetLabel {
+    color: #28364B;
+    font-size: 13px;
+    font-weight: 650;
+}
+
+#PresetNumberRow {
+    background-color: #F7F9FC;
+    border: 1px solid #E2E8F0;
+    border-radius: 11px;
+}
+#PresetCard[variant="number"] {
+    min-height: 70px;
+    background-color: #FFFFFF;
+    border: 1px solid #D9E2EE;
+    border-radius: 10px;
+    color: #40506A;
+}
+#PresetCard[variant="number"]:hover {
+    background-color: #F1F5FC;
+    border-color: #92A9D5;
+}
+#PresetCard[variant="number"]:pressed,
+#PresetCard[variant="number"][running="true"] {
+    background-color: #E7EEFA;
+    border-color: #6F8FCE;
+}
+#PresetCard[variant="number"]:disabled {
+    background-color: #F8FAFC;
+    border-color: #E0E6EE;
+    color: #65748A;
+}
+#PresetNumberBadge {
+    min-height: 34px;
+    max-height: 36px;
+    background-color: #EAF0FA;
+    border: 1px solid #D3DFF0;
+    border-radius: 8px;
+}
+#PresetCard[variant="number"]:hover #PresetNumberBadge {
+    background-color: #DFE8F7;
+    border-color: #BBCBE6;
+}
+#PresetNumberGlyph {
+    color: #4E6FA9;
+    font-family: "Cascadia Mono", "Consolas", sans-serif;
+    font-size: 19px;
+    font-weight: 700;
+}
+#PresetCard[variant="number"] #PresetLabel {
+    color: #65748A;
+    font-size: 10px;
+    font-weight: 600;
+}
+
 /* ================================================================
    BottomBar — 底部控制栏
    ================================================================ */
@@ -709,62 +834,411 @@ QCheckBox::indicator:checked {
 }
 
 /* ================================================================
-   Vision & Game Page — Section Cards
+   Vision & Game Pages · Product workspace system v3
    ================================================================ */
-#VisionSectionCard, #GameSectionCard {
-    background-color: #FFFFFF;
-    border: 1px solid #DCE3EC;
-    border-radius: 10px;
+#VisionPage, #GamePage {
+    background-color: #F3F6FA;
 }
 
-/* CameraPreviewCard — 摄像头预览容器 */
-#CameraPreviewCard {
-    background-color: #FFFFFF;
-    border: 1px solid #DCE3EC;
-    border-radius: 10px;
-}
-
-/* VisionLeftCard / GameLeftCard — 左侧主卡片 */
 #VisionLeftCard, #GameLeftCard {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
+    border-radius: 14px;
+}
+
+#PageEyebrow {
+    color: #4F7FF7;
+    font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+}
+#PageTitle {
+    color: #172033;
+    font-size: 20px;
+    font-weight: 700;
+}
+#PageSubtitle {
+    color: #7A889D;
+    font-size: 11px;
+}
+
+#CameraStatusPill {
+    min-width: 58px;
+    min-height: 24px;
+    padding: 0 10px;
+    border: 1px solid #D9E1EB;
+    border-radius: 12px;
+    background-color: #F5F7FA;
+    color: #718096;
+    font-size: 10px;
+    font-weight: 600;
+}
+#CameraStatusPill[state="running"] {
+    background-color: #ECF8F2;
+    border-color: #BFE5D2;
+    color: #3F8166;
+}
+#CameraStatusPill[state="warning"] {
+    background-color: #FCF6EA;
+    border-color: #EBD4AE;
+    color: #A66F2E;
+}
+
+#CameraPreviewCard {
+    background-color: #F8FAFC;
+    border: 1px solid #E1E7EF;
+    border-radius: 12px;
+}
+#VisionCameraView, #GameCameraView {
+    background-color: #151B27;
+    border: 1px solid #202A3A;
+    border-radius: 9px;
+    color: #7F8DA3;
+    font-size: 12px;
+    font-weight: 500;
+}
+#CameraMeta {
+    color: #8A98AB;
+    font-size: 10px;
+    padding: 0 2px 1px 2px;
+}
+
+#PrimaryActionBar, #GameHintBar {
+    background-color: #F8FAFC;
+    border: 1px solid #E3E9F1;
+    border-radius: 10px;
+}
+#ActionBarNote, #GameHintText {
+    color: #7A889D;
+    font-size: 10px;
+}
+#GameHintDot {
+    color: #6C89D8;
+    font-size: 9px;
+}
+
+#ControlPanelScroll {
+    background: transparent;
+    border: none;
+}
+#ControlPanelScroll > QWidget > QWidget,
+#ControlPanelContent {
+    background: transparent;
+}
+
+#VisionSectionCard, #GameSectionCard {
     background-color: #FFFFFF;
     border: 1px solid #DCE3EC;
     border-radius: 12px;
 }
+#VisionSectionCard:hover, #GameSectionCard:hover {
+    border-color: #CFD9E6;
+}
+#SectionTitle {
+    color: #202B3C;
+    font-size: 13px;
+    font-weight: 650;
+}
+#SectionDescription {
+    color: #8794A7;
+    font-size: 10px;
+    line-height: 1.35;
+}
+#SubsectionLabel, #FieldLabel {
+    color: #66758A;
+    font-size: 10px;
+    font-weight: 600;
+}
 
-/* GameResultCard — 游戏结果显示卡片 */
-#GameResultCard {
+#ToggleRow {
+    background-color: #F7F9FC;
+    border: 1px solid #E4EAF2;
+    border-radius: 9px;
+}
+#ToggleTitle {
+    color: #253247;
+    font-size: 11px;
+    font-weight: 600;
+}
+#ToggleDescription {
+    color: #8A97A8;
+    font-size: 9px;
+}
+QCheckBox#SwitchCheck {
+    color: #56657A;
+    font-size: 10px;
+    font-weight: 600;
+    spacing: 6px;
+}
+QCheckBox#SwitchCheck::indicator {
+    width: 28px;
+    height: 16px;
+    border: 1px solid #C9D3DF;
+    border-radius: 8px;
+    background-color: #E3E8EF;
+}
+QCheckBox#SwitchCheck::indicator:checked {
+    background-color: #4F7FF7;
+    border-color: #416FE0;
+}
+
+#InlineGroup {
     background-color: #F8FAFC;
-    border: 1px solid #DCE3EC;
+    border: 1px solid #E6EBF2;
+    border-radius: 9px;
+}
+
+QPushButton[size="compact"] {
+    min-height: 28px;
+    padding: 4px 10px;
+    font-size: 11px;
+    border-radius: 7px;
+}
+QPushButton[category="secondary"][accent="true"] {
+    background-color: #EEF3FD;
+    border-color: #C8D6F2;
+    color: #4769A8;
+}
+QPushButton[category="secondary"][accent="true"]:hover {
+    background-color: #E3ECFC;
+    border-color: #8DA9DE;
+    color: #365B9C;
+}
+QPushButton[category="tool"][variant="channel"] {
+    min-height: 27px;
+    background-color: #FFFFFF;
+    border: 1px solid #E0E7F0;
+    border-radius: 7px;
+    color: #5F6F84;
+    font-size: 10px;
+    font-weight: 600;
+}
+QPushButton[category="tool"][variant="channel"]:hover {
+    background-color: #EEF3FD;
+    border-color: #B9C9E7;
+    color: #4869A6;
+}
+QPushButton[variant="gameAction"] {
+    font-size: 11px;
+    font-weight: 600;
+}
+
+#ParamCell {
+    background-color: #F8FAFC;
+    border: 1px solid #E4EAF2;
+    border-radius: 9px;
+}
+#ParamCell:hover {
+    background-color: #F4F7FB;
+    border-color: #D4DEEA;
+}
+#ParamCellLabel {
+    color: #718096;
+    font-size: 9px;
+    font-weight: 600;
+}
+QSpinBox#ParamCellInput, QDoubleSpinBox#ParamCellInput {
+    min-height: 27px;
+    background-color: #FFFFFF;
+    border: 1px solid #DCE4ED;
+    border-radius: 6px;
+    color: #243148;
+    padding: 2px 7px;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 11px;
+    font-weight: 600;
+}
+QSpinBox#ParamCellInput:focus, QDoubleSpinBox#ParamCellInput:focus {
+    border-color: #7D9BDF;
+}
+
+#StatusMetric {
+    background-color: #F8FAFC;
+    border: 1px solid #E4EAF2;
+    border-radius: 8px;
+}
+#StatusMetric[kind="hand"] {
+    background-color: #F1F5FC;
+    border-color: #D8E2F4;
+}
+#StatusMetricLabel {
+    color: #8390A2;
+    font-size: 9px;
+    font-weight: 500;
+}
+#StatusMetricValue {
+    color: #334155;
+    font-size: 11px;
+    font-weight: 650;
+}
+#StatusMetric[kind="hand"] #StatusMetricValue {
+    color: #4D6FAE;
+}
+QTextEdit#VisionLogView {
+    background-color: #F7F9FC;
+    border: 1px solid #E1E7EF;
     border-radius: 8px;
     padding: 8px;
+    color: #55657A;
+    font-family: "Cascadia Mono", "Consolas", "Microsoft YaHei UI", monospace;
+    font-size: 9px;
+    selection-background-color: #DCE7FA;
+    selection-color: #253247;
 }
 
-/* VisionPage, GamePage — 背景统一 */
-#VisionPage, #GamePage {
-    background-color: transparent;
+#RecordStatusBar {
+    background-color: #F3F6FA;
+    border: 1px solid #E1E7EF;
+    border-radius: 8px;
+}
+#RecordState, #PlaybackState {
+    color: #68778B;
+    font-size: 10px;
+    font-weight: 600;
 }
 
-/* ---- 右侧滚动区域内容防溢出及滚动条统一 ---- */
-QScrollArea QWidget {
+/* Game score and state */
+#ScoreTile {
+    background-color: #F8FAFC;
+    border: 1px solid #E2E8F0;
+    border-radius: 10px;
+}
+#ScoreTile[kind="human"] {
+    background-color: #EFF7F4;
+    border-color: #CFE5DC;
+}
+#ScoreTile[kind="machine"] {
+    background-color: #F3F2F8;
+    border-color: #DDD9EA;
+}
+#ScoreTile[kind="draw"] {
+    background-color: #F6F7F9;
+    border-color: #E1E5EA;
+}
+#ScoreLabel {
+    color: #718096;
+    font-size: 9px;
+    font-weight: 600;
+}
+#ScoreValue {
+    color: #405066;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 25px;
+    font-weight: 700;
+}
+#ScoreValue[kind="human"] { color: #4F876F; }
+#ScoreValue[kind="machine"] { color: #756B94; }
+#ScoreValue[kind="draw"] { color: #68778B; }
+
+#GameStatusTile {
+    background-color: #F8FAFC;
+    border: 1px solid #E5EAF1;
+    border-radius: 8px;
+}
+#GameStatusLabel {
+    color: #8995A6;
+    font-size: 9px;
+}
+#GameStatusValue {
+    color: #2E3B50;
+    font-size: 11px;
+    font-weight: 650;
+}
+#GameStatusTile[kind="timer"] #GameStatusValue,
+#GameStatusTile[kind="state"] #GameStatusValue {
+    color: #4F6FAA;
+}
+#StatusStrip {
+    background-color: #F7F9FC;
+    border: 1px solid #E3E9F1;
+    border-radius: 8px;
+}
+#StatusStripLabel {
+    color: #748297;
+    font-size: 10px;
+    font-weight: 600;
+}
+#StatusStripValue {
+    color: #9B5A60;
+    font-size: 10px;
+    font-weight: 650;
+}
+#GamePrompt {
+    background-color: #EEF3FD;
+    border: 1px solid #D8E3F6;
+    border-radius: 7px;
+    color: #5570A5;
+    padding: 7px 9px;
+    font-size: 10px;
+    font-weight: 500;
+}
+#GameResultCard {
+    background-color: #F1F6FC;
+    border: 1px solid #D6E2F1;
+    border-radius: 9px;
+}
+#GameResultTitle {
+    color: #304260;
+    font-size: 14px;
+    font-weight: 700;
+}
+#GameResultDescription {
+    color: #718096;
+    font-size: 10px;
+}
+#GameCountdownOverlay {
+    background-color: rgba(12, 18, 28, 145);
+    color: #FFFFFF;
+    font-size: 64px;
+    font-weight: 700;
+    border-radius: 8px;
+}
+#GameCelebrateOverlay {
+    background-color: rgba(12, 18, 28, 115);
+    color: #FFFFFF;
+    font-size: 18px;
+    font-weight: 700;
+    border-radius: 8px;
+}
+
+/* Waveform details */
+#WaveformMeta {
+    color: #94A3B8;
+    font-size: 9px;
+}
+#WaveformFilterBar {
+    background-color: #F8FAFC;
+    border: 1px solid #E8EDF3;
+    border-radius: 8px;
+    padding: 4px 6px;
+}
+#WaveformFilterLabel {
+    color: #7B889B;
+    font-size: 9px;
+    font-weight: 600;
+    padding-right: 3px;
+}
+
+/* Page-local scrollbars */
+#ControlPanelScroll QScrollBar:vertical {
     background: transparent;
+    width: 5px;
+    margin: 2px 0;
 }
-QScrollBar:vertical {
-    border: none;
-    background: transparent;
-    width: 6px;
-    margin: 0px;
+#ControlPanelScroll QScrollBar::handle:vertical {
+    background: #C9D3DF;
+    border-radius: 2px;
+    min-height: 28px;
 }
-QScrollBar::handle:vertical {
-    background: #CBD5E1;
-    min-height: 20px;
-    border-radius: 3px;
+#ControlPanelScroll QScrollBar::handle:vertical:hover {
+    background: #AAB8C8;
 }
-QScrollBar::handle:vertical:hover {
-    background: #94A3B8;
+#ControlPanelScroll QScrollBar::add-line:vertical,
+#ControlPanelScroll QScrollBar::sub-line:vertical {
+    height: 0;
 }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-    height: 0px;
-}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+#ControlPanelScroll QScrollBar::add-page:vertical,
+#ControlPanelScroll QScrollBar::sub-page:vertical {
     background: transparent;
 }

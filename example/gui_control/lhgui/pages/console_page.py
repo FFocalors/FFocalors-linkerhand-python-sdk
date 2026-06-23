@@ -220,9 +220,9 @@ class ConsolePage(QWidget):
             self.wide_layout.setSpacing(spacing)
             
             # 宽屏/紧凑屏并排填入三栏布局中
-            self.wide_layout.addWidget(self.left_widget, stretch=30)
-            self.wide_layout.addWidget(self.pose_card, stretch=38)
-            self.wide_layout.addWidget(self.preset_group, stretch=32)
+            self.wide_layout.addWidget(self.left_widget, stretch=28)
+            self.wide_layout.addWidget(self.pose_card, stretch=36)
+            self.wide_layout.addWidget(self.preset_group, stretch=36)
             
         self._current_mode = mode
 

@@ -120,19 +120,18 @@ class PresetGroup(QWidget):
         self.content.addWidget(self._section_title("数字手势"))
 
         row_layout = QHBoxLayout()
-        row_layout.setSpacing(6)
+        row_layout.setSpacing(7)
         row_layout.setContentsMargins(0, 0, 0, 0)
 
         for n in available:
             c = PresetCard(n, self.actions[n], "number")
             c.triggered.connect(self.triggered.emit)
-            row_layout.addWidget(c)
+            row_layout.addWidget(c, stretch=1)
             self._cards[n] = c
 
-        row_layout.addStretch()
 
-        wrapper = QWidget()
-        wrapper.setStyleSheet("background:transparent;")
+        wrapper = QFrame()
+        wrapper.setObjectName("PresetNumberRow")
         wrapper.setLayout(row_layout)
         self.content.addWidget(wrapper)
 
