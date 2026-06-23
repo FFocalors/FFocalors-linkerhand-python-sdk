@@ -1,50 +1,51 @@
-/* LinkerHand 现代机器人控制终端视觉设计系统 QSS
-   配色：低饱和科技蓝 + 精密工业灰，极高层次感与交互反馈 */
+/* ================================================================
+   LinkerHand 控制台 · 统一设计系统 v2
+   Windows 11 Fluent · 低饱和科技风 · 机器人控制终端
+   ================================================================ */
 
-/* ---- 全局通用配置 ---- */
+/* ----- 全局 ----- */
 QWidget {
-    color: #1e293b;
+    color: #1E293B;
     background-color: transparent;
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
     font-size: 13px;
-    selection-background-color: #4f82ff;
-    selection-color: #ffffff;
+    selection-background-color: #4F7FF7;
+    selection-color: #FFFFFF;
 }
-
 QMainWindow {
-    background-color: #f3f6fa;
+    background-color: #F3F6FA;
 }
-
 QDialog {
-    background-color: #ffffff;
+    background-color: #FFFFFF;
 }
 
-/* ---- 一级容器 (主白面板卡片) ---- */
-#JointControlCard, #PresetGroup, #BottomBar, #HandPoseCard, #WaveformPanel, #PresetEditorDialog {
-    background-color: #ffffff;
-    border: 1px solid #dce3ec;
+/* ----- 一级卡片容器 ----- */
+#JointControlCard, #HandPoseCard, #WaveformPanel, #PresetGroup, #BottomBar,
+#PresetEditorDialog {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
     border-radius: 12px;
 }
 
-/* ---- 顶部导航栏 ---- */
+/* ----- TopBar ----- */
 #TopBar {
-    background-color: #ffffff;
-    border-bottom: 1px solid #dce3ec;
+    background-color: #FFFFFF;
+    border-bottom: 1px solid #DCE3EC;
 }
 #TopBarTitle {
-    color: #1e293b;
+    color: #1E293B;
     font-size: 16px;
     font-weight: 600;
 }
 #TopBarInfo {
-    color: #64748b;
+    color: #64748B;
     font-size: 12px;
 }
 
-/* ---- 侧边导航栏 ---- */
+/* ----- Sidebar ----- */
 #Sidebar {
-    background-color: #ffffff;
-    border-right: 1px solid #dce3ec;
+    background-color: #FFFFFF;
+    border-right: 1px solid #DCE3EC;
     min-width: 200px;
     max-width: 200px;
 }
@@ -58,24 +59,24 @@ QDialog {
     border-radius: 8px;
 }
 #SidebarItem[active="true"] {
-    background-color: #eaf1ff;
+    background-color: #EAF1FF;
 }
 #SidebarButton {
     background: transparent;
     border: none;
     border-radius: 8px;
     padding: 10px 14px;
-    color: #64748b;
+    color: #64748B;
     text-align: left;
     font-size: 13px;
     font-weight: 500;
 }
 #SidebarButton:hover {
-    background-color: #f8fafc;
-    color: #1e293b;
+    background-color: #F8FAFC;
+    color: #1E293B;
 }
 #SidebarButton:checked {
-    color: #4f82ff;
+    color: #4F7FF7;
     font-weight: 600;
 }
 #Sidebar[compact="true"] #SidebarButton {
@@ -83,365 +84,567 @@ QDialog {
     text-align: center;
 }
 
-/* ---- 按钮系统设计 ---- */
+/* ================================================================
+   Unified Button System
+   ================================================================ */
 
-/* 1. PrimaryButton 主色按钮 */
+/* Primary — 主操作按钮 (蓝底白字) */
 QPushButton[category="primary"], #PrimaryButton {
-    background-color: #4f82ff;
-    border: 1px solid #3b6fe5;
-    border-top-color: #8faaff; /* 模拟高光亮边 */
+    background-color: #4F7FF7;
+    border: 1px solid #3E6FEA;
     border-radius: 8px;
     padding: 6px 16px;
-    color: #ffffff;
-    font-weight: 500;
+    color: #FFFFFF;
+    font-weight: 600;
+    font-size: 13px;
 }
 QPushButton[category="primary"]:hover, #PrimaryButton:hover {
-    background-color: #3b6fe5;
-    border-color: #2a55b8;
+    background-color: #3E6FEA;
+    border-color: #2F5FD9;
 }
 QPushButton[category="primary"]:pressed, #PrimaryButton:pressed {
-    background-color: #2a55b8;
-    border-color: #1e3d8b;
-    border-top-color: #1e3d8b; /* 消除亮边 */
-    padding-top: 7px; padding-bottom: 5px; /* 按压下沉反馈 */
+    background-color: #2F5FD9;
+    border-color: #1E4FC8;
 }
 QPushButton[category="primary"]:disabled, #PrimaryButton:disabled {
-    background-color: #cbd5e1;
-    border-color: #cbd5e1;
-    color: #94a3b8;
+    background-color: #CBD5E1;
+    border-color: #CBD5E1;
+    color: #94A3B8;
 }
 
-/* 2. SecondaryButton 次级按钮 / 普通按钮 */
-QPushButton, QPushButton[category="secondary"], #SecondaryButton {
-    background-color: #ffffff;
-    border: 1px solid #dce3ec;
+/* Secondary — 次级按钮 (白底灰边) */
+QPushButton[category="secondary"], #SecondaryButton {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
     border-radius: 8px;
     padding: 6px 14px;
-    color: #1e293b;
+    color: #1E293B;
     font-weight: 500;
+    font-size: 13px;
 }
-QPushButton:hover, QPushButton[category="secondary"]:hover, #SecondaryButton:hover {
-    background-color: #eaf1ff;
-    border-color: #4f82ff;
-    color: #4f82ff;
+QPushButton[category="secondary"]:hover, #SecondaryButton:hover {
+    background-color: #EAF1FF;
+    border-color: #4F7FF7;
+    color: #4F7FF7;
 }
-QPushButton:pressed, QPushButton[category="secondary"]:pressed, #SecondaryButton:pressed {
-    background-color: #e2e8f0;
-    border-color: #cbd5e1;
-    padding-top: 7px; padding-bottom: 5px;
+QPushButton[category="secondary"]:pressed, #SecondaryButton:pressed {
+    background-color: #DBEAFE;
+    border-color: #3E6FEA;
 }
-QPushButton:disabled, QPushButton[category="secondary"]:disabled, #SecondaryButton:disabled {
-    background-color: #f8fafc;
-    border-color: #e9eef4;
-    color: #94a3b8;
+QPushButton[category="secondary"]:disabled, #SecondaryButton:disabled {
+    background-color: #F8FAFC;
+    border-color: #E8EDF3;
+    color: #94A3B8;
 }
 
-/* 3. DangerButton 危险按钮 */
-QPushButton[category="danger"], #DangerButton {
-    background-color: #fff1f1;
-    border: 1px solid #e14c4c;
-    border-radius: 8px;
-    padding: 6px 14px;
-    color: #e14c4c;
-    font-weight: 500;
-}
-QPushButton[category="danger"]:hover, #DangerButton:hover {
-    background-color: #fee2e2;
-    border-color: #b91c1c;
-    color: #b91c1c;
-}
-QPushButton[category="danger"]:pressed, #DangerButton:pressed {
-    background-color: #fca5a5;
-    border-color: #991b1b;
-    padding-top: 7px; padding-bottom: 5px;
-}
-
-/* 4. WarningButton 警告按钮 */
+/* Warning — 警告按钮 (浅黄底深黄字) */
 QPushButton[category="warning"], #WarningButton {
-    background-color: #fffbeb;
-    border: 1px solid #d99000;
+    background-color: #FFFBEB;
+    border: 1px solid #D99000;
     border-radius: 8px;
     padding: 6px 14px;
-    color: #d99000;
-    font-weight: 500;
+    color: #D99000;
+    font-weight: 600;
+    font-size: 13px;
 }
 QPushButton[category="warning"]:hover, #WarningButton:hover {
-    background-color: #fef3c7;
-    border-color: #b45309;
-    color: #b45309;
+    background-color: #FEF3C7;
+    border-color: #B45309;
+    color: #B45309;
 }
 QPushButton[category="warning"]:pressed, #WarningButton:pressed {
-    background-color: #fde68a;
-    border-color: #92400e;
-    padding-top: 7px; padding-bottom: 5px;
+    background-color: #FDE68A;
+    border-color: #92400E;
+}
+QPushButton[category="warning"]:disabled, #WarningButton:disabled {
+    background-color: #F8FAFC;
+    border-color: #E8EDF3;
+    color: #94A3B8;
 }
 
-/* 5. IconActionButton / 属性按钮 */
+/* Danger — 危险按钮 (浅红底红字) */
+QPushButton[category="danger"], #DangerButton {
+    background-color: #FFF1F1;
+    border: 1px solid #E5484D;
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: #E5484D;
+    font-weight: 600;
+    font-size: 13px;
+}
+QPushButton[category="danger"]:hover, #DangerButton:hover {
+    background-color: #FEE2E2;
+    border-color: #B91C1C;
+    color: #B91C1C;
+}
+QPushButton[category="danger"]:pressed, #DangerButton:pressed {
+    background-color: #FCA5A5;
+    border-color: #991B1B;
+}
+QPushButton[category="danger"]:disabled, #DangerButton:disabled {
+    background-color: #F8FAFC;
+    border-color: #E8EDF3;
+    color: #94A3B8;
+}
+
+/* Emergency — 紧急停止 (实心红底白字，最醒目) */
+QPushButton[category="emergency"], #EmergencyButton {
+    background-color: #E5484D;
+    border: 1px solid #D03F44;
+    border-radius: 8px;
+    padding: 8px 20px;
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 14px;
+    min-width: 100px;
+}
+QPushButton[category="emergency"]:hover, #EmergencyButton:hover {
+    background-color: #D03F44;
+    border-color: #B91C1C;
+}
+QPushButton[category="emergency"]:pressed, #EmergencyButton:pressed {
+    background-color: #B91C1C;
+    border-color: #991B1B;
+}
+QPushButton[category="emergency"]:disabled, #EmergencyButton:disabled {
+    background-color: #CBD5E1;
+    border-color: #CBD5E1;
+    color: #94A3B8;
+}
+
+/* IconAction — 图标工具按钮 */
 QPushButton[category="tool"], #IconActionButton {
     background: transparent;
     border: 1px solid transparent;
     border-radius: 6px;
-    padding: 6px;
-    color: #64748b;
-}
-QPushButton[category="tool"]:hover, #IconActionButton:hover {
-    background-color: #f1f5f9;
-    color: #1e293b;
-}
-QPushButton[category="tool"]:pressed, #IconActionButton:pressed {
-    background-color: #e2e8f0;
-    padding-top: 7px; padding-bottom: 5px;
-}
-
-/* 底部紧凑参数换行按钮 */
-#ParamButton {
-    background-color: #f8fafc;
-    border: 1px solid #dce3ec;
-    border-radius: 8px;
-    padding: 4px 10px;
-    color: #64748b;
-    font-size: 11px;
-    font-weight: 500;
-    text-align: center;
-}
-#ParamButton:hover {
-    background-color: #eef4ff;
-    border-color: #4f82ff;
-    color: #4f82ff;
-}
-#ParamButton:pressed {
-    background-color: #eaf1ff;
-    border-color: #3b6fe5;
-}
-
-/* ---- 动作卡片 (PresetCard) ---- */
-#PresetCard {
-    background-color: #f8fafc;
-    border: 1px solid #dce3ec;
-    border-radius: 8px;
-    color: #1e293b;
-}
-#PresetCard:hover {
-    background-color: #eaf1ff;
-    border-color: #4f82ff;
-    color: #3b6fe5;
-}
-#PresetCard:pressed {
-    background-color: #dbeafe;
-    border-color: #3b6fe5;
-}
-#PresetCard:focus {
-    border-color: #4f82ff;
-}
-#PresetCard:disabled {
-    color: #94a3b8;
-    background-color: #f8fafc;
-    border-color: #e9eef4;
-}
-/* 运行状态卡片 */
-#PresetCard[running="true"] {
-    background-color: #eaf1ff;
-    border-color: #4f82ff;
-    color: #4f82ff;
-}
-#PresetCard:disabled[running="true"] {
-    background-color: #eaf1ff;
-    border-color: #4f82ff;
-    color: #4f82ff;
-}
-#PresetCard[error="true"] {
-    background-color: #fff1f1;
-    border-color: #e14c4c;
-    color: #e14c4c;
-}
-
-/* 动作卡片内部图标容器 */
-#PresetIconContainer {
-    background-color: #f1f5f9;
-    border-radius: 6px;
-    border: none;
-}
-#PresetCard:hover #PresetIconContainer {
-    background-color: #ffffff;
-}
-#PresetCard[running="true"] #PresetIconContainer {
-    background-color: #ffffff;
-}
-
-#PresetLabel {
-    color: inherit;
+    padding: 5px 8px;
+    color: #64748B;
     font-size: 12px;
     font-weight: 500;
+    min-height: 28px;
 }
-#PresetCard[variant="primary"] #PresetLabel {
-    font-size: 13px;
-    font-weight: 600;
+QPushButton[category="tool"]:hover, #IconActionButton:hover {
+    background-color: #F1F5F9;
+    border-color: #DCE3EC;
+    color: #1E293B;
 }
-#PresetCard[variant="compact"] #PresetLabel {
-    font-size: 11px;
+QPushButton[category="tool"]:pressed, #IconActionButton:pressed {
+    background-color: #E2E8F0;
 }
-
-/* ---- 输入与设置件 ---- */
-QLineEdit, QSpinBox, QComboBox {
-    background-color: #ffffff;
-    border: 1px solid #dce3ec;
-    border-radius: 7px;
-    padding: 5px 8px;
-    color: #1e293b;
-}
-QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-    border-color: #4f82ff;
-}
-QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
-    background-color: #f8fafc;
-    color: #94a3b8;
-    border-color: #e9eef4;
-}
-QSpinBox::up-button, QSpinBox::down-button {
-    background-color: #f8fafc;
-    border-left: 1px solid #e9eef4;
+QPushButton[category="tool"]:disabled, #IconActionButton:disabled {
+    color: #94A3B8;
 }
 
-/* ---- 精密关节控制行 (JointRow) ---- */
+/* ParameterBlock — 可点击参数卡片 */
+#ParameterBlock {
+    background-color: #F8FAFC;
+    border: 1px solid #DCE3EC;
+    border-radius: 10px;
+    padding: 4px 12px;
+}
+#ParameterBlock:hover {
+    background-color: #EAF1FF;
+    border-color: #4F7FF7;
+}
+#ParameterLabel {
+    color: #64748B;
+    font-size: 10px;
+    font-weight: 500;
+}
+#ParameterValue {
+    color: #4F7FF7;
+    font-size: 15px;
+    font-weight: 700;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+}
+
+/* ================================================================
+   Slider — 精密关节控制滑动条
+   ================================================================ */
+QSlider::groove:horizontal {
+    height: 6px;
+    border-radius: 3px;
+    background: #E6ECF3;
+    border: none;
+}
+QSlider::sub-page:horizontal {
+    background: #4F7FF7;
+    border-radius: 3px;
+}
+QSlider::add-page:horizontal {
+    background: #E6ECF3;
+    border-radius: 3px;
+}
+QSlider::handle:horizontal {
+    background: #FFFFFF;
+    border: 2px solid #4F7FF7;
+    width: 16px;
+    height: 16px;
+    margin: -5px 0;
+    border-radius: 8px;
+}
+QSlider::handle:horizontal:hover {
+    background: #EAF1FF;
+    border-color: #3E6FEA;
+}
+QSlider::handle:horizontal:pressed {
+    background: #DBEAFE;
+    border-color: #2F5FD9;
+}
+QSlider::groove:horizontal:disabled {
+    background: #E8EDF3;
+}
+QSlider::handle:horizontal:disabled {
+    background: #F8FAFC;
+    border-color: #CBD5E1;
+}
+QSlider::sub-page:horizontal:disabled {
+    background: #CBD5E1;
+}
+
+/* ================================================================
+   JointRow — 关节控制行
+   ================================================================ */
 #JointRow {
     background-color: transparent;
     border: none;
+    border-bottom: 1px solid #E8EDF3;
+    min-height: 56px;
+    max-height: 64px;
 }
 #JointRow:hover {
-    background-color: #f8fafc;
+    background-color: #F8FAFC;
 }
 #JointRow[active="true"] {
-    background-color: #eaf1ff;
+    background-color: #EAF1FF;
 }
 #JointRowName {
-    color: #1e293b;
+    color: #1E293B;
     font-size: 13px;
     font-weight: 500;
 }
 #JointRowName:disabled {
-    color: #94a3b8;
+    color: #94A3B8;
 }
-
-/* 关节反馈小型胶囊标签 */
-#JointFeedback {
-    color: #64748b;
-    font-family: "Cascadia Mono", "Consolas", monospace;
-    font-size: 11px;
+/* JointRowValue — 目标值 SpinBox */
+QSpinBox#JointRowValue {
+    background-color: #F8FAFC;
+    border: 1px solid #E8EDF3;
+    border-radius: 6px;
+    padding: 2px 6px;
+    color: #1E293B;
     font-weight: 600;
-    background-color: #f1f5f9;
-    border-radius: 4px;
-    padding: 1px 5px;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+    font-size: 13px;
+    min-width: 46px;
+    max-width: 52px;
 }
-#JointRow[active="true"] #JointFeedback {
-    background-color: #ffffff;
-    color: #4f82ff;
+QSpinBox#JointRowValue:focus {
+    border-color: #4F7FF7;
+    background-color: #FFFFFF;
 }
-#JointFeedback:disabled {
-    color: #94a3b8;
-    background: transparent;
+#JointRow[active="true"] QSpinBox#JointRowValue {
+    color: #4F7FF7;
+    border-color: #4F7FF7;
+    background-color: #FFFFFF;
 }
-#JointRowSep {
-    background-color: #e9eef4;
-    max-height: 1px;
+QSpinBox#JointRowValue:disabled {
+    background-color: transparent;
+    border-color: #E8EDF3;
+    color: #94A3B8;
 }
 
-/* ---- 3D 孪生监控参数格 (ParamBlock) ---- */
-#ParamBlock {
-    background-color: #f8fafc;
-    border: 1px solid #dce3ec;
-    border-radius: 8px;
+/* ================================================================
+   CardTitle — 统一的卡片标题
+   ================================================================ */
+#CardTitle {
+    color: #1E293B;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 0;
+    margin: 0;
 }
-#ParamTitle {
-    color: #64748b;
+
+/* ================================================================
+   WaveformPanel — 实时曲线面板
+   ================================================================ */
+/* WaveformToggle — 曲线开关 */
+#WaveformToggle {
+    border: 1px solid #E8EDF3;
+    border-radius: 12px;
+    padding: 2px 8px;
     font-size: 11px;
     font-weight: 500;
+    background: #FFFFFF;
+    color: #94A3B8;
 }
-#ParamValue {
-    color: #4f82ff;
+#WaveformToggle:checked {
+    color: #4F7FF7;
+    border-color: #4F7FF7;
+    background: #EAF1FF;
+}
+#WaveformToggle:hover {
+    border-color: #4F7FF7;
+}
+
+/* ================================================================
+   HandPoseCard — 姿态监控卡片
+   ================================================================ */
+#HandViewport {
+    background-color: #F8FAFC;
+    border: 1px solid #E8EDF3;
+    border-radius: 10px;
+}
+#PoseView {
+    background-color: #F8FAFC;
+    border: none;
+    border-radius: 10px;
+}
+
+/* JointSummaryItem — 姿态摘要小卡片 */
+#JointSummaryItem {
+    background-color: #F8FAFC;
+    border: 1px solid #E8EDF3;
+    border-radius: 8px;
+}
+#JointSummaryLabel {
+    color: #64748B;
+    font-size: 10px;
+    font-weight: 500;
+}
+#JointSummaryValue {
+    color: #1E293B;
     font-size: 15px;
     font-weight: 600;
     font-family: "Cascadia Mono", "Consolas", monospace;
 }
 
-/* ---- 滑条样式重做 ---- */
-QSlider::groove:horizontal {
-    height: 4px;
-    border-radius: 2px;
-    background: #e2e8f0;
+/* ParamBlock (legacy) */
+#ParamBlock {
+    background-color: #F8FAFC;
+    border: 1px solid #DCE3EC;
+    border-radius: 10px;
+}
+#ParamTitle {
+    color: #64748B;
+    font-size: 11px;
+    font-weight: 500;
+}
+#ParamValue {
+    color: #4F7FF7;
+    font-size: 15px;
+    font-weight: 600;
+    font-family: "Cascadia Mono", "Consolas", monospace;
+}
+
+/* ================================================================
+   PresetCard — 动作预设卡片系统
+   ================================================================ */
+#PresetCard {
+    background-color: #F8FAFC;
+    border: 1px solid #DCE3EC;
+    border-radius: 8px;
+    color: #1E293B;
+}
+#PresetCard:hover {
+    background-color: #EAF1FF;
+    border-color: #4F7FF7;
+    color: #3E6FEA;
+}
+#PresetCard:pressed {
+    background-color: #DBEAFE;
+    border-color: #3E6FEA;
+}
+#PresetCard:disabled {
+    color: #94A3B8;
+    background-color: #F8FAFC;
+    border-color: #E8EDF3;
+}
+#PresetCard[running="true"] {
+    background-color: #EAF1FF;
+    border-color: #4F7FF7;
+    color: #4F7FF7;
+}
+#PresetCard[error="true"] {
+    background-color: #FFF1F1;
+    border-color: #E5484D;
+    color: #E5484D;
+}
+
+/* variant="core" — 核心动作卡片 (2×2 网格, 白底, 较大) */
+#PresetCard[variant="core"] {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
+    border-radius: 12px;
+}
+#PresetCard[variant="core"]:hover {
+    background-color: #F8FAFC;
+    border-color: #4F7FF7;
+}
+#PresetCard[variant="core"][running="true"] {
+    background-color: #EAF1FF;
+    border-color: #4F7FF7;
+}
+
+/* variant="number" — 数字手势卡片 */
+#PresetCard[variant="number"] {
+    border-radius: 8px;
+}
+
+/* variant="custom" — 自定义预设卡片 */
+#PresetCard[variant="custom"] {
+    border-radius: 8px;
+}
+
+/* variant="add" — 添加预设卡片 (虚线边框) */
+#PresetCard[variant="add"] {
+    background-color: #FAFBFD;
+    border: 1px dashed #4F7FF7;
+    border-radius: 8px;
+}
+#PresetCard[variant="add"]:hover {
+    background-color: #EAF1FF;
+    border-style: solid;
+}
+
+/* PresetIconContainer — 图标容器 */
+#PresetIconContainer {
+    background-color: #EAF1FF;
+    border-radius: 8px;
     border: none;
 }
-QSlider::sub-page:horizontal {
-    background: #4f82ff;
-    border-radius: 2px;
+#PresetCard:hover #PresetIconContainer {
+    background-color: #FFFFFF;
 }
-QSlider::handle:horizontal {
-    background: #ffffff;
-    border: 2px solid #4f82ff;
-    width: 12px;
-    height: 12px;
-    margin-top: -4px;
-    margin-bottom: -4px;
-    border-radius: 7px;
-}
-QSlider::handle:horizontal:hover {
-    background: #eaf1ff;
-    border-color: #3b6fe5;
-}
-QSlider::handle:horizontal:pressed {
-    background: #dbeafe;
-    border-color: #2a55b8;
-}
-QSlider:disabled {
-    opacity: 0.5;
+#PresetCard[running="true"] #PresetIconContainer {
+    background-color: #FFFFFF;
 }
 
-/* ---- 状态芯片 (StatusBadge) ---- */
-#StatusBadge {
-    border-radius: 999px;
-    padding: 2px 8px;
+/* PresetLabel — 卡片文本 */
+#PresetLabel {
+    color: inherit;
+    font-size: 13px;
+    font-weight: 500;
+}
+#PresetCard[variant="core"] #PresetLabel {
+    font-size: 14px;
+    font-weight: 600;
+}
+#PresetCard[variant="number"] #PresetLabel,
+#PresetCard[variant="custom"] #PresetLabel {
+    font-size: 12px;
+}
+#PresetCard[variant="add"] #PresetLabel {
+    color: #4F7FF7;
+    font-weight: 500;
+}
+
+/* PresetSectionTitle — 分组标题 */
+#PresetSectionTitle {
+    color: #64748B;
     font-size: 11px;
     font-weight: 600;
-    background-color: #f1f5f9;
-    color: #64748b;
-    border: 1px solid #dce3ec;
+    padding: 0;
+    margin: 0;
 }
-#StatusBadge[level="connected"]  { background-color: #e6f6ec; color: #22a06b; border-color: #bef0d6; }
-#StatusBadge[level="connecting"] { background-color: #fff8e6; color: #d99000; border-color: #ffe8b3; }
-#StatusBadge[level="error"]      { background-color: #fff1f1; color: #e14c4c; border-color: #ffd1d1; }
-#StatusBadge[level="running"]    { background-color: #eaf1ff; color: #4f82ff; border-color: #cce0ff; }
-#StatusBadge[level="warning"]    { background-color: #fff8e6; color: #d99000; border-color: #ffe8b3; }
-#StatusBadge[level="disconnected"] { background-color: #fff1f1; color: #e14c4c; border-color: #ffd1d1; }
 
-/* ---- QTextEdit 日志区 ---- */
+/* ================================================================
+   BottomBar — 底部控制栏
+   ================================================================ */
+/* StatusInfoBlock — 状态信息块 */
+#StatusInfoBlock {
+    background-color: #F8FAFC;
+    border: 1px solid #E8EDF3;
+    border-radius: 8px;
+    padding: 4px 12px;
+}
+#StatusInfoLabel {
+    color: #64748B;
+    font-size: 10px;
+    font-weight: 500;
+}
+#StatusInfoValue {
+    color: #1E293B;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+/* BottomDivider — 底栏分组线 */
+#BottomDivider {
+    background-color: #E8EDF3;
+    max-width: 1px;
+    min-width: 1px;
+    border: none;
+    margin: 8px 6px;
+}
+
+/* ================================================================
+   Inputs, StatusBadge, Scrollbar, etc.
+   ================================================================ */
+
+/* Inputs */
+QLineEdit, QSpinBox, QComboBox {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
+    border-radius: 7px;
+    padding: 5px 8px;
+    color: #1E293B;
+}
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
+    border-color: #4F7FF7;
+}
+QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
+    background-color: #F8FAFC;
+    color: #94A3B8;
+    border-color: #E8EDF3;
+}
+QSpinBox::up-button, QSpinBox::down-button {
+    background-color: #F8FAFC;
+    border-left: 1px solid #E8EDF3;
+    width: 16px;
+}
+
+/* StatusBadge — 胶囊状态标签 */
+#StatusBadge {
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    background-color: #F1F5F9;
+    color: #64748B;
+    border: 1px solid #DCE3EC;
+}
+#StatusBadge[level="connected"]   { background-color: #E6F6EC; color: #22A06B; border-color: #BEF0D6; }
+#StatusBadge[level="connecting"]  { background-color: #FFF8E6; color: #D99000; border-color: #FFE8B3; }
+#StatusBadge[level="error"]       { background-color: #FFF1F1; color: #E5484D; border-color: #FFD1D1; }
+#StatusBadge[level="running"]     { background-color: #EAF1FF; color: #4F7FF7; border-color: #CCE0FF; }
+#StatusBadge[level="warning"]     { background-color: #FFF8E6; color: #D99000; border-color: #FFE8B3; }
+#StatusBadge[level="disconnected"]{ background-color: #FFF1F1; color: #E5484D; border-color: #FFD1D1; }
+
+/* Log View */
 QTextEdit#LogView {
-    background-color: #ffffff;
-    border: 1px solid #dce3ec;
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
     border-radius: 10px;
     padding: 10px;
     font-family: "Consolas", "Microsoft YaHei", monospace;
     font-size: 12px;
-    color: #1e293b;
+    color: #1E293B;
 }
 
-/* ---- 3D 视图包装 ---- */
-#PoseView {
-    background-color: #f8fafc;
-    border: 1px solid #e9eef4;
-    border-radius: 8px;
-}
-
-/* ---- 滚动条降噪 ---- */
+/* Scrollbar */
 QScrollBar:vertical {
     background: transparent;
     width: 6px;
+    margin: 4px 0;
 }
 QScrollBar::handle:vertical {
-    background: #cbd5e1;
+    background: #CBD5E1;
     border-radius: 3px;
     min-height: 24px;
 }
 QScrollBar::handle:vertical:hover {
-    background: #94a3b8;
+    background: #94A3B8;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0;
@@ -449,22 +652,23 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 QScrollBar:horizontal {
     background: transparent;
     height: 6px;
+    margin: 0 4px;
 }
 QScrollBar::handle:horizontal {
-    background: #cbd5e1;
+    background: #CBD5E1;
     border-radius: 3px;
     min-width: 24px;
 }
 QScrollBar::handle:horizontal:hover {
-    background: #94a3b8;
+    background: #94A3B8;
 }
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
     width: 0;
 }
 
-/* ---- 分割器 ---- */
+/* Splitter */
 QSplitter::handle {
-    background-color: #e9eef4;
+    background-color: #E8EDF3;
 }
 QSplitter::handle:horizontal {
     width: 1px;
@@ -473,10 +677,10 @@ QSplitter::handle:vertical {
     height: 1px;
 }
 
-/* ---- GroupBox/Tab/CheckBox ---- */
+/* GroupBox / CheckBox */
 QGroupBox {
-    background: #ffffff;
-    border: 1px solid #dce3ec;
+    background: #FFFFFF;
+    border: 1px solid #DCE3EC;
     border-radius: 10px;
     margin-top: 10px;
     padding: 12px;
@@ -485,21 +689,82 @@ QGroupBox::title {
     subcontrol-origin: margin;
     left: 12px;
     padding: 0 6px;
-    color: #1e293b;
+    color: #1E293B;
     font-weight: 600;
 }
 QCheckBox {
-    color: #1e293b;
+    color: #1E293B;
     spacing: 6px;
 }
 QCheckBox::indicator {
     width: 16px;
     height: 16px;
-    border: 1px solid #dce3ec;
+    border: 1px solid #DCE3EC;
     border-radius: 4px;
-    background: #ffffff;
+    background: #FFFFFF;
 }
 QCheckBox::indicator:checked {
-    background-color: #4f82ff;
-    border-color: #4f82ff;
+    background-color: #4F7FF7;
+    border-color: #4F7FF7;
+}
+
+/* ================================================================
+   Vision & Game Page — Section Cards
+   ================================================================ */
+#VisionSectionCard, #GameSectionCard {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
+    border-radius: 10px;
+}
+
+/* CameraPreviewCard — 摄像头预览容器 */
+#CameraPreviewCard {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
+    border-radius: 10px;
+}
+
+/* VisionLeftCard / GameLeftCard — 左侧主卡片 */
+#VisionLeftCard, #GameLeftCard {
+    background-color: #FFFFFF;
+    border: 1px solid #DCE3EC;
+    border-radius: 12px;
+}
+
+/* GameResultCard — 游戏结果显示卡片 */
+#GameResultCard {
+    background-color: #F8FAFC;
+    border: 1px solid #DCE3EC;
+    border-radius: 8px;
+    padding: 8px;
+}
+
+/* VisionPage, GamePage — 背景统一 */
+#VisionPage, #GamePage {
+    background-color: transparent;
+}
+
+/* ---- 右侧滚动区域内容防溢出及滚动条统一 ---- */
+QScrollArea QWidget {
+    background: transparent;
+}
+QScrollBar:vertical {
+    border: none;
+    background: transparent;
+    width: 6px;
+    margin: 0px;
+}
+QScrollBar::handle:vertical {
+    background: #CBD5E1;
+    min-height: 20px;
+    border-radius: 3px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #94A3B8;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
 }

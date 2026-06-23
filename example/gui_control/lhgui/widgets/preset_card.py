@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""预设动作项（QAbstractButton）。
+"""预设动作卡片（QAbstractButton，统一卡片体系）。
 
-利用 DPR-aware 提取物理尺寸 QPixmap，在 showEvent 及 DPI 变更时自动刷新，解决高 DPI 模糊。
-无任何 Unicode 字符假冒图标，按钮图标与文本独立分开管理。
+支持四个视觉变体：
+  - core:   2×2 核心动作 (张开/握拳/OK/点赞)
+  - number: 数字手势行
+  - custom: 自定义预设
+  - add:    添加预设（虚线边框）
 """
 from PyQt5.QtWidgets import (
-    QAbstractButton, QVBoxLayout, QLabel, QStyle, QStyleOption
+    QAbstractButton, QVBoxLayout, QLabel, QStyle, QStyleOption, QWidget, QHBoxLayout
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QEvent
-from PyQt5.QtGui import QPainter, QPixmap, QColor
+from PyQt5.QtGui import QPainter, QColor
 
 from lhgui.utils.icon_helper import get_pixmap
 from lhgui.utils.style_utils import set_dynamic_property
@@ -20,13 +23,21 @@ _ICON_MAP = {
     "肆": "number_four", "伍": "number_five",
     "添加预设": "add_preset",
 }
-_SIZES = {"primary": (130, 96), "normal": (100, 76), "compact": (58, 56)}
+
+# (min_w, min_h)
+_SIZES = {
+    "core":   (140, 92),
+    "number": (64, 60),
+    "custom": (64, 60),
+    "add":    (64, 60),
+}
 
 
 class PresetCard(QAbstractButton):
     triggered = pyqtSignal(str, list)
 
-    def __init__(self, name: str, positions: list, variant: str = "normal", preset_id: str = None):
+    def __init__(self, name: str, positions: list, variant: str = "normal",
+                 preset_id: str = None):
         super().__init__()
         self.name = name
         self.positions = list(positions)
@@ -38,21 +49,20 @@ class PresetCard(QAbstractButton):
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setAccessibleName(f"预设动作 {name}")
+
         if self.preset_id:
             self.setToolTip(f"{name} (左键执行，右键管理)")
         else:
             self.setToolTip(name)
-        
-        w, h = _SIZES.get(variant, (100, 76))
+
+        w, h = _SIZES.get(variant, (100, 72))
         self.setMinimumSize(w, h)
-        
-        # 如果是自定义预设，触发时发出 preset_id 唯一标识，而不是名字
+
         trigger_key = self.preset_id if self.preset_id else self.name
         self.clicked.connect(lambda: self.triggered.emit(trigger_key, self.positions))
-        
+
         self._build(name)
-        
-        # 异常重置定时器
+
         self._err = QTimer(self)
         self._err.setSingleShot(True)
         self._err.setInterval(900)
@@ -60,33 +70,38 @@ class PresetCard(QAbstractButton):
 
     def _build(self, name: str):
         lo = QVBoxLayout(self)
-        from PyQt5.QtWidgets import QHBoxLayout, QWidget
-        # 紧凑模式边距更小
-        if self.variant == "compact":
-            lo.setContentsMargins(6, 6, 6, 6)
-            lo.setSpacing(4)
-        else:
-            lo.setContentsMargins(8, 10, 8, 10)
-            lo.setSpacing(6)
 
-        # 独立的图标圆角容器
+        if self.variant == "core":
+            lo.setContentsMargins(12, 14, 12, 12)
+            lo.setSpacing(10)
+        elif self.variant == "add":
+            lo.setContentsMargins(6, 10, 6, 8)
+            lo.setSpacing(6)
+        else:
+            lo.setContentsMargins(6, 8, 6, 6)
+            lo.setSpacing(4)
+
+        # ── 图标容器 (圆角蓝底) ──
         self.icon_container = QWidget()
         self.icon_container.setObjectName("PresetIconContainer")
-        icon_layout = QHBoxLayout(self.icon_container)
-        icon_layout.setContentsMargins(0, 0, 0, 0)
-        icon_layout.setSpacing(0)
+        ic = QHBoxLayout(self.icon_container)
+        ic.setContentsMargins(0, 0, 0, 0)
+        ic.setSpacing(0)
 
         self.icn_lbl = QLabel()
         self.icn_lbl.setAlignment(Qt.AlignCenter)
         self.icn_lbl.setStyleSheet("background:transparent; border:none;")
-        icon_layout.addWidget(self.icn_lbl)
+        ic.addWidget(self.icn_lbl)
+
         lo.addWidget(self.icon_container, stretch=1)
 
-        # 文本容器
+        # ── 文本标签 ──
         self.nm_lbl = QLabel(name)
         self.nm_lbl.setObjectName("PresetLabel")
         self.nm_lbl.setAlignment(Qt.AlignCenter)
         self.nm_lbl.setStyleSheet("background:transparent; border:none;")
+        # 添加预设用两行显示
+        self.nm_lbl.setWordWrap(True)
         lo.addWidget(self.nm_lbl)
 
     def _refresh_icon(self):
@@ -96,17 +111,14 @@ class PresetCard(QAbstractButton):
                 k = "custom_preset"
             else:
                 return
-        
-        # 确定逻辑尺寸
-        sz = 32 if self.variant == "primary" else (24 if self.variant == "normal" else 18)
-        color = "#2563eb" if self.variant == "primary" else "#334155"
-        
-        # 动态获取 DPR 并获取物理清晰 QPixmap
+
+        sz = 36 if self.variant == "core" else (24 if self.variant == "number" else 20)
+        color = "#4F7FF7" if self.variant == "core" else "#64748B"
+
         px = get_pixmap(k, sz, color, target_widget=self)
         self.icn_lbl.setPixmap(px)
 
     def contextMenuEvent(self, event):
-        """仅自定义预设卡片提供右键删除菜单。"""
         if not self.preset_id:
             super().contextMenuEvent(event)
             return
@@ -117,7 +129,6 @@ class PresetCard(QAbstractButton):
         menu = QMenu(self)
         delete_action = menu.addAction("删除预设")
 
-        # 检查是否在运行中，如果在执行中，禁止删除
         running = (ui_state.snapshot.action != ActionState.IDLE)
 
         action = menu.exec_(event.globalPos())
@@ -127,7 +138,7 @@ class PresetCard(QAbstractButton):
                 return
 
             reply = QMessageBox.question(
-                self, "删除确认", f"确定要删除自定义预设“{self.name}”吗？",
+                self, "删除确认", f"确定要删除自定义预设\"{self.name}\"吗？",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No
             )
             if reply == QMessageBox.Yes:
@@ -145,7 +156,6 @@ class PresetCard(QAbstractButton):
 
     def changeEvent(self, event):
         super().changeEvent(event)
-        # 监听 DPI 或窗口状态改变
         if event.type() in (QEvent.FontChange, QEvent.StyleChange):
             self._refresh_icon()
 
@@ -154,23 +164,22 @@ class PresetCard(QAbstractButton):
         opt.initFrom(self)
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        
-        # 物理按压 1px 下沉反馈
+
         if self.isDown():
             p.translate(0, 1)
-            
+
         self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
-        
-        # 运行中状态呼吸点提示
+
+        # running 状态呼吸点
         if self.property("running") == "true":
-            p.setBrush(QColor("#4f82ff"))
+            p.setBrush(QColor("#4F7FF7"))
             p.setPen(Qt.NoPen)
             p.drawEllipse(self.width() - 10, 6, 6, 6)
-            
+
         p.end()
 
     def sizeHint(self) -> QSize:
-        w, h = _SIZES.get(self.variant, (100, 76))
+        w, h = _SIZES.get(self.variant, (100, 72))
         return QSize(w, h)
 
     def set_running(self, on: bool):

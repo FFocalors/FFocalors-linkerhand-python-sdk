@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""底部控制条：运行状态展示、循环动作与紧急控制。
+"""底部控制条 — 产品级完整卡片布局。
 
-支持单行与双行响应式自适应布局。
-紧急停止按钮高对比高亮，速度扭矩参数改用微调参数弹窗。
-只承担 UI 控制与状态订阅职责，动作循环 Timer 等由外部 Controller 维护。
+结构:
+  [状态组] [参数组] [循环组]   [恢复初始] [紧急停止]
+
+各分组内部整齐排列，不再像拼装件。
 """
 from PyQt5.QtWidgets import (
-    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
-    QDialog, QSlider, QSpinBox, QAbstractSpinBox, QDialogButtonBox,
-    QSizePolicy, QFrame
+    QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QFrame,
+    QSizePolicy, QDialog, QSlider, QSpinBox, QAbstractSpinBox,
+    QDialogButtonBox, QVBoxLayout as QVBox
 )
 from PyQt5.QtCore import Qt
 
@@ -23,36 +24,36 @@ class _ParamDialog(QDialog):
     def __init__(self, parent, title, minimum, maximum, current):
         super().__init__(parent)
         self.setWindowTitle(f"设置{title}")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(360)
         self._value = current
-        
-        layout = QVBoxLayout(self)
+
+        layout = QVBox(self)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(14)
-        
+
         info = QLabel(f"{title}范围 {minimum}–{maximum}")
-        info.setStyleSheet("color:#64748b;")
+        info.setStyleSheet("color:#64748B;")
         layout.addWidget(info)
-        
+
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(minimum, maximum)
         self.slider.setValue(current)
         layout.addWidget(self.slider)
-        
+
         row = QHBoxLayout()
         row.addWidget(QLabel("当前值"))
         self.spin = QSpinBox()
         self.spin.setRange(minimum, maximum)
         self.spin.setButtonSymbols(QAbstractSpinBox.NoButtons)
-        self.spin.setFixedWidth(70)
+        self.spin.setFixedWidth(72)
         self.spin.setValue(current)
         row.addWidget(self.spin)
         row.addStretch()
         layout.addLayout(row)
-        
+
         self.slider.valueChanged.connect(self.spin.setValue)
         self.spin.valueChanged.connect(self.slider.setValue)
-        
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
         buttons.accepted.connect(self._accept)
         buttons.rejected.connect(self.reject)
@@ -74,191 +75,113 @@ class BottomBar(QWidget):
         self.joint_count = len(HAND_CONFIGS[hand_joint].joint_names)
         self._speed = 255
         self._torque = 255
-        self._layout_mode = "single"  # single | double
+        self._layout_mode = "single"
         self._cycle = None
-        
-        self._build_widgets()
-        self._build_layout()
-        self._apply_layout()
-        
+
+        self._build()
         signal_bus.ui_state_changed.connect(self._on_ui_state)
 
-        # 悬浮阴影
         from lhgui.utils.style_utils import add_card_shadow
-        add_card_shadow(self)
+        add_card_shadow(self, blur=12, offset=1)
 
-    def _create_sep(self):
+    # ────── helpers ──────
+
+    def _divider(self):
         sep = QFrame()
-        sep.setObjectName("__sep__")
+        sep.setObjectName("BottomDivider")
         sep.setFrameShape(QFrame.VLine)
-        sep.setStyleSheet("background-color:#e9eef4; max-width:1px; border:none; margin:4px 6px;")
         return sep
 
-    def _build_widgets(self):
-        # 1. 状态展示
-        self.action_title_lbl = QLabel("当前动作")
-        self.action_title_lbl.setStyleSheet("color:#64748b; font-size:11px; font-weight:500;")
-        self.action_lbl = QLabel("空闲")
-        self.action_lbl.setObjectName("ActionInfo")
-        self.action_lbl.setStyleSheet("color:#1e293b; font-weight:600;")
-        
-        self.cycle_title_lbl = QLabel("循环状态")
-        self.cycle_title_lbl.setStyleSheet("color:#64748b; font-size:11px; font-weight:500;")
-        self.cycle_badge = StatusBadge("空闲", level="disconnected")
-        
-        # 2. 速度与扭矩参数卡片
+    def _status_block(self, label: str) -> tuple:
+        """Creates a #StatusInfoBlock with label/value pair."""
+        block = QFrame()
+        block.setObjectName("StatusInfoBlock")
+        bl = QHBoxLayout(block)
+        bl.setContentsMargins(10, 6, 10, 6)
+        bl.setSpacing(6)
+
+        lbl = QLabel(label)
+        lbl.setObjectName("StatusInfoLabel")
+        bl.addWidget(lbl)
+
+        val = QLabel("—")
+        val.setObjectName("StatusInfoValue")
+        bl.addWidget(val)
+
+        return block, val
+
+    # ────── build ──────
+
+    def _build(self):
+        # Top-level layout
+        self.outer = QVBoxLayout(self)
+        self.outer.setContentsMargins(16, 10, 16, 10)
+        self.outer.setSpacing(0)
+
+        self.main_row = QHBoxLayout()
+        self.main_row.setContentsMargins(0, 0, 0, 0)
+        self.main_row.setSpacing(10)
+        self.outer.addLayout(self.main_row)
+
+        # ── 1. 状态组 ──
+        self.status_blk, self.status_val = self._status_block("当前动作")
+        self.main_row.addWidget(self.status_blk)
+
+        self.cycle_blk, self.cycle_val = self._status_block("循环状态")
+        self.main_row.addWidget(self.cycle_blk)
+
+        self.main_row.addWidget(self._divider())
+
+        # ── 2. 参数组 ──
         self.speed_btn = QPushButton(f"速度\n{self._speed}")
-        self.speed_btn.setObjectName("ParamButton")
+        self.speed_btn.setObjectName("ParameterBlock")
         self.speed_btn.setCursor(Qt.PointingHandCursor)
         self.speed_btn.clicked.connect(self._set_speed)
         self.speed_btn.setToolTip("点击调整关节运动速度")
-        
+        self.speed_btn.setFixedHeight(48)
+        self.main_row.addWidget(self.speed_btn)
+
         self.torque_btn = QPushButton(f"扭矩\n{self._torque}")
-        self.torque_btn.setObjectName("ParamButton")
+        self.torque_btn.setObjectName("ParameterBlock")
         self.torque_btn.setCursor(Qt.PointingHandCursor)
         self.torque_btn.clicked.connect(self._set_torque)
         self.torque_btn.setToolTip("点击调整关节最大扭矩")
+        self.torque_btn.setFixedHeight(48)
+        self.main_row.addWidget(self.torque_btn)
 
-        # 3. 循环控制
+        self.main_row.addWidget(self._divider())
+
+        # ── 3. 循环控制组 ──
         self.cycle_btn = QPushButton("开始循环")
         self.cycle_btn.setProperty("category", "primary")
         self.cycle_btn.setCursor(Qt.PointingHandCursor)
         self.cycle_btn.clicked.connect(self._toggle_cycle)
-        
+        self.main_row.addWidget(self.cycle_btn)
+
         self.cycle_stop_btn = QPushButton("停止循环")
         self.cycle_stop_btn.setProperty("category", "danger")
         self.cycle_stop_btn.setCursor(Qt.PointingHandCursor)
         self.cycle_stop_btn.setEnabled(False)
         self.cycle_stop_btn.clicked.connect(self._stop_cycle)
+        self.main_row.addWidget(self.cycle_stop_btn)
 
-        # 4. 恢复初始 & 紧急停止
+        # ── 弹性空间 → 安全操作推向右侧 ──
+        self.spacer = QWidget()
+        self.spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.main_row.addWidget(self.spacer)
+
+        self.main_row.addWidget(self._divider())
+
+        # ── 4. 安全操作组 ──
         self.home_btn = QPushButton("恢复初始")
         self.home_btn.setProperty("category", "warning")
         self.home_btn.setCursor(Qt.PointingHandCursor)
+        self.main_row.addWidget(self.home_btn)
 
         self.estop_btn = QPushButton("紧急停止")
-        self.estop_btn.setProperty("category", "danger")
+        self.estop_btn.setProperty("category", "emergency")
         self.estop_btn.setCursor(Qt.PointingHandCursor)
-
-        # 弹性的 Spacers
-        self.spacer1 = QWidget()
-        self.spacer1.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        self.spacer2 = QWidget()
-        self.spacer2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-
-        # ---- 将各功能模块分类包装在精致底栏容器中 (BottomGroup) ----
-        # 1. 状态组
-        self.status_group = QWidget()
-        self.status_group.setObjectName("BottomGroup")
-        self.status_group.setStyleSheet("background:transparent;")
-        status_layout = QHBoxLayout(self.status_group)
-        status_layout.setContentsMargins(10, 4, 10, 4)
-        status_layout.setSpacing(10)
-        status_layout.addWidget(self.action_title_lbl)
-        status_layout.addWidget(self.action_lbl)
-        status_layout.addWidget(self.cycle_title_lbl)
-        status_layout.addWidget(self.cycle_badge)
-
-        # 2. 参数设置组
-        self.param_group = QWidget()
-        self.param_group.setObjectName("BottomGroup")
-        self.param_group.setStyleSheet("background:transparent;")
-        param_layout = QHBoxLayout(self.param_group)
-        param_layout.setContentsMargins(10, 4, 10, 4)
-        param_layout.setSpacing(10)
-        param_layout.addWidget(self.speed_btn)
-        param_layout.addWidget(self.torque_btn)
-
-        # 3. 循环控制组
-        self.cycle_group = QWidget()
-        self.cycle_group.setObjectName("BottomGroup")
-        self.cycle_group.setStyleSheet("background:transparent;")
-        cycle_layout = QHBoxLayout(self.cycle_group)
-        cycle_layout.setContentsMargins(10, 4, 10, 4)
-        cycle_layout.setSpacing(10)
-        cycle_layout.addWidget(self.cycle_btn)
-        cycle_layout.addWidget(self.cycle_stop_btn)
-
-        # 4. 应急安全组
-        self.safety_group = QWidget()
-        self.safety_group.setObjectName("BottomGroup")
-        self.safety_group.setStyleSheet("background:transparent;")
-        safety_layout = QHBoxLayout(self.safety_group)
-        safety_layout.setContentsMargins(10, 4, 10, 4)
-        safety_layout.setSpacing(10)
-        safety_layout.addWidget(self.home_btn)
-        safety_layout.addWidget(self.estop_btn)
-
-    def _build_layout(self):
-        # 顶层布局，稍微留一点内边距以实现精美的卡片效果
-        self.outer = QVBoxLayout(self)
-        self.outer.setContentsMargins(12, 8, 12, 8)
-        self.outer.setSpacing(0)
-
-        # 第一行容器
-        self.row1_widget = QWidget()
-        self.row1_widget.setStyleSheet("background:transparent;")
-        self.row1_layout = QHBoxLayout(self.row1_widget)
-        self.row1_layout.setContentsMargins(0, 0, 0, 0)
-        self.row1_layout.setSpacing(12)
-        self.outer.addWidget(self.row1_widget)
-
-        # 第二行容器
-        self.row2_widget = QWidget()
-        self.row2_widget.setStyleSheet("background:transparent;")
-        self.row2_layout = QHBoxLayout(self.row2_widget)
-        self.row2_layout.setContentsMargins(0, 0, 0, 0)
-        self.row2_layout.setSpacing(12)
-        self.outer.addWidget(self.row2_widget)
-
-    def _apply_layout(self):
-        # 清空布局
-        while self.row1_layout.count():
-            item = self.row1_layout.takeAt(0)
-            if item.widget() and item.widget().objectName() == "__sep__":
-                item.widget().deleteLater()
-        while self.row2_layout.count():
-            item = self.row2_layout.takeAt(0)
-            if item.widget() and item.widget().objectName() == "__sep__":
-                item.widget().deleteLater()
-
-        if self._layout_mode == "single":
-            self.row2_widget.hide()
-            # 单行模式：横向有序摆放四大功能分组
-            self.row1_layout.addWidget(self.status_group)
-            
-            self.row1_layout.addWidget(self._create_sep())
-            self.row1_layout.addWidget(self.param_group)
-            
-            self.row1_layout.addWidget(self._create_sep())
-            self.row1_layout.addWidget(self.cycle_group)
-            
-            self.row1_layout.addWidget(self._create_sep())
-            self.row1_layout.addWidget(self.spacer1) # 将应急操作推向最右侧
-            self.row1_layout.addWidget(self.safety_group)
-        else:
-            self.row2_widget.show()
-            # 双行模式：
-            # 第一行：状态面板 + 参数面板
-            self.row1_layout.addWidget(self.status_group)
-            self.row1_layout.addWidget(self._create_sep())
-            self.row1_layout.addWidget(self.spacer1)
-            self.row1_layout.addWidget(self.param_group)
-
-            # 第二行：循环面板 + 风险应急面板
-            self.row2_layout.addWidget(self.cycle_group)
-            self.row2_layout.addWidget(self._create_sep())
-            self.row2_layout.addWidget(self.spacer2)
-            self.row2_layout.addWidget(self.safety_group)
-
-    def set_layout_mode(self, mode: str):
-        """设定单行(single)或双行(double)排版模式。"""
-        if mode not in ("single", "double"):
-            return
-        if self._layout_mode == mode:
-            return
-        self._layout_mode = mode
-        self._apply_layout()
+        self.main_row.addWidget(self.estop_btn)
 
     def set_cycle_controller(self, controller):
         self._cycle = controller
@@ -276,8 +199,16 @@ class BottomBar(QWidget):
         self.cycle_btn.setEnabled(not active)
         self.cycle_btn.setText("循环中" if active else "开始循环")
         self.cycle_stop_btn.setEnabled(active)
-        self.cycle_badge.set_level("running" if active else "disconnected")
-        self.cycle_badge.setText("运行中" if active else "空闲")
+        self.cycle_val.setText(name if active else "空闲")
+        self.cycle_val.setStyleSheet(
+            "color: #4F7FF7; font-weight:600;" if active else "color: #1E293B;"
+        )
+
+    def set_layout_mode(self, mode: str):
+        """保留接口兼容性。当前底部栏使用自适应单行布局，无需手动切换。"""
+        self._layout_mode = mode
+
+    # ────── param dialogs ──────
 
     def _set_speed(self):
         dlg = _ParamDialog(self.window(), "速度", 0, 255, self._speed)
@@ -295,24 +226,21 @@ class BottomBar(QWidget):
             signal_bus.torque_set_requested.emit([self._torque] * self.joint_count)
             signal_bus.connection_message.emit("info", f"扭矩已设为 {self._torque}")
 
+    # ────── ui state ──────
+
     def _on_ui_state(self, snapshot):
         enabled = snapshot.connection in (ConnectionState.CONNECTED, ConnectionState.OFFLINE)
         self.home_btn.setEnabled(enabled)
         self.speed_btn.setEnabled(enabled)
         self.torque_btn.setEnabled(enabled)
         self.cycle_btn.setEnabled(enabled and not (self._cycle is not None and self._cycle._active))
-        
-        if snapshot.action == ActionState.ACTION_RUNNING:
-            self.action_lbl.setText("执行中")
-        elif snapshot.action == ActionState.CYCLE_RUNNING:
-            self.action_lbl.setText("循环中")
-        else:
-            self.action_lbl.setText("空闲")
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        # 根据宽度自动切换单行或双行响应式排版
-        if self.width() < 1180:
-            self.set_layout_mode("double")
+        if snapshot.action == ActionState.ACTION_RUNNING:
+            self.status_val.setText("执行中")
+            self.status_val.setStyleSheet("color: #4F7FF7; font-weight:600;")
+        elif snapshot.action == ActionState.CYCLE_RUNNING:
+            self.status_val.setText("循环中")
+            self.status_val.setStyleSheet("color: #4F7FF7; font-weight:600;")
         else:
-            self.set_layout_mode("single")
+            self.status_val.setText("空闲")
+            self.status_val.setStyleSheet("color: #1E293B;")

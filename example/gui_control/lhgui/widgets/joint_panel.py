@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""关节控制面板（扁平列表容器）。
+"""关节控制面板（现代产品级扁平列表容器）。
 
-去除臃肿的白色卡片圆角背景和边框，提供统一扁平风格的关节调节列表。
+每行仅保留关节名称、目标值和一条高质量滑动条，不再显示冗余反馈值。
 """
 from typing import List
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QScrollArea, QFrame
+    QWidget, QVBoxLayout, QLabel, QScrollArea, QFrame
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 
@@ -32,24 +31,31 @@ class JointPanel(QWidget):
 
     def _build(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 14, 0, 6)
+        layout.setSpacing(0)
 
-        # 头部标题
+        # ── 标题 ──
         title = QLabel("关节控制")
         title.setObjectName("CardTitle")
+        title.setStyleSheet("padding-left: 12px; padding-right: 12px;")
         layout.addWidget(title)
 
-        # 扁平化滚动区域，无重边框
+        # 标题与列表间距
+        spacer = QWidget()
+        spacer.setFixedHeight(8)
+        spacer.setStyleSheet("background: transparent;")
+        layout.addWidget(spacer)
+
+        # ── 滚动区域 ──
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setStyleSheet("background:transparent; border:none;")
-        
+        scroll.setStyleSheet("background:transparent; border:none; padding: 0 12px;")
+
         content = QWidget()
         content.setStyleSheet("background:transparent;")
         vbox = QVBoxLayout(content)
-        vbox.setSpacing(4)
+        vbox.setSpacing(0)
         vbox.setContentsMargins(0, 0, 0, 0)
 
         for i, (name, init) in enumerate(zip(self.config.joint_names, self.config.init_pos)):
@@ -62,9 +68,9 @@ class JointPanel(QWidget):
         scroll.setWidget(content)
         layout.addWidget(scroll, stretch=1)
 
-        # 扁平化面板底部不再保留任何冗余按钮
+        # 极轻卡片阴影
         from lhgui.utils.style_utils import add_card_shadow
-        add_card_shadow(self)
+        add_card_shadow(self, blur=16, offset=1)
 
     def _on_row_changed(self, _):
         values = self.get_values()
@@ -79,7 +85,6 @@ class JointPanel(QWidget):
                 row.set_feedback(state[i])
 
     def _on_ui_state(self, snapshot):
-        # 已连接或离线调试模式时允许操作，回放中禁用
         enabled = (snapshot.connection in (ConnectionState.CONNECTED, ConnectionState.OFFLINE)
                    and snapshot.playback == PlaybackState.IDLE)
         for row in self.rows:

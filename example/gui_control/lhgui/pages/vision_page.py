@@ -12,7 +12,8 @@ import cv2, mediapipe as mp, numpy as np
 
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QMessageBox,
-    QFileDialog, QComboBox, QSpinBox, QDoubleSpinBox,
+    QFileDialog, QComboBox, QSpinBox, QDoubleSpinBox, QGridLayout, QScrollArea,
+    QWidget, QTextEdit,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -606,203 +607,418 @@ class VisionPage(QFrame):
         self._build_ui(); self._wire()
         self._set_state("unstarted")
 
+    # ── 统一卡片工厂 ──
+    @staticmethod
+    def _section_card(title_text):
+        card = QFrame()
+        card.setObjectName("VisionSectionCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(8)
+        title_lbl = QLabel(title_text)
+        title_lbl.setObjectName("CardTitle")
+        layout.addWidget(title_lbl)
+        return card, layout
+
     def _build_ui(self):
-        main=QHBoxLayout(self); main.setContentsMargins(8,8,8,8); main.setSpacing(8)
+        from PyQt5.QtWidgets import QScrollArea
+        main = QHBoxLayout(self)
+        main.setContentsMargins(12, 12, 12, 12)
+        main.setSpacing(12)
 
-        # 左侧摄像头
-        left=QVBoxLayout()
-        left.addWidget(QLabel("摄像头"))
-        self.cam_view=QLabel(); self.cam_view.setMinimumSize(480,360); self.cam_view.setAlignment(Qt.AlignCenter)
-        self.cam_view.setStyleSheet("background:#1a1a2e;border:2px solid #2a2a4e;border-radius:8px;color:#888;")
-        self.cam_view.setText("等待启动"); left.addWidget(self.cam_view,stretch=1)
+        # ═══ 左侧: 摄像头主区域 (现代大卡片化) ═══
+        left_card = QFrame()
+        left_card.setObjectName("VisionLeftCard")
+        ll = QVBoxLayout(left_card)
+        ll.setContentsMargins(16, 16, 16, 16)
+        ll.setSpacing(12)
 
-        # 右侧面板
-        right=QVBoxLayout(); right.setSpacing(6)
-        right.addWidget(self._lbl_title("视觉模仿控制"))
+        # 左侧 Header
+        left_header = QHBoxLayout()
+        left_header.setContentsMargins(0, 0, 0, 0)
+        left_header.setSpacing(8)
+        left_title = QLabel("视觉识别")
+        left_title.setObjectName("CardTitle")
+        left_header.addWidget(left_title)
+        left_header.addStretch()
+        self.cam_status_lbl = QLabel("等待启动")
+        self.cam_status_lbl.setStyleSheet("color:#64748B; font-size:11px;")
+        left_header.addWidget(self.cam_status_lbl)
+        ll.addLayout(left_header)
 
-        # 安全开关
-        sw=QHBoxLayout()
-        self.chk_hw=QCheckBox("允许下发到机械手"); self.chk_hw.setChecked(False)
+        # 摄像头预览区 (白卡片包裹深色画面，精致圆角)
+        preview_card = QFrame()
+        preview_card.setObjectName("CameraPreviewCard")
+        pv = QVBoxLayout(preview_card)
+        pv.setContentsMargins(8, 8, 8, 8)
+        self.cam_view = QLabel()
+        self.cam_view.setMinimumSize(480, 360)
+        self.cam_view.setAlignment(Qt.AlignCenter)
+        self.cam_view.setStyleSheet("background:#1E1E2E; border-radius:8px; color:#64748B; font-size:13px;")
+        self.cam_view.setText("等待启动")
+        pv.addWidget(self.cam_view, stretch=1)
+        ll.addWidget(preview_card, stretch=1)
+
+        # 底部控制条 (开始/停止/复位)
+        left_ctrl = QHBoxLayout()
+        left_ctrl.setContentsMargins(0, 4, 0, 0)
+        left_ctrl.setSpacing(10)
+        self.btn_start = QPushButton("开始模仿")
+        self.btn_start.setProperty("category", "primary")
+        self.btn_start.setCursor(Qt.PointingHandCursor)
+        self.btn_start.setFixedHeight(34)
+        left_ctrl.addWidget(self.btn_start)
+        
+        self.btn_stop = QPushButton("停止模仿")
+        self.btn_stop.setProperty("category", "danger")
+        self.btn_stop.setCursor(Qt.PointingHandCursor)
+        self.btn_stop.setFixedHeight(34)
+        left_ctrl.addWidget(self.btn_stop)
+        
+        self.btn_home = QPushButton("复位")
+        self.btn_home.setProperty("category", "secondary")
+        self.btn_home.setCursor(Qt.PointingHandCursor)
+        self.btn_home.setFixedHeight(34)
+        left_ctrl.addWidget(self.btn_home)
+        left_ctrl.addStretch()
+        ll.addLayout(left_ctrl)
+
+        main.addWidget(left_card, stretch=3)
+
+        # ═══ 右侧: 卡片式控制面板 (可滚动) ═══
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QFrame.NoFrame)
+        right_scroll.setStyleSheet("background:transparent; border:none;")
+
+        right_content = QWidget()
+        right_content.setStyleSheet("background:transparent;")
+        right = QVBoxLayout(right_content)
+        right.setContentsMargins(0, 0, 4, 0)
+        right.setSpacing(12)
+        right_scroll.setWidget(right_content)
+
+        # ── Card 1: MimicControlCard ──
+        card1, c1 = self._section_card("模仿控制")
+        
+        self.chk_hw = QCheckBox("允许下发到机械手")
+        self.chk_hw.setChecked(False)
         self.chk_hw.toggled.connect(self._on_hw_toggled)
-        sw.addWidget(self.chk_hw); sw.addStretch(); right.addLayout(sw)
+        self.chk_hw.setStyleSheet("font-weight: 500; font-size: 12px; margin-bottom: 4px;")
+        c1.addWidget(self.chk_hw)
 
-        # 校准按钮
-        cal_row=QHBoxLayout()
-        self.btn_cal_open=self._btn("校准张开", "#0984e3",10)
-        self.btn_cal_close=self._btn("校准握拳", "#0984e3",10)
-        self.btn_test_open=self._btn("测试张开", "#636e72",10)
-        self.btn_test_close=self._btn("测试握拳", "#636e72",10)
-        cal_row.addWidget(self.btn_cal_open); cal_row.addWidget(self.btn_cal_close)
-        cal_row.addWidget(self.btn_test_open); cal_row.addWidget(self.btn_test_close)
-        right.addLayout(cal_row)
+        cal_grid = QGridLayout()
+        cal_grid.setSpacing(8)
+        self.btn_cal_open = QPushButton("校准张开")
+        self.btn_cal_open.setProperty("category", "secondary")
+        self.btn_cal_close = QPushButton("校准握拳")
+        self.btn_cal_close.setProperty("category", "secondary")
+        self.btn_test_open = QPushButton("测试张开")
+        self.btn_test_open.setProperty("category", "secondary")
+        self.btn_test_close = QPushButton("测试握拳")
+        self.btn_test_close.setProperty("category", "secondary")
+        
+        for btn in [self.btn_cal_open, self.btn_cal_close, self.btn_test_open, self.btn_test_close]:
+            btn.setFixedHeight(30)
+            btn.setCursor(Qt.PointingHandCursor)
+            
+        cal_grid.addWidget(self.btn_cal_open, 0, 0)
+        cal_grid.addWidget(self.btn_cal_close, 0, 1)
+        cal_grid.addWidget(self.btn_test_open, 1, 0)
+        cal_grid.addWidget(self.btn_test_close, 1, 1)
+        c1.addLayout(cal_grid)
+        right.addWidget(card1)
 
-        thumb_row=QHBoxLayout()
-        self.btn_cal_thumb_open=self._btn("Cal thumb out", "#6c5ce7",10)
-        self.btn_cal_thumb_close=self._btn("Cal thumb in", "#6c5ce7",10)
-        self.chk_thumb_bend_invert=QCheckBox("Invert thumb bend")
+        # ── Card 2: GestureMappingCard ──
+        card2, c2 = self._section_card("手势映射")
+
+        # 拇指行
+        thumb_lbl = QLabel("拇指校准")
+        thumb_lbl.setStyleSheet("color:#64748B; font-size:11px; font-weight:600; margin-top:4px;")
+        c2.addWidget(thumb_lbl)
+        
+        thumb_btn_row = QHBoxLayout()
+        thumb_btn_row.setSpacing(8)
+        self.btn_cal_thumb_open = QPushButton("Cal thumb out")
+        self.btn_cal_thumb_open.setProperty("category", "secondary")
+        self.btn_cal_thumb_open.setFixedHeight(28)
+        self.btn_cal_thumb_open.setCursor(Qt.PointingHandCursor)
+        self.btn_cal_thumb_close = QPushButton("Cal thumb in")
+        self.btn_cal_thumb_close.setProperty("category", "secondary")
+        self.btn_cal_thumb_close.setFixedHeight(28)
+        self.btn_cal_thumb_close.setCursor(Qt.PointingHandCursor)
+        
+        thumb_btn_row.addWidget(self.btn_cal_thumb_open)
+        thumb_btn_row.addWidget(self.btn_cal_thumb_close)
+        thumb_btn_row.addStretch()
+        c2.addLayout(thumb_btn_row)
+
+        # 手指测试
+        finger_lbl = QLabel("手指单步测试")
+        finger_lbl.setStyleSheet("color:#64748B; font-size:11px; font-weight:600; margin-top:6px;")
+        c2.addWidget(finger_lbl)
+        
+        finger_grid = QGridLayout()
+        finger_grid.setSpacing(6)
+        finger_btns = [
+            ("T bend", lambda: self._send_o6_test_pose("thumb_bend", [CLOSE_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]])),
+            ("T swing", lambda: self._send_o6_test_pose("thumb_swing", [OPEN_POSE[0],CLOSE_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]])),
+            ("Index", lambda: self._send_o6_test_pose("index", [OPEN_POSE[0],OPEN_POSE[1],CLOSE_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]])),
+            ("Middle", lambda: self._send_o6_test_pose("middle", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],CLOSE_POSE[3],OPEN_POSE[4],OPEN_POSE[5]])),
+            ("Ring", lambda: self._send_o6_test_pose("ring", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],CLOSE_POSE[4],OPEN_POSE[5]])),
+            ("Little", lambda: self._send_o6_test_pose("little", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],CLOSE_POSE[5]])),
+        ]
+        self._finger_test_btns = {}
+        for idx, (label, cb) in enumerate(finger_btns):
+            btn = QPushButton(label)
+            btn.setProperty("category", "tool")
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(cb)
+            finger_grid.addWidget(btn, idx // 3, idx % 3)
+            self._finger_test_btns[label] = btn
+        c2.addLayout(finger_grid)
+
+        # 反向设置
+        invert_lbl = QLabel("防抖与反转设置")
+        invert_lbl.setStyleSheet("color:#64748B; font-size:11px; font-weight:600; margin-top:6px;")
+        c2.addWidget(invert_lbl)
+        
+        invert_row = QHBoxLayout()
+        invert_row.setSpacing(12)
+        self.chk_thumb_bend_invert = QCheckBox("Invert bend")
         self.chk_thumb_bend_invert.setChecked(self._thumb_bend_invert)
-        self.chk_thumb_invert=QCheckBox("Invert thumb swing")
+        self.chk_thumb_bend_invert.toggled.connect(self._on_thumb_bend_invert_toggled)
+        self.chk_thumb_invert = QCheckBox("Invert swing")
         self.chk_thumb_invert.setChecked(self._thumb_swing_invert)
-        thumb_row.addWidget(self.btn_cal_thumb_open)
-        thumb_row.addWidget(self.btn_cal_thumb_close)
-        thumb_row.addWidget(self.chk_thumb_bend_invert)
-        thumb_row.addWidget(self.chk_thumb_invert)
-        right.addLayout(thumb_row)
+        self.chk_thumb_invert.toggled.connect(self._on_thumb_invert_toggled)
+        invert_row.addWidget(self.chk_thumb_bend_invert)
+        invert_row.addWidget(self.chk_thumb_invert)
+        invert_row.addStretch()
+        c2.addLayout(invert_row)
+        right.addWidget(card2)
 
-        dim_row=QHBoxLayout()
-        self.btn_test_thumb_bend=self._btn("T bend", "#475569",9)
-        self.btn_test_thumb_swing=self._btn("T swing", "#475569",9)
-        self.btn_test_index=self._btn("Index", "#475569",9)
-        self.btn_test_middle=self._btn("Middle", "#475569",9)
-        self.btn_test_ring=self._btn("Ring", "#475569",9)
-        self.btn_test_little=self._btn("Little", "#475569",9)
-        for b in [
-            self.btn_test_thumb_bend,self.btn_test_thumb_swing,self.btn_test_index,
-            self.btn_test_middle,self.btn_test_ring,self.btn_test_little,
-        ]:
-            dim_row.addWidget(b)
-        right.addLayout(dim_row)
+        # ── Card 3: TuningCard ──
+        card3, c3 = self._section_card("高级参数")
+        tune_grid = QGridLayout()
+        tune_grid.setSpacing(8)
+        self.spin_ema = QDoubleSpinBox(); self.spin_ema.setRange(0.05, 0.95); self.spin_ema.setSingleStep(0.05); self.spin_ema.setDecimals(2); self.spin_ema.setValue(self._ema_alpha); self.spin_ema.valueChanged.connect(self._on_tuning_changed)
+        self.spin_db = QSpinBox(); self.spin_db.setRange(0, 30); self.spin_db.setValue(self._deadband); self.spin_db.valueChanged.connect(self._on_tuning_changed)
+        self.spin_iv = QDoubleSpinBox(); self.spin_iv.setRange(0.03, 0.50); self.spin_iv.setSingleStep(0.01); self.spin_iv.setDecimals(2); self.spin_iv.setValue(self._emit_iv); self.spin_iv.valueChanged.connect(self._on_tuning_changed)
+        self.spin_fs = QSpinBox(); self.spin_fs.setRange(1, 80); self.spin_fs.setValue(MAX_STEP_FINGER); self.spin_fs.valueChanged.connect(self._on_tuning_changed)
+        self.spin_ts = QSpinBox(); self.spin_ts.setRange(1, 80); self.spin_ts.setValue(MAX_STEP_THUMB_SWING); self.spin_ts.valueChanged.connect(self._on_tuning_changed)
+        
+        for spin in [self.spin_ema, self.spin_db, self.spin_iv, self.spin_fs, self.spin_ts]:
+            spin.setFixedHeight(28)
+            
+        params = [("EMA", self.spin_ema), ("DB", self.spin_db), ("IV", self.spin_iv), ("Fstep", self.spin_fs), ("Tstep", self.spin_ts)]
+        for i, (name, spin) in enumerate(params):
+            lbl = QLabel(name)
+            lbl.setStyleSheet("color:#64748B; font-size:11px; font-weight:600;")
+            tune_grid.addWidget(lbl, i // 2, (i % 2) * 2)
+            tune_grid.addWidget(spin, i // 2, (i % 2) * 2 + 1)
+        c3.addLayout(tune_grid)
+        right.addWidget(card3)
 
-        tune_row=QHBoxLayout()
-        self.spin_ema=QDoubleSpinBox(); self.spin_ema.setRange(0.05,0.95); self.spin_ema.setSingleStep(0.05); self.spin_ema.setDecimals(2); self.spin_ema.setValue(self._ema_alpha)
-        self.spin_deadband=QSpinBox(); self.spin_deadband.setRange(0,30); self.spin_deadband.setValue(self._deadband)
-        self.spin_interval=QDoubleSpinBox(); self.spin_interval.setRange(0.03,0.50); self.spin_interval.setSingleStep(0.01); self.spin_interval.setDecimals(2); self.spin_interval.setValue(self._emit_iv)
-        self.spin_step_finger=QSpinBox(); self.spin_step_finger.setRange(1,80); self.spin_step_finger.setValue(MAX_STEP_FINGER)
-        self.spin_step_thumb=QSpinBox(); self.spin_step_thumb.setRange(1,80); self.spin_step_thumb.setValue(MAX_STEP_THUMB_SWING)
-        for label,spin in [
-            ("EMA",self.spin_ema),
-            ("DB",self.spin_deadband),
-            ("IV",self.spin_interval),
-            ("Fstep",self.spin_step_finger),
-            ("Tstep",self.spin_step_thumb),
-        ]:
-            tune_row.addWidget(QLabel(label)); tune_row.addWidget(spin)
-        right.addLayout(tune_row)
+        # ── Card 4: StatusLogCard ──
+        card4, c4 = self._section_card("识别状态")
+        summary_widget = QFrame()
+        summary_widget.setObjectName("ParamBlock")
+        summary_layout = QHBoxLayout(summary_widget)
+        summary_layout.setContentsMargins(10, 6, 10, 6)
+        summary_layout.setSpacing(12)
+        
+        self.d_hand = QLabel("手势: 等待")
+        self.d_hand.setStyleSheet("color:#4F7FF7; font-size:11px; font-weight:600;")
+        self.d_hw = QLabel("下发: 未启用")
+        self.d_hw.setStyleSheet("color:#E5484D; font-size:11px; font-weight:600;")
+        self.d_freq = QLabel("freq: --")
+        self.d_freq.setStyleSheet("color:#64748B; font-size:11px; font-weight:600;")
+        summary_layout.addWidget(self.d_hand)
+        summary_layout.addWidget(self.d_hw)
+        summary_layout.addWidget(self.d_freq)
+        summary_layout.addStretch()
+        c4.addWidget(summary_widget)
 
-        # 调试面板
-        dbg=QFrame(); dbg.setObjectName("VisionDebugPanel")
-        dbg.setStyleSheet("#VisionDebugPanel{background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:8px;}")
-        dl=QVBoxLayout(dbg); dl.setSpacing(3)
-        self.d_hand=self._d("手势: 等待","#334155")
-        self.d_c11=self._d("11点: 等待","#334155")
-        self.d_hw=self._d("下发: 未启用","#b91c1c")
-        self.d_range=self._d("range: O6 6D TB/TS/I/M/R/L 0-255","#475569")
-        self.d_o6_mode=self._d("mode: O6 finger_move 6D only, dim2=thumb_swing","#475569")
-        self.d_tuning=self._d(self._tuning_text(),"#475569")
-        self.d_curl=self._d("curl: --","#111827")
-        self.d_thumb=self._d("thumb: --","#111827")
-        self.d_index=self._d("index prox/dist/tip/fused: --","#111827")
-        self.d_middle=self._d("middle prox/dist/tip/fused: --","#111827")
-        self.d_ring=self._d("ring prox/dist/tip/fused: --","#111827")
-        self.d_little=self._d("little prox/dist/tip/fused: --","#111827")
-        self.d_pose_raw=self._d("raw pose: --","#111827")
-        self.d_pose_ema=self._d("ema pose: --","#111827")
-        self.d_similarity=self._d("similarity: --","#111827")
-        self.d_errors=self._d("errors: --","#111827")
-        self.d_pose_sent=self._d("sent: --","#111827")
-        self.d_last_test=self._d("last test: --","#111827")
-        self.d_freq=self._d("freq: --","#111827")
-        self.d_status=self._d("状态: 等待启动","#334155")
-        for w in [self.d_hand,self.d_c11,self.d_range,self.d_o6_mode,self.d_tuning,self.d_hw,self.d_curl,self.d_thumb,self.d_index,self.d_middle,self.d_ring,self.d_little,self.d_pose_raw,self.d_pose_ema,self.d_similarity,self.d_errors,self.d_pose_sent,self.d_last_test,self.d_freq,self.d_status]:
-            dl.addWidget(w)
-        right.addWidget(dbg)
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumHeight(90)
+        self.log_view.setStyleSheet("""
+            QTextEdit { background:#F8FAFC; border:1px solid #E2E8F0; border-radius:6px;
+                padding:6px; font-family:Consolas,monospace; font-size:10px; color:#475569; }
+        """)
+        self._log_lines = []
+        c4.addWidget(self.log_view)
+        right.addWidget(card4)
 
-        rec=QFrame(); rec.setObjectName("GestureRecordPanel")
-        rec.setStyleSheet("#GestureRecordPanel{background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:8px;}")
-        rl=QVBoxLayout(rec); rl.setSpacing(4)
-        title=QLabel("动作录制与回放")
-        title.setStyleSheet("color:#0f172a;font-size:14px;font-weight:700;")
-        rl.addWidget(title)
+        # ── Card 5: RecorderPlaybackCard ──
+        card5, c5 = self._section_card("录制与回放")
 
-        rec_row=QHBoxLayout()
-        self.btn_record_start=self._btn("开始录制","#0ea5e9",10)
-        self.btn_record_stop=self._btn("停止录制","#ef4444",10)
-        self.btn_record_clear=self._btn("清空录制","#64748b",10)
-        rec_row.addWidget(self.btn_record_start); rec_row.addWidget(self.btn_record_stop); rec_row.addWidget(self.btn_record_clear)
-        rl.addLayout(rec_row)
+        # 1. 录制组
+        rec_title = QLabel("动作录制")
+        rec_title.setStyleSheet("color:#64748B; font-size:10px; font-weight:600; margin-top:2px;")
+        c5.addWidget(rec_title)
+        
+        rec_row = QHBoxLayout()
+        rec_row.setSpacing(6)
+        self.btn_record_start = QPushButton("开始录制")
+        self.btn_record_start.setProperty("category", "secondary")
+        self.btn_record_stop = QPushButton("停止录制")
+        self.btn_record_stop.setProperty("category", "danger")
+        self.btn_record_clear = QPushButton("清空")
+        self.btn_record_clear.setProperty("category", "tool")
+        
+        for btn in [self.btn_record_start, self.btn_record_stop, self.btn_record_clear]:
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.PointingHandCursor)
+            rec_row.addWidget(btn)
+        rec_row.addStretch()
+        c5.addLayout(rec_row)
 
-        file_row=QHBoxLayout()
-        self.btn_record_save=self._btn("保存录制","#475569",10)
-        self.btn_record_load=self._btn("加载录制","#475569",10)
-        file_row.addWidget(self.btn_record_save); file_row.addWidget(self.btn_record_load)
-        rl.addLayout(file_row)
+        # 2. 文件与保存组
+        file_title = QLabel("文件保存")
+        file_title.setStyleSheet("color:#64748B; font-size:10px; font-weight:600; margin-top:4px;")
+        c5.addWidget(file_title)
+        
+        file_row = QHBoxLayout()
+        file_row.setSpacing(6)
+        self.btn_record_save = QPushButton("保存录制")
+        self.btn_record_save.setProperty("category", "secondary")
+        self.btn_record_load = QPushButton("加载录制")
+        self.btn_record_load.setProperty("category", "secondary")
+        
+        for btn in [self.btn_record_save, self.btn_record_load]:
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.PointingHandCursor)
+            file_row.addWidget(btn)
+        file_row.addStretch()
+        c5.addLayout(file_row)
 
-        play_row=QHBoxLayout()
-        self.btn_play_start=self._btn("开始回放","#16a34a",10)
-        self.btn_play_pause=self._btn("暂停回放","#ca8a04",10)
-        self.btn_play_stop=self._btn("停止回放","#dc2626",10)
-        play_row.addWidget(self.btn_play_start); play_row.addWidget(self.btn_play_pause); play_row.addWidget(self.btn_play_stop)
-        rl.addLayout(play_row)
+        # 3. 回放控制组
+        play_title = QLabel("动作回放")
+        play_title.setStyleSheet("color:#64748B; font-size:10px; font-weight:600; margin-top:4px;")
+        c5.addWidget(play_title)
+        
+        play_row = QHBoxLayout()
+        play_row.setSpacing(6)
+        self.btn_play_start = QPushButton("开始回放")
+        self.btn_play_start.setProperty("category", "primary")
+        self.btn_play_pause = QPushButton("暂停回放")
+        self.btn_play_pause.setProperty("category", "warning")
+        self.btn_play_stop = QPushButton("停止回放")
+        self.btn_play_stop.setProperty("category", "danger")
+        
+        for btn in [self.btn_play_start, self.btn_play_pause, self.btn_play_stop]:
+            btn.setFixedHeight(28)
+            btn.setCursor(Qt.PointingHandCursor)
+            play_row.addWidget(btn)
+        play_row.addStretch()
+        c5.addLayout(play_row)
 
-        opts=QHBoxLayout()
-        self.chk_play_loop=QCheckBox("循环回放")
-        self.cmb_play_speed=QComboBox()
+        # 选项行
+        opts_row = QHBoxLayout()
+        opts_row.setSpacing(10)
+        self.chk_play_loop = QCheckBox("循环回放")
+        self.chk_play_loop.toggled.connect(lambda checked: setattr(self, "_playback_loop", bool(checked)))
+        self.cmb_play_speed = QComboBox()
         self.cmb_play_speed.addItems(PLAYBACK_SPEEDS)
         self.cmb_play_speed.setCurrentText("1.0x")
-        opts.addWidget(self.chk_play_loop); opts.addWidget(QLabel("速度")); opts.addWidget(self.cmb_play_speed); opts.addStretch()
-        rl.addLayout(opts)
+        self.cmb_play_speed.currentTextChanged.connect(self._on_playback_speed_changed)
+        self.cmb_play_speed.setFixedHeight(26)
+        
+        opts_row.addWidget(self.chk_play_loop)
+        speed_lbl = QLabel("速度")
+        speed_lbl.setStyleSheet("color:#64748B; font-size:11px;")
+        opts_row.addWidget(speed_lbl)
+        opts_row.addWidget(self.cmb_play_speed)
+        opts_row.addStretch()
+        c5.addLayout(opts_row)
 
-        self.d_record_params=self._d("params: --","#475569")
-        self.d_play_options=self._d("playback opts: --","#475569")
-        self.d_play_live=self._d("live block: no","#475569")
-        self.d_play_pose=self._d("playback pose: --","#111827")
+        # 状态摘要行 (轻量化气泡)
+        self.d_rec_state = QLabel("录制: 未录制")
+        self.d_rec_state.setStyleSheet("color:#64748B; font-size:11px; font-weight:500;")
+        self.d_play_state = QLabel("回放: 未回放")
+        self.d_play_state.setStyleSheet("color:#64748B; font-size:11px; font-weight:500;")
+        
+        status_widget = QFrame()
+        status_widget.setObjectName("ParamBlock")
+        status_layout = QHBoxLayout(status_widget)
+        status_layout.setContentsMargins(8, 4, 8, 4)
+        status_layout.setSpacing(12)
+        status_layout.addWidget(self.d_rec_state)
+        status_layout.addWidget(self.d_play_state)
+        status_layout.addStretch()
+        c5.addWidget(status_widget)
 
-        self.d_rec_state=self._d("录制: 未录制","#111827")
-        self.d_rec_frames=self._d("录制帧数: 0","#111827")
-        self.d_rec_duration=self._d("录制时长: 0.00s","#111827")
-        self.d_play_state=self._d("回放: 未回放","#111827")
-        self.d_play_progress=self._d("回放进度: 0%","#111827")
-        self.d_play_frame=self._d("回放帧: 0/0","#111827")
-        self.d_record_file=self._d("文件: --","#111827")
-        self.d_record_error=self._d("错误: --","#b91c1c")
-        for w in [self.d_rec_state,self.d_rec_frames,self.d_rec_duration,self.d_play_state,self.d_play_progress,self.d_play_frame,self.d_record_file,self.d_record_error]:
-            rl.addWidget(w)
-        for w in [self.d_record_params,self.d_play_options,self.d_play_live,self.d_play_pose]:
-            rl.addWidget(w)
-        right.addWidget(rec)
+        right.addWidget(card5)
+        right.addStretch()
+        main.addWidget(right_scroll, stretch=2)
 
-        # 按钮
-        bl=QHBoxLayout()
-        self.btn_start=self._btn("开始模仿","#00b894",12)
-        self.btn_stop=self._btn("停止模仿","#d63031",12)
-        self.btn_home=self._btn("复位","#636e72",12)
-        bl.addWidget(self.btn_start); bl.addWidget(self.btn_stop); bl.addWidget(self.btn_home)
-        right.addLayout(bl); right.addStretch()
-        main.addLayout(left,3); main.addLayout(right,2)
+        # ── 保留旧版属性供业务逻辑引用（不可删除！）──
+        self.d_status = QLabel("状态: 等待启动")
+        self.d_c11 = QLabel("11点: 等待")
+        self.d_tuning = QLabel(self._tuning_text())
+        self.d_range = QLabel("range: O6 6D TB/TS/I/M/R/L 0-255")
+        self.d_o6_mode = QLabel("mode: O6 finger_move 6D only")
+        self.d_curl = QLabel("curl: --")
+        self.d_thumb = QLabel("thumb: --")
+        self.d_index = QLabel("index: --")
+        self.d_middle = QLabel("middle: --")
+        self.d_ring = QLabel("ring: --")
+        self.d_little = QLabel("little: --")
+        self.d_pose_raw = QLabel("raw pose: --")
+        self.d_pose_ema = QLabel("ema pose: --")
+        self.d_similarity = QLabel("similarity: --")
+        self.d_errors = QLabel("errors: --")
+        self.d_pose_sent = QLabel("sent: --")
+        self.d_last_test = QLabel("last test: --")
+        self.d_record_params = QLabel("params: --")
+        self.d_play_options = QLabel("playback opts: --")
+        self.d_play_live = QLabel("live block: no")
+        self.d_play_pose = QLabel("playback pose: --")
+        self.d_play_pose.setStyleSheet("color:#1E293B; font-size:11px; font-weight:500;")
+        self.d_rec_frames = QLabel("录制帧数: 0")
+        self.d_rec_frames.setStyleSheet("color:#1E293B; font-size:11px; font-weight:500;")
+        self.d_rec_duration = QLabel("录制时长: 0.00s")
+        self.d_rec_duration.setStyleSheet("color:#1E293B; font-size:11px; font-weight:500;")
+        self.d_play_progress = QLabel("回放进度: 0%")
+        self.d_play_progress.setStyleSheet("color:#1E293B; font-size:11px; font-weight:500;")
+        self.d_play_frame = QLabel("回放帧: 0/0")
+        self.d_play_frame.setStyleSheet("color:#1E293B; font-size:11px; font-weight:500;")
+        self.d_record_file = QLabel("文件: --")
+        self.d_record_file.setStyleSheet("color:#1E293B; font-size:11px; font-weight:500;")
+        self.d_record_error = QLabel("错误: --")
+        self.d_record_error.setStyleSheet("color:#E5484D; font-size:11px; font-weight:500;")
 
-    def _lbl_title(self,t): l=QLabel(t); l.setStyleSheet("color:#0f172a;font-size:20px;font-weight:700;"); return l
-    def _d(self,t,c="#ccc"):
-        l=QLabel(t); l.setStyleSheet(f"color:{c};font-size:12px;font-family:monospace;font-weight:700;"); return l
-    def _btn(self,text,color,fs):
-        b=QPushButton(text)
-        b.setStyleSheet(f"QPushButton{{background:{color};color:white;border:none;border-radius:4px;padding:5px 10px;font-size:{fs}px;font-weight:bold;}}QPushButton:hover{{background:#00ff88;}}QPushButton:pressed{{background:#008b5e;}}QPushButton:disabled{{background:#555;}}")
-        return b
+    def _lbl_title(self,t):
+        l=QLabel(t); l.setObjectName("CardTitle"); return l
+    def _d(self,t,c="#64748B"):
+        l=QLabel(t); l.setStyleSheet(f"color:{c};font-size:11px;font-family:monospace;font-weight:500;"); return l
+    def _btn(self,text,category="secondary",fs=10):
+        b=QPushButton(text); b.setProperty("category",category); return b
 
     def _tuning_text(self):
         return f"tuning: ema={self._ema_alpha:.2f} deadband={self._deadband} interval={self._emit_iv:.2f}s step={self._max_delta}"
 
     def _sync_tuning_label(self):
-        if hasattr(self,"d_tuning"):
-            self.d_tuning.setText(self._tuning_text())
+        # 保留兼容性 — 不再更新单独的 label
+        pass
 
     def _wire(self):
         self.btn_start.clicked.connect(self._start)
         self.btn_stop.clicked.connect(self._stop_page)
         self.btn_home.clicked.connect(self._go_home)
+        # Calibration buttons
         self.btn_cal_open.clicked.connect(self._calibrate_open)
         self.btn_cal_close.clicked.connect(self._calibrate_close)
         self.btn_cal_thumb_open.clicked.connect(self._calibrate_thumb_open)
         self.btn_cal_thumb_close.clicked.connect(self._calibrate_thumb_close)
         self.chk_thumb_bend_invert.toggled.connect(self._on_thumb_bend_invert_toggled)
         self.chk_thumb_invert.toggled.connect(self._on_thumb_invert_toggled)
+        # Test buttons
         self.btn_test_open.clicked.connect(lambda: self._send_o6_test_pose("open", OPEN_POSE))
         self.btn_test_close.clicked.connect(lambda: self._send_o6_test_pose("fist", CLOSE_POSE))
-        self.btn_test_thumb_bend.clicked.connect(lambda: self._send_o6_test_pose("thumb_bend", [CLOSE_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
-        self.btn_test_thumb_swing.clicked.connect(lambda: self._send_o6_test_pose("thumb_swing", [OPEN_POSE[0],CLOSE_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
-        self.btn_test_index.clicked.connect(lambda: self._send_o6_test_pose("index", [OPEN_POSE[0],OPEN_POSE[1],CLOSE_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
-        self.btn_test_middle.clicked.connect(lambda: self._send_o6_test_pose("middle", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],CLOSE_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
-        self.btn_test_ring.clicked.connect(lambda: self._send_o6_test_pose("ring", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],CLOSE_POSE[4],OPEN_POSE[5]]))
-        self.btn_test_little.clicked.connect(lambda: self._send_o6_test_pose("little", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],CLOSE_POSE[5]]))
+        # Recording & Playback
         self.btn_record_start.clicked.connect(self._start_recording)
         self.btn_record_stop.clicked.connect(self._stop_recording)
         self.btn_record_clear.clicked.connect(self._clear_recording)
@@ -814,19 +1030,18 @@ class VisionPage(QFrame):
         self.chk_play_loop.toggled.connect(lambda checked: setattr(self,"_playback_loop",bool(checked)))
         self.cmb_play_speed.currentTextChanged.connect(self._on_playback_speed_changed)
         self.spin_ema.valueChanged.connect(self._on_tuning_changed)
-        self.spin_deadband.valueChanged.connect(self._on_tuning_changed)
-        self.spin_interval.valueChanged.connect(self._on_tuning_changed)
-        self.spin_step_finger.valueChanged.connect(self._on_tuning_changed)
-        self.spin_step_thumb.valueChanged.connect(self._on_tuning_changed)
+        self.spin_db.valueChanged.connect(self._on_tuning_changed)
+        self.spin_iv.valueChanged.connect(self._on_tuning_changed)
+        self.spin_fs.valueChanged.connect(self._on_tuning_changed)
+        self.spin_ts.valueChanged.connect(self._on_tuning_changed)
 
     def _on_tuning_changed(self,*_):
         self._ema_alpha=float(self.spin_ema.value())
-        self._deadband=int(self.spin_deadband.value())
-        self._emit_iv=float(self.spin_interval.value())
-        finger_step=int(self.spin_step_finger.value())
-        thumb_step=int(self.spin_step_thumb.value())
+        self._deadband=int(self.spin_db.value())
+        self._emit_iv=float(self.spin_iv.value())
+        finger_step=int(self.spin_fs.value())
+        thumb_step=int(self.spin_ts.value())
         self._max_delta=[finger_step,thumb_step,finger_step,finger_step,finger_step,finger_step]
-        self._sync_tuning_label()
         _jlog(self._tuning_text())
 
     def _on_hw_toggled(self,checked):
@@ -839,10 +1054,10 @@ class VisionPage(QFrame):
                 return
         self._hw_enabled=checked
         if checked:
-            self.d_hw.setText("下发: 已启用 (~8Hz)"); self.d_hw.setStyleSheet("color:#047857;font-size:12px;font-family:monospace;font-weight:700;")
+            self.d_hw.setText("下发: 已启用 (~8Hz)"); self.d_hw.setStyleSheet("color:#22A06B; font-size:11px; font-weight:600;")
             _vlog("hardware ENABLED")
         else:
-            self.d_hw.setText("下发: 未启用"); self.d_hw.setStyleSheet("color:#b91c1c;font-size:12px;font-family:monospace;font-weight:700;")
+            self.d_hw.setText("下发: 未启用"); self.d_hw.setStyleSheet("color:#E5484D; font-size:11px; font-weight:600;")
             _vlog("hardware DISABLED")
 
     def _safe_emit(self,pose,tag=""):
@@ -1592,17 +1807,27 @@ class VisionPage(QFrame):
         self._opening_timer.start(3000)
 
     def _on_opening_timeout(self):
-        if self._state=="opening": self._on_camera_error("摄像头线程超时未返回画面")
+        if self._state=="opening": self._on_camera_error("摄像头线程超时")
 
     def _on_camera_error(self,msg):
         self._opening_timer.stop(); self._set_state("error"); self._stop_worker()
-        self.cam_view.setText("错误"); self.d_status.setText(f"状态: {msg}"); self.btn_start.setEnabled(True)
+        self.cam_view.setText("错误"); self._log_status(f"状态: {msg}"); self.btn_start.setEnabled(True)
         _vlog(f"camera error: {msg}")
 
     def _on_camera_opened(self):
         self._opening_timer.stop(); self._set_state("running")
-        self.d_status.setText("状态: 运行中 — 勾选下发开关才控制机械手")
+        self._log_status("运行中 — 勾选下发开关才控制机械手")
+        self.d_hw.setText("下发: 未启用")
+        self.d_hw.setStyleSheet("color:#E5484D; font-size:11px; font-weight:600;")
+        self.cam_status_lbl.setText("运行中")
+        self.cam_status_lbl.setStyleSheet("color:#22A06B; font-size:11px;")
         _vlog("camera_opened, running")
+
+    def _log_status(self, msg):
+        self._log_lines.append(msg)
+        if len(self._log_lines) > 80:
+            self._log_lines = self._log_lines[-80:]
+        self.log_view.setPlainText("\n".join(self._log_lines))
 
     def _stop_page(self):
         self._opening_timer.stop(); self._set_state("stopped")
@@ -1638,6 +1863,23 @@ class VisionPage(QFrame):
         self._state=s; self.btn_stop.setEnabled(s in ("opening","running"))
         if hasattr(self,"btn_record_start"):
             self._update_record_buttons()
+
+    # ── 重置视角兼容 ──
+    def set_compact_mode(self, compact: bool):
+        pass
+
+    # ── 隐藏时自动停止 ──
+    def hideEvent(self, event):
+        if self._state in ("opening","running"):
+            self._hw_enabled=False; self.chk_hw.setChecked(False); self._stop_page()
+        super().hideEvent(event)
+
+    def closeEvent(self, event=None):
+        self._hw_enabled=False
+        self._stop_recording()
+        self._stop_playback()
+        if self._worker: self._worker.stop(); self._worker=None
+        if event: super().closeEvent(event)
 
     # ── 主线程 pose 接收 ──
     def _on_pose(self,raw_pose,debug):
