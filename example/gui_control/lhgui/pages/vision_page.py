@@ -5,7 +5,8 @@
 
 默认仅识别显示，勾选"允许下发到机械手"后开通实机控制 (~8Hz, EMA, deadband, 最大步长限制)。
 """
-import os, ssl, time, math, urllib.request, json
+import os, ssl, time, math, urllib.request, json, threading
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
 from datetime import datetime
 import cv2, mediapipe as mp, numpy as np
 
@@ -90,6 +91,33 @@ def _jlog(message):
 def _glog(message):
     print(f"[GestureRecord] {message}", flush=True)
 
+# ── 摄像头打开超时包装 ────────────────────────────────────────
+_CAM_OPEN_TIMEOUT = 3.0  # 每个后端的打开超时秒数
+
+def _open_camera_with_timeout(backend_id, timeout=_CAM_OPEN_TIMEOUT):
+    """在后台线程中打开摄像头，超时则放弃返回 None。"""
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def _do_open():
+                cap = cv2.VideoCapture(0, backend_id) if backend_id else cv2.VideoCapture(0)
+                if not cap.isOpened():
+                    cap.release()
+                    return None
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    cap.release()
+                    return None
+                return cap
+            return pool.submit(_do_open).result(timeout=timeout)
+    except _FuturesTimeout:
+        _vlog(f"camera open timed out ({timeout}s) for backend_id={backend_id}")
+        return None
+    except Exception as e:
+        _vlog(f"camera open error for backend_id={backend_id}: {e}")
+        return None
+
 # ── 工作线程 ──────────────────────────────────────────────────
 class ImitationWorker(QThread):
     _task_model_buffer=None
@@ -103,6 +131,7 @@ class ImitationWorker(QThread):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._running=False; self._cap=None; self._hands=None
+        self._stop_event=threading.Event()
         self._calib_open=None; self._calib_close=None
         self._thumb_open_baseline=None; self._thumb_close_baseline=None
         self._thumb_swing_invert=THUMB_SWING_INVERT_DEFAULT
@@ -126,120 +155,125 @@ class ImitationWorker(QThread):
     def run(self):
         self._running=True
         _vlog("worker run entered")
-        # 摄像头
-        for name,bid in [("CAP_DSHOW",cv2.CAP_DSHOW),("CAP_MSMF",cv2.CAP_MSMF),("default",0)]:
-            self._cap=cv2.VideoCapture(0,bid) if bid else cv2.VideoCapture(0)
-            if self._cap.isOpened():
-                _vlog(f"camera opened backend={name}")
-                break
-            if self._cap: self._cap.release()
-        if not self._cap or not self._cap.isOpened():
-            self.camera_error.emit("摄像头打开失败"); self._running=False; return
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,640); self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT,480)
-
-        ret,frame=self._cap.read()
-        _vlog(f"frame read ret={ret} shape={getattr(frame,'shape',None)}")
-        if not ret or frame is None:
-            self.camera_error.emit("摄像头读取失败"); self._running=False; self._release(); return
-        frame=cv2.flip(frame,1); self.camera_opened.emit()
-        fr=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
-        hh,ww,ch=fr.shape
-        self.frame_ready.emit(QImage(fr.data,ww,hh,ch*ww,QImage.Format_RGB888).copy())
-
-        # MediaPipe
-        _vlog("mediapipe init start")
         try:
-            self._init_mediapipe()
-            _vlog(f"mediapipe init ok backend={self._backend}")
-        except Exception as e:
-            _vlog(f"mediapipe init failed: {e}")
-            self._hands=None
+            # 摄像头（每个后端带超时，避免 DSHOW 阻塞）
+            for name,bid in [("CAP_DSHOW",cv2.CAP_DSHOW),("CAP_MSMF",cv2.CAP_MSMF),("default",0)]:
+                if not self._running: return
+                _vlog(f"trying backend={name}")
+                cap=_open_camera_with_timeout(bid)
+                if cap is not None:
+                    self._cap=cap
+                    _vlog(f"camera opened backend={name}")
+                    break
+            if not self._cap:
+                self.camera_error.emit("摄像头打开失败"); self._running=False; return
 
-        while self._running:
-            ret,frame=self._cap.read()
-            self._frame_idx+=1
-            if self._frame_idx == 1 or self._frame_idx % 30 == 0:
-                _vlog(f"frame read ret={ret} shape={getattr(frame,'shape',None)}")
-            if not ret or frame is None: break
-            frame=cv2.flip(frame,1)
-
-            pose=None; debug={}; hands_detected=0
-            if self._hands is not None:
-                rgb=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
-                rgb.flags.writeable=False
-                h,hands_detected=self._detect_hand(rgb)
-                should_log=self._frame_idx == 1 or self._frame_idx % 15 == 0
-                if should_log:
-                    _vlog(f"frame={self._frame_idx} hands_detected={1 if hands_detected else 0}")
-                if h is not None:
-                    if should_log:
-                        _vlog("hand detected")
-                    self._draw_landmarks(frame,h)
-                    pose,debug=self._compute_pose(h)
-                    debug["frame_idx"]=self._frame_idx
-                    debug["log_joint"]=should_log
-                    if should_log:
-                        _vlog("control11 ready")
-                    curls=debug.get("curls",[])
-                    spread=debug.get("thumb_spread",0.0)
-                    if should_log:
-                        _vlog(
-                            "curls thumb={:.3f} index={:.3f} middle={:.3f} ring={:.3f} little={:.3f} spread={:.3f}".format(
-                                curls[0],curls[1],curls[2],curls[3],curls[4],spread
-                            )
-                        )
-                        fingers=debug.get("fingers",{})
-                        for name in ("index","middle","ring","little"):
-                            fd=fingers.get(name,{})
-                            _jlog(
-                                "{} prox={:.3f} dist={:.3f} tip_aux={:.3f} fused={:.3f}".format(
-                                    name,
-                                    fd.get("proximal",0.0),
-                                    fd.get("distal",0.0),
-                                    fd.get("tip_aux",0.0),
-                                    fd.get("fused",0.0),
-                                )
-                            )
-                        thumb=debug.get("thumb",{})
-                        _jlog(
-                            "thumb bend_raw={:.3f} bend_mapped={} swing_raw={:.3f} swing_norm={:.3f} swing_mapped={} invert={}".format(
-                                thumb.get("bend_raw",0.0),
-                                thumb.get("bend_mapped",0),
-                                thumb.get("swing_raw",0.0),
-                                thumb.get("swing_norm",0.0),
-                                thumb.get("swing_mapped",0),
-                                thumb.get("swing_invert",False),
-                            )
-                        )
-                        _jlog(f"raw pose: {[int(v) for v in pose]}")
-                    self._draw_overlay(frame,True,curls,spread,pose)
-                    self.pose_computed.emit(pose,debug)
-                    if should_log:
-                        _vlog("pose signal emitted")
-                    self.status_update.emit("hand","detected")
-                else:
-                    self._draw_overlay(frame,False,None,None,None)
-                    if self._frame_idx % 15 == 0:
-                        _vlog("no hand, skip pose")
-                    self.status_update.emit("hand","no_hand")
-            else:
-                self._draw_overlay(frame,False,None,None,None)
-
+            frame=cv2.flip(self._cap.read()[1],1)
+            self.camera_opened.emit()
             fr=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
-            fr=np.ascontiguousarray(fr)
             hh,ww,ch=fr.shape
             self.frame_ready.emit(QImage(fr.data,ww,hh,ch*ww,QImage.Format_RGB888).copy())
-            self.msleep(30)
 
-        _vlog("stopped")
-        self._release()
+            # MediaPipe
+            _vlog("mediapipe init start")
+            try:
+                self._init_mediapipe()
+                _vlog(f"mediapipe init ok backend={self._backend}")
+            except Exception as e:
+                _vlog(f"mediapipe init failed: {e}")
+                self._hands=None
+
+            while self._running:
+                ret,frame=self._cap.read()
+                self._frame_idx+=1
+                if self._frame_idx == 1 or self._frame_idx % 30 == 0:
+                    _vlog(f"frame read ret={ret} shape={getattr(frame,'shape',None)}")
+                if not ret or frame is None: break
+                frame=cv2.flip(frame,1)
+
+                pose=None; debug={}; hands_detected=0
+                if self._hands is not None:
+                    rgb=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
+                    rgb.flags.writeable=False
+                    h,hands_detected=self._detect_hand(rgb)
+                    should_log=self._frame_idx == 1 or self._frame_idx % 15 == 0
+                    if should_log:
+                        _vlog(f"frame={self._frame_idx} hands_detected={1 if hands_detected else 0}")
+                    if h is not None:
+                        if should_log:
+                            _vlog("hand detected")
+                        self._draw_landmarks(frame,h)
+                        pose,debug=self._compute_pose(h)
+                        debug["frame_idx"]=self._frame_idx
+                        debug["log_joint"]=should_log
+                        if should_log:
+                            _vlog("control11 ready")
+                        curls=debug.get("curls",[])
+                        spread=debug.get("thumb_spread",0.0)
+                        if should_log:
+                            _vlog(
+                                "curls thumb={:.3f} index={:.3f} middle={:.3f} ring={:.3f} little={:.3f} spread={:.3f}".format(
+                                    curls[0],curls[1],curls[2],curls[3],curls[4],spread
+                                )
+                            )
+                            fingers=debug.get("fingers",{})
+                            for name in ("index","middle","ring","little"):
+                                fd=fingers.get(name,{})
+                                _jlog(
+                                    "{} prox={:.3f} dist={:.3f} tip_aux={:.3f} fused={:.3f}".format(
+                                        name,
+                                        fd.get("proximal",0.0),
+                                        fd.get("distal",0.0),
+                                        fd.get("tip_aux",0.0),
+                                        fd.get("fused",0.0),
+                                    )
+                                )
+                            thumb=debug.get("thumb",{})
+                            _jlog(
+                                "thumb bend_raw={:.3f} bend_mapped={} swing_raw={:.3f} swing_norm={:.3f} swing_mapped={} invert={}".format(
+                                    thumb.get("bend_raw",0.0),
+                                    thumb.get("bend_mapped",0),
+                                    thumb.get("swing_raw",0.0),
+                                    thumb.get("swing_norm",0.0),
+                                    thumb.get("swing_mapped",0),
+                                    thumb.get("swing_invert",False),
+                                )
+                            )
+                            _jlog(f"raw pose: {[int(v) for v in pose]}")
+                        self._draw_overlay(frame,True,curls,spread,pose)
+                        self.pose_computed.emit(pose,debug)
+                        if should_log:
+                            _vlog("pose signal emitted")
+                        self.status_update.emit("hand","detected")
+                    else:
+                        self._draw_overlay(frame,False,None,None,None)
+                        if self._frame_idx % 15 == 0:
+                            _vlog("no hand, skip pose")
+                        self.status_update.emit("hand","no_hand")
+                else:
+                    self._draw_overlay(frame,False,None,None,None)
+
+                fr=cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
+                fr=np.ascontiguousarray(fr)
+                hh,ww,ch=fr.shape
+                self.frame_ready.emit(QImage(fr.data,ww,hh,ch*ww,QImage.Format_RGB888).copy())
+                self.msleep(30)
+
+            _vlog("stopped")
+        finally:
+            self._release()
 
     def stop(self):
-        self._running=False; self.wait(3000); self._release()
+        self._running=False
+        if self._stop_event.wait(2.0):
+            return
+        _vlog("stop: worker did not finish cleanup in time")
+        self.wait(1000)
 
     def _release(self):
         if self._cap: self._cap.release(); self._cap=None
         if self._hands: self._hands.close(); self._hands=None
+        self._stop_event.set()
 
     def _init_mediapipe(self):
         if hasattr(mp, "solutions") and hasattr(mp.solutions, "hands"):

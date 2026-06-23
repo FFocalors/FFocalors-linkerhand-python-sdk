@@ -8,9 +8,11 @@
 import os
 import random
 import ssl
+import threading
 import time
 import urllib.request
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as _FuturesTimeout
 
 import cv2
 import mediapipe as mp
@@ -81,6 +83,34 @@ def judge_result(human, machine):
     return "machine"
 
 
+# ── 摄像头打开超时包装 ────────────────────────────────────────
+_CAM_OPEN_TIMEOUT = 3.0
+
+def _open_camera_with_timeout(backend_id, timeout=_CAM_OPEN_TIMEOUT):
+    """在后台线程中打开摄像头，超时则放弃返回 None。"""
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            def _do_open():
+                cap = cv2.VideoCapture(0, backend_id) if backend_id else cv2.VideoCapture(0)
+                if not cap.isOpened():
+                    cap.release()
+                    return None
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    cap.release()
+                    return None
+                return cap
+            return pool.submit(_do_open).result(timeout=timeout)
+    except _FuturesTimeout:
+        rps_log(f"camera open timed out ({timeout}s) for backend_id={backend_id}")
+        return None
+    except Exception as exc:
+        rps_log(f"camera open error for backend_id={backend_id}: {exc}")
+        return None
+
+
 class RPSWorker(QThread):
     _task_model_buffer = None
 
@@ -95,6 +125,7 @@ class RPSWorker(QThread):
         self._running = False
         self._cap = None
         self._hands = None
+        self._stop_event = threading.Event()
         self._backend = None
         self._mp_hands = None
         self._mp_drawing = None
@@ -106,79 +137,75 @@ class RPSWorker(QThread):
     def run(self):
         self._running = True
         rps_log("worker thread run entered")
-
-        for name, backend_id in [("CAP_DSHOW", cv2.CAP_DSHOW), ("CAP_MSMF", cv2.CAP_MSMF), ("default", 0)]:
-            self._cap = cv2.VideoCapture(0, backend_id) if backend_id else cv2.VideoCapture(0)
-            if self._cap.isOpened():
-                rps_log(f"camera opened backend={name}")
-                break
-            if self._cap:
-                self._cap.release()
-
-        if not self._cap or not self._cap.isOpened():
-            self.camera_error.emit("摄像头打开失败")
-            self._running = False
-            return
-
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-
-        ret, frame = self._cap.read()
-        if not ret or frame is None:
-            self.camera_error.emit("摄像头读取失败")
-            self._running = False
-            self._release()
-            return
-
-        frame = cv2.flip(frame, 1)
-        self.camera_opened.emit()
-        self._emit_frame(frame)
-
-        rps_log("mediapipe init start")
         try:
-            self._init_mediapipe()
-            rps_log(f"mediapipe init ok backend={self._backend}")
-        except Exception as exc:
-            rps_log(f"mediapipe init failed: {exc}")
-            self._hands = None
+            # 摄像头（每个后端带超时，避免 DSHOW 阻塞）
+            for name, backend_id in [("CAP_DSHOW", cv2.CAP_DSHOW), ("CAP_MSMF", cv2.CAP_MSMF), ("default", 0)]:
+                if not self._running:
+                    return
+                rps_log(f"trying backend={name}")
+                cap = _open_camera_with_timeout(backend_id)
+                if cap is not None:
+                    self._cap = cap
+                    rps_log(f"camera opened backend={name}")
+                    break
 
-        while self._running:
-            ret, frame = self._cap.read()
-            self._frame_idx += 1
-            if not ret or frame is None:
-                break
+            if not self._cap:
+                self.camera_error.emit("摄像头打开失败")
+                self._running = False
+                return
 
-            frame = cv2.flip(frame, 1)
-            candidate = "未识别"
-            has_hand = False
-
-            if self._hands is not None:
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                rgb.flags.writeable = False
-                hand, count = self._detect_hand(rgb)
-                has_hand = hand is not None and count > 0
-                if has_hand:
-                    self._draw_landmarks(frame, hand)
-                    candidate = self._classify(hand)
-                    self.status_update.emit("hand", "detected")
-                else:
-                    self.status_update.emit("hand", "no_hand")
-            else:
-                self.status_update.emit("hand", "no_model")
-
-            self._update_overlay_state(candidate, has_hand)
-            self._draw_overlay(frame, candidate, has_hand)
-            self.gesture_guess.emit(candidate)
+            frame = cv2.flip(self._cap.read()[1], 1)
+            self.camera_opened.emit()
             self._emit_frame(frame)
-            self.msleep(30)
 
-        rps_log("worker loop ended")
-        self._release()
+            rps_log("mediapipe init start")
+            try:
+                self._init_mediapipe()
+                rps_log(f"mediapipe init ok backend={self._backend}")
+            except Exception as exc:
+                rps_log(f"mediapipe init failed: {exc}")
+                self._hands = None
+
+            while self._running:
+                ret, frame = self._cap.read()
+                self._frame_idx += 1
+                if not ret or frame is None:
+                    break
+
+                frame = cv2.flip(frame, 1)
+                candidate = "未识别"
+                has_hand = False
+
+                if self._hands is not None:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    rgb.flags.writeable = False
+                    hand, count = self._detect_hand(rgb)
+                    has_hand = hand is not None and count > 0
+                    if has_hand:
+                        self._draw_landmarks(frame, hand)
+                        candidate = self._classify(hand)
+                        self.status_update.emit("hand", "detected")
+                    else:
+                        self.status_update.emit("hand", "no_hand")
+                else:
+                    self.status_update.emit("hand", "no_model")
+
+                self._update_overlay_state(candidate, has_hand)
+                self._draw_overlay(frame, candidate, has_hand)
+                self.gesture_guess.emit(candidate)
+                self._emit_frame(frame)
+                self.msleep(30)
+
+            rps_log("worker loop ended")
+        finally:
+            self._release()
 
     def stop(self):
         self._running = False
-        self.wait(3000)
-        self._release()
+        if self._stop_event.wait(2.0):
+            return
+        rps_log("stop: worker did not finish cleanup in time")
+        self.wait(1000)
 
     def _release(self):
         if self._cap:
@@ -188,6 +215,7 @@ class RPSWorker(QThread):
             if hasattr(self._hands, "close"):
                 self._hands.close()
             self._hands = None
+        self._stop_event.set()
 
     def _emit_frame(self, frame):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

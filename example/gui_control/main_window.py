@@ -150,6 +150,12 @@ class MainWindow(QMainWindow):
         try:
             if Page.CONSOLE in self._pages:
                 self._pages[Page.CONSOLE].waveform_panel.exit_fullscreen()
+            # 停止摄像头工作线程，避免退出时资源泄漏
+            for page_key in (Page.VISION, Page.GAME):
+                page = self._pages.get(page_key)
+                if page is not None:
+                    if hasattr(page, "closeEvent"):
+                        page.closeEvent(None)
             self.recorder.stop_playback()
             self.action_executor.cancel()
             self.data_source.stop()

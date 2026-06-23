@@ -28,12 +28,6 @@ from main_window import MainWindow
 
 
 def main():
-    # 重定向输出到 log 文件，方便分析和调试
-    log_path = os.path.join(CURRENT_DIR, "test_out.log")
-    log_file = open(log_path, "w", encoding="utf-8")
-    sys.stdout = log_file
-    sys.stderr = log_file
-
     try:
         QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
         QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
@@ -47,10 +41,13 @@ def main():
         window.show()
         exit_code = app.exec_()
         sys.exit(exit_code)
-    finally:
-        sys.stdout = sys.__stdout__
-        sys.stderr = sys.__stderr__
-        log_file.close()
+    except Exception as e:
+        # 崩溃时写入日志方便排查
+        import traceback
+        log_path = os.path.join(CURRENT_DIR, "test_out.log")
+        with open(log_path, "w", encoding="utf-8") as f:
+            traceback.print_exc(file=f)
+        raise
 
 
 if __name__ == "__main__":

@@ -79,8 +79,8 @@ class JointPanel(QWidget):
                 row.set_feedback(state[i])
 
     def _on_ui_state(self, snapshot):
-        # 未连接时禁用，但保持极好的可读性
-        enabled = (snapshot.connection == ConnectionState.CONNECTED
+        # 已连接或离线调试模式时允许操作，回放中禁用
+        enabled = (snapshot.connection in (ConnectionState.CONNECTED, ConnectionState.OFFLINE)
                    and snapshot.playback == PlaybackState.IDLE)
         for row in self.rows:
             row.set_enabled(enabled)

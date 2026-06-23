@@ -296,7 +296,7 @@ class BottomBar(QWidget):
             signal_bus.connection_message.emit("info", f"扭矩已设为 {self._torque}")
 
     def _on_ui_state(self, snapshot):
-        enabled = snapshot.connection == ConnectionState.CONNECTED
+        enabled = snapshot.connection in (ConnectionState.CONNECTED, ConnectionState.OFFLINE)
         self.home_btn.setEnabled(enabled)
         self.speed_btn.setEnabled(enabled)
         self.torque_btn.setEnabled(enabled)
