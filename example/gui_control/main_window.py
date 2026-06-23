@@ -20,7 +20,6 @@ from lhgui.widgets.top_bar import TopBar
 from lhgui.widgets.sidebar import Sidebar
 
 from lhgui.pages.console_page import ConsolePage
-from lhgui.pages.waveform_page import WaveformPage
 from lhgui.pages.vision_page import VisionPage
 from lhgui.pages.game_page import GamePage
 from lhgui.pages.log_page import LogPage
@@ -76,7 +75,6 @@ class MainWindow(QMainWindow):
 
         self._pages = {
             Page.CONSOLE: ConsolePage(self.hand_joint),
-            Page.WAVEFORM: WaveformPage(),
             Page.VISION: VisionPage(),
             Page.GAME: GamePage(),
             Page.LOG: LogPage(),
@@ -149,7 +147,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         try:
-            self._pages[Page.WAVEFORM].exit_fullscreen()
+            if Page.CONSOLE in self._pages:
+                self._pages[Page.CONSOLE].waveform_panel.exit_fullscreen()
             self.recorder.stop_playback()
             self.action_executor.cancel()
             self.data_source.stop()

@@ -38,53 +38,49 @@ class JointRow(QFrame):
 
     def _build(self):
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(8, 4, 8, 4)
-        outer.setSpacing(4)
+        outer.setContentsMargins(12, 6, 12, 6)
+        outer.setSpacing(6)
 
-        # ── 第一行：名称与反馈 ──
-        top = QHBoxLayout()
-        top.setSpacing(6)
+        # 第一行：关节名称与当前反馈值（左右对齐）
+        row1 = QHBoxLayout()
+        row1.setContentsMargins(0, 0, 0, 0)
         
         self.name_lbl = QLabel(self.name)
         self.name_lbl.setObjectName("JointRowName")
-        top.addWidget(self.name_lbl)
+        row1.addWidget(self.name_lbl)
         
-        top.addStretch()
-        
-        # 反馈标签显示为简洁的数值
-        self.feedback_lbl = QLabel(str(self.min_val))
+        row1.addStretch()
+
+        self.feedback_lbl = QLabel("000")
         self.feedback_lbl.setObjectName("JointFeedback")
         self.feedback_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self.feedback_lbl.setToolTip(f"{self.name} 实时反馈位置")
-        top.addWidget(self.feedback_lbl)
-        outer.addLayout(top)
+        row1.addWidget(self.feedback_lbl)
+        
+        outer.addLayout(row1)
 
-        # ── 第二行：滑块与输入框 ──
-        bottom = QHBoxLayout()
-        bottom.setSpacing(12) # 保持 12px 间距
+        # 第二行：滑块与目标值输入框
+        row2 = QHBoxLayout()
+        row2.setSpacing(12)
+        row2.setContentsMargins(0, 0, 0, 0)
         
         self.slider = QSlider(Qt.Horizontal)
         self.slider.setRange(self.min_val, self.max_val)
         self.slider.setToolTip(f"{self.name}\n范围 {self.min_val}–{self.max_val}")
         self.slider.valueChanged.connect(self._slider_changed)
         self.slider.sliderPressed.connect(self._set_active)
-        bottom.addWidget(self.slider, stretch=1)
+        row2.addWidget(self.slider, stretch=1)
 
         self.spin = QSpinBox()
         self.spin.setRange(self.min_val, self.max_val)
         self.spin.setButtonSymbols(QAbstractSpinBox.NoButtons)
         self.spin.setAlignment(Qt.AlignCenter)
-        
-        # 基于当前字体 and DPI 测量三位数 "255" 所需空间，避免高 DPI 裁切
-        metrics = QFontMetrics(self.spin.font())
-        text_width = metrics.horizontalAdvance("255")
-        # 加上左右 Padding 并限制最小宽度
-        self.spin.setFixedWidth(max(58, text_width + 18))
-        
+        self.spin.setFixedWidth(46)
         self.spin.setToolTip(f"{self.name} 目标值\n范围 {self.min_val}–{self.max_val}")
         self.spin.valueChanged.connect(self._spin_changed)
-        bottom.addWidget(self.spin)
-        outer.addLayout(bottom)
+        row2.addWidget(self.spin)
+        
+        outer.addLayout(row2)
 
         # 底部分隔线
         self._separator = QFrame()

@@ -63,7 +63,8 @@ class JointPanel(QWidget):
         layout.addWidget(scroll, stretch=1)
 
         # 扁平化面板底部不再保留任何冗余按钮
-        pass
+        from lhgui.utils.style_utils import add_card_shadow
+        add_card_shadow(self)
 
     def _on_row_changed(self, _):
         values = self.get_values()

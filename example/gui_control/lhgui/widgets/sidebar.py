@@ -12,7 +12,6 @@ from lhgui.widgets.sidebar_item import SidebarItem
 
 _NAV_ITEMS = [
     (Page.CONSOLE, "控制台", "console"),
-    (Page.WAVEFORM, "实时曲线", "waveform"),
     (Page.VISION, "视觉识别", "vision"),
     (Page.GAME, "小游戏", "game"),
     (Page.LOG, "日志", "log"),

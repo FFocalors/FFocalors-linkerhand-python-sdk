@@ -34,6 +34,20 @@ class PresetGroup(QWidget):
         signal_bus.ui_state_changed.connect(self._on_ui)
         signal_bus.custom_presets_changed.connect(self.refresh_custom_presets)
 
+    def _create_section_card(self, title_text: str) -> tuple:
+        from PyQt5.QtWidgets import QFrame
+        card = QFrame()
+        card.setObjectName("PresetSectionCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(10, 8, 10, 8)
+        card_layout.setSpacing(8)
+        
+        lbl = QLabel(title_text)
+        lbl.setObjectName("PresetSectionTitle")
+        card_layout.addWidget(lbl)
+        
+        return card, card_layout
+
     def _build(self):
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(0, 0, 0, 0)
@@ -67,114 +81,124 @@ class PresetGroup(QWidget):
         # 渲染自定义预设分组
         self._build_custom_preset_group()
 
+        # 悬浮阴影
+        from lhgui.utils.style_utils import add_card_shadow
+        add_card_shadow(self)
+
     def _build_static_groups(self):
         used = set()
 
-        # ── 1. 主要动作 ──
-        primary = {n: self.actions[n] for n in _PRIMARY if n in self.actions}
-        used.update(primary)
-        if primary:
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            for n in _PRIMARY:
-                if n not in primary:
-                    continue
-                c = PresetCard(n, primary[n], "primary")
+        # ── 1. 核心动作 ──
+        card, card_layout = self._create_section_card("核心动作")
+        
+        # 核心主动作：大卡片并排
+        row1 = QHBoxLayout()
+        row1.setSpacing(8)
+        for n in ["张开", "握拳"]:
+            if n in self.actions:
+                c = PresetCard(n, self.actions[n], "primary")
                 c.triggered.connect(self.triggered.emit)
-                row.addWidget(c, stretch=1)
+                row1.addWidget(c)
                 self._cards[n] = c
-            self.container_layout.addLayout(row)
+                used.add(n)
+        card_layout.addLayout(row1)
 
-        # ── 2. 次级动作 ──
-        normal = {n: self.actions[n] for n in _NORMAL if n in self.actions}
-        used.update(normal)
-        if normal:
-            row = QHBoxLayout()
-            row.setSpacing(8)
-            for n in _NORMAL:
-                if n not in normal:
-                    continue
-                c = PresetCard(n, normal[n], "normal")
+        # 辅助动作：中卡片并排
+        row2 = QHBoxLayout()
+        row2.setSpacing(8)
+        for n in ["OK", "点赞"]:
+            if n in self.actions:
+                c = PresetCard(n, self.actions[n], "normal")
                 c.triggered.connect(self.triggered.emit)
-                row.addWidget(c, stretch=1)
+                row2.addWidget(c)
                 self._cards[n] = c
-            self.container_layout.addLayout(row)
+                used.add(n)
+        row2.addStretch()
+        card_layout.addLayout(row2)
+        
+        self.container_layout.addWidget(card)
 
-        # ── 3. 数字手势 ──
-        num = {n: self.actions[n] for n in _NUMBER if n in self.actions}
-        used.update(num)
-        if num:
-            lbl = QLabel("数字手势")
-            lbl.setStyleSheet("color:#64748b; font-size:12px; font-weight:600; margin-top:4px;")
-            self.container_layout.addWidget(lbl)
-            
-            grid = QGridLayout()
-            grid.setSpacing(6)
-            for i, n in enumerate(_NUMBER):
-                if n not in num:
-                    continue
-                c = PresetCard(n, num[n], "compact")
+        # ── 2. 数字手势 ──
+        card_num, card_num_layout = self._create_section_card("数字手势")
+        grid_num = QGridLayout()
+        grid_num.setSpacing(6)
+        grid_num.setContentsMargins(0, 0, 0, 0)
+        
+        num_actions = ["壹", "贰", "叁", "肆", "伍"]
+        for idx, n in enumerate(num_actions):
+            if n in self.actions:
+                c = PresetCard(n, self.actions[n], "compact")
                 c.triggered.connect(self.triggered.emit)
-                grid.addWidget(c, 0, i)
+                grid_num.addWidget(c, 0, idx)
                 self._cards[n] = c
-            self.container_layout.addLayout(grid)
+                used.add(n)
+        card_num_layout.addLayout(grid_num)
+        self.container_layout.addWidget(card_num)
 
-        # ── 4. 其他动作 ──
+        # ── 3. 其他动作 ──
         rest = {n: p for n, p in self.actions.items() if n not in used}
         if rest:
-            lbl = QLabel("其他手势")
-            lbl.setStyleSheet("color:#64748b; font-size:12px; font-weight:600; margin-top:4px;")
-            self.container_layout.addWidget(lbl)
-            
-            grid = QGridLayout()
-            grid.setSpacing(6)
+            card_rest, card_rest_layout = self._create_section_card("其他手势")
+            grid_rest = QGridLayout()
+            grid_rest.setSpacing(6)
+            grid_rest.setContentsMargins(0, 0, 0, 0)
             for i, (n, pos) in enumerate(rest.items()):
                 c = PresetCard(n, pos, "compact")
                 c.triggered.connect(self.triggered.emit)
-                grid.addWidget(c, i // 4, i % 4)
+                grid_rest.addWidget(c, i // 5, i % 5)
                 self._cards[n] = c
-            self.container_layout.addLayout(grid)
+            card_rest_layout.addLayout(grid_rest)
+            self.container_layout.addWidget(card_rest)
 
     def _build_custom_preset_group(self):
-        # 1. 标题
-        self.custom_lbl = QLabel("自定义预设")
-        self.custom_lbl.setStyleSheet("color:#64748b; font-size:12px; font-weight:600; margin-top:4px;")
-        self.container_layout.addWidget(self.custom_lbl)
-
-        # 2. 自定义预设专用容器
-        self.custom_container = QWidget()
-        self.custom_container.setStyleSheet("background:transparent;")
-        self.custom_container_layout = QVBoxLayout(self.custom_container)
-        self.custom_container_layout.setContentsMargins(0, 0, 0, 0)
-        self.custom_container_layout.setSpacing(6)
-        
-        self.container_layout.addWidget(self.custom_container)
+        # 创建自定义卡片
+        self.custom_card, self.custom_card_layout = self._create_section_card("自定义预设")
+        self.container_layout.addWidget(self.custom_card)
         self._fill_custom_presets()
 
     def _fill_custom_presets(self):
         from lhgui.core.custom_preset_store import custom_preset_store
         presets = custom_preset_store.list_for_model(self.hand_joint)
         
-        grid = QGridLayout()
-        grid.setSpacing(6)
-        
-        col_count = 5
-        i = 0
-        for p in presets:
-            # 这里的 values 是保存时的 6 维或补位后的多维数组
-            c = PresetCard(p.name, list(p.values), "compact", preset_id=p.id)
-            c.triggered.connect(self.triggered.emit)
-            grid.addWidget(c, i // col_count, i % col_count)
-            self._cards[p.id] = c
-            i += 1
+        if not presets:
+            empty_layout = QHBoxLayout()
+            empty_layout.setContentsMargins(4, 4, 4, 4)
+            empty_layout.setSpacing(12)
             
-        # “添加预设”卡片
-        self.add_card = PresetCard("添加预设", [], "compact")
-        self.add_card.triggered.connect(self._on_add_preset)
-        grid.addWidget(self.add_card, i // col_count, i % col_count)
-        self._cards["__add_preset__"] = self.add_card
-        
-        self.custom_container_layout.addLayout(grid)
+            desc_lbl = QLabel("暂无自定义预设动作。\n您可在此添加以保存当前的关节姿态。")
+            desc_lbl.setObjectName("PresetEmptyDesc")
+            desc_lbl.setStyleSheet("color:#94a3b8; font-size:11px;")
+            desc_lbl.setWordWrap(True)
+            empty_layout.addWidget(desc_lbl, stretch=1)
+            
+            self.add_card = PresetCard("添加预设", [], "compact")
+            self.add_card.setObjectName("AddPresetCard")
+            self.add_card.triggered.connect(self._on_add_preset)
+            empty_layout.addWidget(self.add_card)
+            self._cards["__add_preset__"] = self.add_card
+            
+            self.custom_card_layout.addLayout(empty_layout)
+        else:
+            grid = QGridLayout()
+            grid.setSpacing(6)
+            grid.setContentsMargins(0, 0, 0, 0)
+            
+            col_count = 5
+            i = 0
+            for p in presets:
+                c = PresetCard(p.name, list(p.values), "compact", preset_id=p.id)
+                c.triggered.connect(self.triggered.emit)
+                grid.addWidget(c, i // col_count, i % col_count)
+                self._cards[p.id] = c
+                i += 1
+                
+            self.add_card = PresetCard("添加预设", [], "compact")
+            self.add_card.setObjectName("AddPresetCard")
+            self.add_card.triggered.connect(self._on_add_preset)
+            grid.addWidget(self.add_card, i // col_count, i % col_count)
+            self._cards["__add_preset__"] = self.add_card
+            
+            self.custom_card_layout.addLayout(grid)
 
     def _on_add_preset(self):
         from lhgui.widgets.preset_editor_dialog import PresetEditorDialog
@@ -201,9 +225,12 @@ class PresetGroup(QWidget):
                     pass
                 card.deleteLater()
 
-        # 3. 递归清理旧布局里的子控件
-        layout = self.custom_container_layout
-        self._clear_layout(layout)
+        # 3. 递归清理旧布局里的子控件 (仅清理 index=1 的 Grid，保留 0 位的标题)
+        if self.custom_card_layout.count() > 1:
+            item = self.custom_card_layout.takeAt(1)
+            if item.layout():
+                self._clear_layout(item.layout())
+                item.layout().deleteLater()
         
         # 4. 重新构建填充数据
         self._fill_custom_presets()

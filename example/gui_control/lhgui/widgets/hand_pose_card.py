@@ -33,21 +33,88 @@ class HandPoseCard(QWidget):
 
     def _build(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
+
+        # 顶部标题栏 Header
+        from PyQt5.QtWidgets import QHBoxLayout, QPushButton
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 4)
+        header.setSpacing(8)
+        
+        title_container = QWidget()
+        title_container.setStyleSheet("background:transparent;")
+        title_layout = QVBoxLayout(title_container)
+        title_layout.setContentsMargins(0, 0, 0, 0)
+        title_layout.setSpacing(2)
+        
+        self.title_lbl = QLabel("实时姿态监控")
+        self.title_lbl.setStyleSheet("font-size: 13px; font-weight: 600; color: #1e293b;")
+        title_layout.addWidget(self.title_lbl)
+        
+        device_info = f"当前模型: {self.hand_joint} · 固件 Virtual"
+        self.subtitle_lbl = QLabel(device_info)
+        self.subtitle_lbl.setStyleSheet("font-size: 11px; color: #64748b;")
+        title_layout.addWidget(self.subtitle_lbl)
+        header.addWidget(title_container)
+        
+        header.addStretch()
+        
+        self.reset_cam_btn = QPushButton("重置视角")
+        self.reset_cam_btn.setObjectName("IconActionButton")
+        self.reset_cam_btn.setCursor(Qt.PointingHandCursor)
+        self.reset_cam_btn.setToolTip("将 3D 相机重置为默认视角")
+        self.reset_cam_btn.clicked.connect(self._reset_camera)
+        header.addWidget(self.reset_cam_btn)
+        
+        layout.addLayout(header)
 
         self.pose_view = HandPoseView(self.hand_joint)
         layout.addWidget(self.pose_view, stretch=1)
 
-        # 关节位置精美双行摘要
-        self.summary = QLabel("—")
-        self.summary.setObjectName("JointValueSummary")
-        self.summary.setAlignment(Qt.AlignCenter)
-        self.summary.setTextFormat(Qt.RichText)
-        layout.addWidget(self.summary)
+        # 仪表盘化：2行3列圆角参数格 ParamBlock
+        from PyQt5.QtWidgets import QGridLayout, QFrame
+        self.param_grid = QGridLayout()
+        self.param_grid.setSpacing(8)
+        self.param_grid.setContentsMargins(0, 0, 0, 0)
+        
+        self.param_boxes = []
+        self.param_vals = []
+        
+        for i, name in enumerate(self.joint_names_short):
+            box = QFrame()
+            box.setObjectName("ParamBlock")
+            box_layout = QVBoxLayout(box)
+            box_layout.setContentsMargins(8, 6, 8, 6)
+            box_layout.setSpacing(4)
+            
+            title_lbl = QLabel(name)
+            title_lbl.setObjectName("ParamTitle")
+            title_lbl.setAlignment(Qt.AlignCenter)
+            box_layout.addWidget(title_lbl)
+            
+            val_lbl = QLabel("000")
+            val_lbl.setObjectName("ParamValue")
+            val_lbl.setAlignment(Qt.AlignCenter)
+            box_layout.addWidget(val_lbl)
+            
+            self.param_vals.append(val_lbl)
+            self.param_boxes.append(box)
+            self.param_grid.addWidget(box, i // 3, i % 3)
+            
+        layout.addLayout(self.param_grid)
+
+        # 悬浮阴影
+        from lhgui.utils.style_utils import add_card_shadow
+        add_card_shadow(self)
 
         if not self.pose_view.is_supported():
-            self.summary.setText("<span style='color:#ef4444; font-weight:600;'>当前型号不支持实时姿态图</span>")
+            for box in self.param_boxes:
+                box.hide()
+            err_lbl = QLabel("当前型号不支持实时姿态图")
+            err_lbl.setStyleSheet("color:#ef4444; font-weight:600; font-size:12px;")
+            err_lbl.setAlignment(Qt.AlignCenter)
+            layout.addWidget(err_lbl)
 
     def _on_state(self, state: list):
         if not state or not self.pose_view.is_supported():
@@ -57,18 +124,11 @@ class HandPoseCard(QWidget):
         # 实时将反馈位置同步给数字孪生机械手
         self.pose_view.update_joint_values(vals)
         
-        # 每行 3 个关节数据，间距控制美观
-        row1_parts = []
-        row2_parts = []
-        
-        for i, (name, v) in enumerate(zip(self.joint_names_short, vals)):
-            item_html = f"<span style='color:#64748b; font-size:12px;'>{name}</span> <span style='font-family:\"Cascadia Mono\", \"Consolas\", monospace; font-size:13px; font-weight:600; color:#0f172a;'>{int(v):03d}</span>"
-            if i < 3:
-                row1_parts.append(item_html)
-            else:
-                row2_parts.append(item_html)
-                
-        spacing = "&nbsp;" * 6
-        html = f"<div style='line-height: 18px;'>{spacing.join(row1_parts)}<br/>{spacing.join(row2_parts)}</div>"
-        self.summary.setText(html)
+        # 实时更新网格化仪表盘参数
+        for i, v in enumerate(vals):
+            if i < len(self.param_vals):
+                self.param_vals[i].setText(f"{int(v):03d}")
 
+    def _reset_camera(self):
+        if hasattr(self.pose_view, "reset_camera"):
+            self.pose_view.reset_camera()

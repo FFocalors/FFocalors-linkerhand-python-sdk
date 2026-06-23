@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QAbstractButton, QVBoxLayout, QLabel, QStyle, QStyleOption
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer, QEvent
-from PyQt5.QtGui import QPainter, QPixmap
+from PyQt5.QtGui import QPainter, QPixmap, QColor
 
 from lhgui.utils.icon_helper import get_pixmap
 from lhgui.utils.style_utils import set_dynamic_property
@@ -60,19 +60,27 @@ class PresetCard(QAbstractButton):
 
     def _build(self, name: str):
         lo = QVBoxLayout(self)
+        from PyQt5.QtWidgets import QHBoxLayout, QWidget
         # 紧凑模式边距更小
         if self.variant == "compact":
-            lo.setContentsMargins(4, 4, 4, 4)
-            lo.setSpacing(2)
-        else:
-            lo.setContentsMargins(6, 8, 6, 8)
+            lo.setContentsMargins(6, 6, 6, 6)
             lo.setSpacing(4)
+        else:
+            lo.setContentsMargins(8, 10, 8, 10)
+            lo.setSpacing(6)
 
-        # 图标容器
+        # 独立的图标圆角容器
+        self.icon_container = QWidget()
+        self.icon_container.setObjectName("PresetIconContainer")
+        icon_layout = QHBoxLayout(self.icon_container)
+        icon_layout.setContentsMargins(0, 0, 0, 0)
+        icon_layout.setSpacing(0)
+
         self.icn_lbl = QLabel()
         self.icn_lbl.setAlignment(Qt.AlignCenter)
         self.icn_lbl.setStyleSheet("background:transparent; border:none;")
-        lo.addWidget(self.icn_lbl, stretch=1)
+        icon_layout.addWidget(self.icn_lbl)
+        lo.addWidget(self.icon_container, stretch=1)
 
         # 文本容器
         self.nm_lbl = QLabel(name)
@@ -146,7 +154,19 @@ class PresetCard(QAbstractButton):
         opt.initFrom(self)
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
+        
+        # 物理按压 1px 下沉反馈
+        if self.isDown():
+            p.translate(0, 1)
+            
         self.style().drawPrimitive(QStyle.PE_Widget, opt, p, self)
+        
+        # 运行中状态呼吸点提示
+        if self.property("running") == "true":
+            p.setBrush(QColor("#4f82ff"))
+            p.setPen(Qt.NoPen)
+            p.drawEllipse(self.width() - 10, 6, 6, 6)
+            
         p.end()
 
     def sizeHint(self) -> QSize:

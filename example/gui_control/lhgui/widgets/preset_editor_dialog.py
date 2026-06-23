@@ -34,6 +34,21 @@ JOINT_LABELS = [
 class PresetEditorDialog(QDialog):
     def __init__(self, hand_model: str, parent=None):
         super().__init__(parent)
+        self.setObjectName("PresetEditorDialog")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet("""
+            QDialog#PresetEditorDialog {
+                background-color: #ffffff;
+            }
+            QLabel {
+                color: #1e293b;
+            }
+            QLineEdit, QSpinBox {
+                background-color: #ffffff;
+                color: #1e293b;
+                border: 1px solid #dce3ec;
+            }
+        """)
         self.hand_model = hand_model
         self.setWindowTitle("添加自定义预设")
         self.resize(380, 480)

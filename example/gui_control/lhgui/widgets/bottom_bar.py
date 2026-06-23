@@ -83,49 +83,41 @@ class BottomBar(QWidget):
         
         signal_bus.ui_state_changed.connect(self._on_ui_state)
 
+        # 悬浮阴影
+        from lhgui.utils.style_utils import add_card_shadow
+        add_card_shadow(self)
+
+    def _create_sep(self):
+        sep = QFrame()
+        sep.setObjectName("__sep__")
+        sep.setFrameShape(QFrame.VLine)
+        sep.setStyleSheet("background-color:#e9eef4; max-width:1px; border:none; margin:4px 6px;")
+        return sep
+
     def _build_widgets(self):
         # 1. 状态展示
-        self.action_title_lbl = QLabel("当前动作:")
-        self.action_title_lbl.setStyleSheet("color:#64748b; font-weight:500;")
+        self.action_title_lbl = QLabel("当前动作")
+        self.action_title_lbl.setStyleSheet("color:#64748b; font-size:11px; font-weight:500;")
         self.action_lbl = QLabel("空闲")
         self.action_lbl.setObjectName("ActionInfo")
-        self.action_lbl.setStyleSheet("color:#0f172a; font-weight:600;")
+        self.action_lbl.setStyleSheet("color:#1e293b; font-weight:600;")
         
-        self.sep1 = QFrame()
-        self.sep1.setFrameShape(QFrame.VLine)
-        self.sep1.setStyleSheet("color:#e2e8f0; max-width:1px;")
-        self.sep1.setFixedSize(1, 20)
-
-        self.cycle_title_lbl = QLabel("循环状态:")
-        self.cycle_title_lbl.setStyleSheet("color:#64748b; font-weight:500;")
+        self.cycle_title_lbl = QLabel("循环状态")
+        self.cycle_title_lbl.setStyleSheet("color:#64748b; font-size:11px; font-weight:500;")
         self.cycle_badge = StatusBadge("空闲", level="disconnected")
         
-        self.sep2 = QFrame()
-        self.sep2.setFrameShape(QFrame.VLine)
-        self.sep2.setStyleSheet("color:#e2e8f0; max-width:1px;")
-        self.sep2.setFixedSize(1, 20)
-
         # 2. 速度与扭矩参数卡片
-        self.speed_title_lbl = QLabel("速度:")
-        self.speed_title_lbl.setStyleSheet("color:#64748b;")
-        self.speed_btn = QPushButton(str(self._speed))
-        self.speed_btn.setProperty("category", "secondary")
+        self.speed_btn = QPushButton(f"速度\n{self._speed}")
+        self.speed_btn.setObjectName("ParamButton")
         self.speed_btn.setCursor(Qt.PointingHandCursor)
         self.speed_btn.clicked.connect(self._set_speed)
         self.speed_btn.setToolTip("点击调整关节运动速度")
         
-        self.torque_title_lbl = QLabel("扭矩:")
-        self.torque_title_lbl.setStyleSheet("color:#64748b;")
-        self.torque_btn = QPushButton(str(self._torque))
-        self.torque_btn.setProperty("category", "secondary")
+        self.torque_btn = QPushButton(f"扭矩\n{self._torque}")
+        self.torque_btn.setObjectName("ParamButton")
         self.torque_btn.setCursor(Qt.PointingHandCursor)
         self.torque_btn.clicked.connect(self._set_torque)
         self.torque_btn.setToolTip("点击调整关节最大扭矩")
-
-        self.sep3 = QFrame()
-        self.sep3.setFrameShape(QFrame.VLine)
-        self.sep3.setStyleSheet("color:#e2e8f0; max-width:1px;")
-        self.sep3.setFixedSize(1, 20)
 
         # 3. 循环控制
         self.cycle_btn = QPushButton("开始循环")
@@ -147,7 +139,6 @@ class BottomBar(QWidget):
         self.estop_btn = QPushButton("紧急停止")
         self.estop_btn.setProperty("category", "danger")
         self.estop_btn.setCursor(Qt.PointingHandCursor)
-        self.estop_btn.setStyleSheet("font-weight: bold; background-color: #fef2f2; border-color: #fca5a5; color: #b91c1c;")
 
         # 弹性的 Spacers
         self.spacer1 = QWidget()
@@ -155,78 +146,110 @@ class BottomBar(QWidget):
         self.spacer2 = QWidget()
         self.spacer2.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
-    def _build_layout(self):
-        # 顶层布局
-        self.outer = QVBoxLayout(self)
-        self.outer.setContentsMargins(0, 0, 0, 0)
-        self.outer.setSpacing(0)
+        # ---- 将各功能模块分类包装在精致底栏容器中 (BottomGroup) ----
+        # 1. 状态组
+        self.status_group = QWidget()
+        self.status_group.setObjectName("BottomGroup")
+        self.status_group.setStyleSheet("background:transparent;")
+        status_layout = QHBoxLayout(self.status_group)
+        status_layout.setContentsMargins(10, 4, 10, 4)
+        status_layout.setSpacing(10)
+        status_layout.addWidget(self.action_title_lbl)
+        status_layout.addWidget(self.action_lbl)
+        status_layout.addWidget(self.cycle_title_lbl)
+        status_layout.addWidget(self.cycle_badge)
 
-        # 顶部分割线
-        sep = QFrame()
-        sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color:#e2e8f0; border:none;")
-        self.outer.addWidget(sep)
+        # 2. 参数设置组
+        self.param_group = QWidget()
+        self.param_group.setObjectName("BottomGroup")
+        self.param_group.setStyleSheet("background:transparent;")
+        param_layout = QHBoxLayout(self.param_group)
+        param_layout.setContentsMargins(10, 4, 10, 4)
+        param_layout.setSpacing(10)
+        param_layout.addWidget(self.speed_btn)
+        param_layout.addWidget(self.torque_btn)
+
+        # 3. 循环控制组
+        self.cycle_group = QWidget()
+        self.cycle_group.setObjectName("BottomGroup")
+        self.cycle_group.setStyleSheet("background:transparent;")
+        cycle_layout = QHBoxLayout(self.cycle_group)
+        cycle_layout.setContentsMargins(10, 4, 10, 4)
+        cycle_layout.setSpacing(10)
+        cycle_layout.addWidget(self.cycle_btn)
+        cycle_layout.addWidget(self.cycle_stop_btn)
+
+        # 4. 应急安全组
+        self.safety_group = QWidget()
+        self.safety_group.setObjectName("BottomGroup")
+        self.safety_group.setStyleSheet("background:transparent;")
+        safety_layout = QHBoxLayout(self.safety_group)
+        safety_layout.setContentsMargins(10, 4, 10, 4)
+        safety_layout.setSpacing(10)
+        safety_layout.addWidget(self.home_btn)
+        safety_layout.addWidget(self.estop_btn)
+
+    def _build_layout(self):
+        # 顶层布局，稍微留一点内边距以实现精美的卡片效果
+        self.outer = QVBoxLayout(self)
+        self.outer.setContentsMargins(12, 8, 12, 8)
+        self.outer.setSpacing(0)
 
         # 第一行容器
         self.row1_widget = QWidget()
+        self.row1_widget.setStyleSheet("background:transparent;")
         self.row1_layout = QHBoxLayout(self.row1_widget)
-        self.row1_layout.setContentsMargins(16, 8, 16, 8)
+        self.row1_layout.setContentsMargins(0, 0, 0, 0)
         self.row1_layout.setSpacing(12)
         self.outer.addWidget(self.row1_widget)
 
         # 第二行容器
         self.row2_widget = QWidget()
+        self.row2_widget.setStyleSheet("background:transparent;")
         self.row2_layout = QHBoxLayout(self.row2_widget)
-        self.row2_layout.setContentsMargins(16, 4, 16, 8)
+        self.row2_layout.setContentsMargins(0, 0, 0, 0)
         self.row2_layout.setSpacing(12)
         self.outer.addWidget(self.row2_widget)
 
     def _apply_layout(self):
         # 清空布局
         while self.row1_layout.count():
-            self.row1_layout.takeAt(0)
+            item = self.row1_layout.takeAt(0)
+            if item.widget() and item.widget().objectName() == "__sep__":
+                item.widget().deleteLater()
         while self.row2_layout.count():
-            self.row2_layout.takeAt(0)
+            item = self.row2_layout.takeAt(0)
+            if item.widget() and item.widget().objectName() == "__sep__":
+                item.widget().deleteLater()
 
         if self._layout_mode == "single":
             self.row2_widget.hide()
-            # 单行排布全部控件
-            self.row1_layout.addWidget(self.action_title_lbl)
-            self.row1_layout.addWidget(self.action_lbl)
-            self.row1_layout.addWidget(self.sep1)
-            self.row1_layout.addWidget(self.cycle_title_lbl)
-            self.row1_layout.addWidget(self.cycle_badge)
-            self.row1_layout.addWidget(self.sep2)
-            self.row1_layout.addWidget(self.speed_title_lbl)
-            self.row1_layout.addWidget(self.speed_btn)
-            self.row1_layout.addWidget(self.torque_title_lbl)
-            self.row1_layout.addWidget(self.torque_btn)
-            self.row1_layout.addWidget(self.sep3)
-            self.row1_layout.addWidget(self.cycle_btn)
-            self.row1_layout.addWidget(self.cycle_stop_btn)
-            self.row1_layout.addWidget(self.spacer1)
-            self.row1_layout.addWidget(self.home_btn)
-            self.row1_layout.addWidget(self.estop_btn)
+            # 单行模式：横向有序摆放四大功能分组
+            self.row1_layout.addWidget(self.status_group)
+            
+            self.row1_layout.addWidget(self._create_sep())
+            self.row1_layout.addWidget(self.param_group)
+            
+            self.row1_layout.addWidget(self._create_sep())
+            self.row1_layout.addWidget(self.cycle_group)
+            
+            self.row1_layout.addWidget(self._create_sep())
+            self.row1_layout.addWidget(self.spacer1) # 将应急操作推向最右侧
+            self.row1_layout.addWidget(self.safety_group)
         else:
             self.row2_widget.show()
-            # 第一行：状态值 + 速度扭矩
-            self.row1_layout.addWidget(self.action_title_lbl)
-            self.row1_layout.addWidget(self.action_lbl)
-            self.row1_layout.addWidget(self.sep1)
-            self.row1_layout.addWidget(self.cycle_title_lbl)
-            self.row1_layout.addWidget(self.cycle_badge)
+            # 双行模式：
+            # 第一行：状态面板 + 参数面板
+            self.row1_layout.addWidget(self.status_group)
+            self.row1_layout.addWidget(self._create_sep())
             self.row1_layout.addWidget(self.spacer1)
-            self.row1_layout.addWidget(self.speed_title_lbl)
-            self.row1_layout.addWidget(self.speed_btn)
-            self.row1_layout.addWidget(self.torque_title_lbl)
-            self.row1_layout.addWidget(self.torque_btn)
+            self.row1_layout.addWidget(self.param_group)
 
-            # 第二行：循环动作 + 恢复停止
-            self.row2_layout.addWidget(self.cycle_btn)
-            self.row2_layout.addWidget(self.cycle_stop_btn)
+            # 第二行：循环面板 + 风险应急面板
+            self.row2_layout.addWidget(self.cycle_group)
+            self.row2_layout.addWidget(self._create_sep())
             self.row2_layout.addWidget(self.spacer2)
-            self.row2_layout.addWidget(self.home_btn)
-            self.row2_layout.addWidget(self.estop_btn)
+            self.row2_layout.addWidget(self.safety_group)
 
     def set_layout_mode(self, mode: str):
         """设定单行(single)或双行(double)排版模式。"""
@@ -260,7 +283,7 @@ class BottomBar(QWidget):
         dlg = _ParamDialog(self.window(), "速度", 0, 255, self._speed)
         if dlg.exec_() == QDialog.Accepted:
             self._speed = dlg.value()
-            self.speed_btn.setText(str(self._speed))
+            self.speed_btn.setText(f"速度\n{self._speed}")
             signal_bus.speed_set_requested.emit([self._speed] * self.joint_count)
             signal_bus.connection_message.emit("info", f"速度已设为 {self._speed}")
 
@@ -268,7 +291,7 @@ class BottomBar(QWidget):
         dlg = _ParamDialog(self.window(), "扭矩", 0, 255, self._torque)
         if dlg.exec_() == QDialog.Accepted:
             self._torque = dlg.value()
-            self.torque_btn.setText(str(self._torque))
+            self.torque_btn.setText(f"扭矩\n{self._torque}")
             signal_bus.torque_set_requested.emit([self._torque] * self.joint_count)
             signal_bus.connection_message.emit("info", f"扭矩已设为 {self._torque}")
 

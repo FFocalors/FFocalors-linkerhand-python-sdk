@@ -19,6 +19,7 @@ from lhgui.widgets.joint_panel import JointPanel
 from lhgui.widgets.hand_pose_card import HandPoseCard
 from lhgui.widgets.preset_group import PresetGroup
 from lhgui.widgets.bottom_bar import BottomBar
+from lhgui.widgets.waveform_panel import WaveformPanel
 
 
 class _CycleController(QWidget):
@@ -82,13 +83,14 @@ class ConsolePage(QWidget):
         
         # 2. 初始化固定的根级垂直布局与内部容器，永远不销毁它们以防 QWidget 脱离 parent
         self.root_layout = QVBoxLayout(self)
-        self.root_layout.setContentsMargins(0, 0, 0, 0)
-        self.root_layout.setSpacing(0)
+        self.root_layout.setContentsMargins(16, 16, 16, 16)
+        self.root_layout.setSpacing(16)
 
         # 宽屏/紧凑屏所使用的水平并排容器
         self.wide_widget = QWidget(self)
+        self.wide_widget.setStyleSheet("background:transparent;")
         self.wide_layout = QHBoxLayout(self.wide_widget)
-        self.wide_layout.setContentsMargins(16, 16, 16, 0)
+        self.wide_layout.setContentsMargins(0, 0, 0, 0)
         self.wide_layout.setSpacing(14)
         
         # 将宽屏容器和窄屏滚动区域预置入根布局中，底部控制栏也预置于下方
@@ -106,9 +108,22 @@ class ConsolePage(QWidget):
         self._update_responsive_layout("wide")
 
     def _build_widgets(self):
-        # 左：关节面板
+        # 左侧组合面板（关节控制 + 实时数据曲线）
+        self.left_widget = QWidget(self)
+        self.left_widget.setStyleSheet("background:transparent;")
+        self.left_layout = QVBoxLayout(self.left_widget)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_layout.setSpacing(14)
+
+        # 左上：关节面板
         self.joint_panel = JointPanel(self.hand_joint)
         self.joint_panel.values_changed.connect(self._on_local_values)
+
+        # 左下：实时曲线面板
+        self.waveform_panel = WaveformPanel(self)
+
+        self.left_layout.addWidget(self.joint_panel, stretch=1)
+        self.left_layout.addWidget(self.waveform_panel, stretch=0)
 
         # 中：手部姿态（直接作为视觉核心，不加多余顶栏）
         self.pose_card = HandPoseCard(self.hand_joint)
@@ -167,11 +182,11 @@ class ConsolePage(QWidget):
         # 警告：这里绝对不要调用 setParent(None)！只用 removeWidget。
         # 这样控件在转移过程中 parent 依旧是 ConsolePage，绝对不会作为顶层独立窗口弹出来！
         if self._current_mode == "narrow":
-            self.scroll_layout.removeWidget(self.joint_panel)
+            self.scroll_layout.removeWidget(self.left_widget)
             self.scroll_layout.removeWidget(self.pose_card)
             self.scroll_layout.removeWidget(self.preset_group)
         else:
-            self.wide_layout.removeWidget(self.joint_panel)
+            self.wide_layout.removeWidget(self.left_widget)
             self.wide_layout.removeWidget(self.pose_card)
             self.wide_layout.removeWidget(self.preset_group)
             
@@ -188,10 +203,10 @@ class ConsolePage(QWidget):
                         item.layout().takeAt(0)
                     item.layout().deleteLater()
             
-            # 窄屏上部：关节面板与手势卡片并排
+            # 窄屏上部：左侧面板与手势卡片并排
             row = QHBoxLayout()
             row.setSpacing(10)
-            row.addWidget(self.joint_panel, stretch=1)
+            row.addWidget(self.left_widget, stretch=1)
             row.addWidget(self.pose_card, stretch=1)
             
             self.scroll_layout.addLayout(row)
@@ -200,13 +215,12 @@ class ConsolePage(QWidget):
             self.scroll_area.hide()
             self.wide_widget.show()
             
-            margins = 16 if mode == "wide" else 10
             spacing = 14 if mode == "wide" else 8
-            self.wide_layout.setContentsMargins(margins, margins, margins, 0)
+            self.wide_layout.setContentsMargins(0, 0, 0, 0)
             self.wide_layout.setSpacing(spacing)
             
             # 宽屏/紧凑屏并排填入三栏布局中
-            self.wide_layout.addWidget(self.joint_panel, stretch=30)
+            self.wide_layout.addWidget(self.left_widget, stretch=30)
             self.wide_layout.addWidget(self.pose_card, stretch=38)
             self.wide_layout.addWidget(self.preset_group, stretch=32)
             

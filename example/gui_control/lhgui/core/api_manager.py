@@ -185,7 +185,6 @@ class ApiManager(QObject):
     def finger_move(self, pose: List[int]):
         # 虚拟/离线模式：直接向界面广播反馈，模拟手指运动
         if self._connected and self.api is None:
-            print(f"[DEBUG] ApiManager.finger_move called with pose: {pose}", flush=True)
             self._virtual_pose = list(pose)
             signal_bus.joint_state_updated.emit(pose)
             return
@@ -232,11 +231,6 @@ class ApiManager(QObject):
                 if not hasattr(self, "_virtual_pose") or not self._virtual_pose:
                     config = HAND_CONFIGS.get(self.hand_joint)
                     self._virtual_pose = list(config.init_pos) if config else [250] * 6
-                
-                # 仅在发生变化时打印
-                if not hasattr(self, "_last_printed_pose") or self._last_printed_pose != self._virtual_pose:
-                    self._last_printed_pose = list(self._virtual_pose)
-                    print(f"[DEBUG] ApiManager.get_state virtual pose changed: {self._virtual_pose}", flush=True)
                 
                 return self._virtual_pose
             return None
