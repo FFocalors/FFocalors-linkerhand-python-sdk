@@ -42,12 +42,12 @@ class O6HardwareAdapter:
         return False
 
     def connect(self):
+        if not self.enable_hardware:
+            print("[INFO] dry-run mode. No hardware connection. No yaml/sdk loading.")
+            return self
         if not self._detect_o6_hand():
             raise RuntimeError("O6 hand not found in setting.yaml")
         print(f"[INFO] detected O6 hand_type={self._hand_type}, CAN={self._can}")
-        if not self.enable_hardware:
-            print("[INFO] dry-run mode. No hardware connection.")
-            return self
         print("[SAFETY] ENABLE_HARDWARE=True. Hand will move.")
         try:
             sys.path.insert(0, _LINKERHAND_PATH)

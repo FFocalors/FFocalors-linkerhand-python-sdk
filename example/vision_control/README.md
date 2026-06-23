@@ -2,12 +2,16 @@
 
 本模块只在 `example/vision_control/` 下开发，**不修改 SDK、GUI、O6 参数文件**。
 
-## 1. 设计原则
+---
 
-- **只读复用 O6 参数**：来源 `example/gui_control/lhgui/config/constants.py` 中的 `_HAND_CONFIGS["O6"]`
-- **默认 dry-run**：所有脚本默认只打印，不控制机械手
-- **显式硬件**：只有 `--enable-hardware` 才调用 `LinkerHandApi.finger_move(pose)`
-- **不修改受保护文件**
+## 1. 模块目标
+
+通过 `custom_11` 手部关键点输入，实现两种控制模式：
+
+- **pose 模式**（默认）：连续姿态匹配，根据每根手指弯曲程度实时映射 O6 pose
+- **gesture 模式**：手势识别 → 预设动作
+
+默认 dry-run，可选 `--enable-hardware` 控制真实机械手。
 
 ## 2. O6 控制向量（固定 6 维）
 
@@ -15,133 +19,120 @@
 [thumb_bend, thumb_swing, index_bend, middle_bend, ring_bend, little_bend]
 ```
 
-- 索引 1 是 `thumb_swing`（大拇指横摆），**不是手腕**
+| dim | 名称 | 中文 | 说明 |
+|-----|------|------|------|
+| 0 | thumb_bend | 大拇指弯曲 | |
+| 1 | thumb_swing | 大拇指横摆 | **不是手腕！** |
+| 2 | index_bend | 食指弯曲 | |
+| 3 | middle_bend | 中指弯曲 | |
+| 4 | ring_bend | 无名指弯曲 | |
+| 5 | little_bend | 小拇指弯曲 | |
 
-## 3. 文件结构
+O6 参数只读复用 `example/gui_control/lhgui/config/constants.py`。
+
+## 3. custom_11 输入格式
+
+11 点固定顺序（无 wrist）：thumb_base[0], thumb_mid[1], thumb_tip[2], index_base[3], index_tip[4], middle_base[5], middle_tip[6], ring_base[7], ring_tip[8], little_base[9], little_tip[10]。
+
+每个点格式：`{"x":float,"y":float,"z"?:float}`, `[x,y]`, `(x,y)` 等。
+
+## 4. 文件结构
 
 ```text
 example/vision_control/
 ├── o6_gui_params_adapter.py    # 只读复用 GUI O6 参数
 ├── o6_hardware_adapter.py      # 默认 dry-run，可选硬件
-├── custom11_keypoints.py       # custom_11 关键点格式
-├── gesture_recognizer.py     # 手势识别
-├── hand_pose_mapper.py       # 11 点 -> 6 维 O6 pose
-├── custom11_stream_reader.py # 线程安全最新帧缓存
-├── custom11_server.py        # HTTP server：接收/返回关键点
-├── stream_demo.py            # 模拟前端发送样例
+├── custom11_keypoints.py       # keypoints 格式/校验/Schema
+├── gesture_recognizer.py     # 手势识别（+稳定帧）
+├── hand_pose_mapper.py       # 11点 → 6维 O6 pose 连续映射
+├── custom11_stream_reader.py # 线程安全帧缓存 + 统计
+├── custom11_server.py        # HTTP server（延迟信息）
+├── stream_demo.py            # 模拟前端（fps/trajectory）
 ├── sample_keypoints_11.json  # 离线样例
-├── rps_game.py               # 视觉猜拳
-├── left_hand_teleop.py       # 左手动态控制
-├── README.md
-└── requirements_vision.txt
+├── rps_game.py               # 视觉猜拳（随机）
+├── left_hand_teleop.py       # 实时同像动态控制
+├── hardware_smoke_test.py    # 单动作冒烟测试
+└── README.md
 ```
 
-## 4. 输入模式
+## 5. 石头剪刀布（rps_game.py）
 
-### 4.1 sample 模式（默认）
-
-从 `sample_keypoints_11.json` 读取离线样例。
-
-### 4.2 stream 模式
-
-从 `custom11_server.py` 的 `GET /latest` 获取实时帧。
-
-## 5. custom11_server.py 接口
-
-启动：
+- **robot-policy 默认 `random`**：机器人公平随机出拳，不根据用户当前手势作弊选择克制动作
+- 没有 counter 策略，排除作弊可能
+- `scissors` 仍临时映射为 GUI 预设动作"贰"
+- 支持 `--input-mode stream`（倒计时后读取实时帧）、`--countdown N`、`--print-json`
 
 ```bash
-python example/vision_control/custom11_server.py --host 127.0.0.1 --port 8765
+python example/vision_control/rps_game.py --dry-run --rounds 3
+python example/vision_control/rps_game.py --dry-run --input-mode stream --rounds 5 --countdown 3
 ```
+
+## 6. 实时同像动态控制（left_hand_teleop.py）
+
+**默认 `pose` 模式**：不是只识别 rock/paper/scissors，而是根据用户左手 11 点连续计算五指弯曲程度和大拇指横摆，再映射为 O6 六维控制量，实现同像、低延迟的动态姿态跟随。
+
+### 关键参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `--control-mode` | pose | pose=连续映射, gesture=手势识别 |
+| `--mirror-mode` | same | 同像控制（不翻转） |
+| `--preset` | balanced_realtime | 实时预设 |
+| `--dry-run` | True | 默认 dry-run |
+| `--enable-hardware` | False | 显式启用硬件 |
+
+### 三种实时预设
+
+| 预设 | smoothing_alpha | max_delta | deadzone | 适用场景 |
+|------|-----------------|-----------|----------|----------|
+| `fast_realtime` | 0.45 | 10 | 1 | 延迟敏感 |
+| `balanced_realtime` | 0.35 | 8 | 2 | 通用推荐 |
+| `stable_precise` | 0.25 | 5 | 3 | 抖动优化 |
+
+**推荐实机参数**：先从 `balanced_realtime` 开始；延迟高用 `fast_realtime`；抖动大用 `stable_precise`。
+
+### 用法
+
+```bash
+# sample 模式 + explain
+python example/vision_control/left_hand_teleop.py --dry-run --preset balanced_realtime --explain
+
+# stream 模式 + 延迟/FPS log
+python example/vision_control/left_hand_teleop.py --dry-run --input-mode stream \
+    --preset balanced_realtime --latency-log --fps-log --max-frames 30
+
+# 硬件模式
+python example/vision_control/left_hand_teleop.py --enable-hardware --input-mode stream \
+    --preset balanced_realtime --max-frames 30
+```
+
+## 7. stream 模式三终端
+
+**终端1**：`python example/vision_control/custom11_server.py --port 8765`
+
+**终端2**（模拟前端 + 连续过渡）：
+```bash
+python example/vision_control/stream_demo.py --fps 15 --trajectory smooth --loop
+```
+
+**终端3**（消费端）：
+```bash
+python example/vision_control/left_hand_teleop.py --dry-run --input-mode stream \
+    --preset balanced_realtime --latency-log --fps-log --max-frames 30
+```
+
+## 8. custom11_server 接口
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/health` | 健康检查，返回 `{"ok":true,"service":"custom11_server"}` |
-| POST | `/keypoints` | 接收 custom_11 payload（JSON body） |
-| GET | `/latest` | 返回最新一帧，格式 `{"ok":true,"fresh":true,"frame":{...}}` |
+| GET | `/health` | 健康检查 |
+| GET | `/status` | 统计（含 receive_fps_estimate） |
+| GET | `/schema` | custom_11 格式说明 |
+| GET | `/latest[?max_age_sec=N]` | 最新帧 + latency_sec + server_receive_time |
+| POST | `/keypoints` | 接收关键点 |
+| OPTIONS | `*` | CORS |
 
-### 5.1 POST /keypoints 格式
-
-```json
-{
-  "source": "frontend",
-  "timestamp": 1234567890,
-  "hand": "left",
-  "keypoints": [
-    {"x": 0.1, "y": 0.2}, ...  // 共 11 个点
-  ]
-}
-```
-
-keypoints 必须正好 11 个点，每个点至少包含 x、y。
-
-### 5.2 custom_11 点序
-
-| idx | name |
-|-----|------|
-| 0 | thumb_base |
-| 1 | thumb_mid_or_swing_ref |
-| 2 | thumb_tip |
-| 3 | index_base |
-| 4 | index_tip |
-| 5 | middle_base |
-| 6 | middle_tip |
-| 7 | ring_base |
-| 8 | ring_tip |
-| 9 | little_base |
-| 10 | little_tip |
-
-无 wrist 点。掌心参考用 `virtual_palm_center`（局部计算，非 O6 控制量）。
-
-## 6. 使用示例
-
-### 6.1 stream_demo 模拟前端
-
-```bash
-python example/vision_control/stream_demo.py \
-    --url http://127.0.0.1:8765/keypoints \
-    --interval 1.0
-```
-
-### 6.2 left_hand_teleop stream 模式
-
-```bash
-python example/vision_control/left_hand_teleop.py \
-    --dry-run \
-    --input-mode stream \
-    --stream-url http://127.0.0.1:8765/latest
-```
-
-### 6.3 rps_game stream 模式
-
-```bash
-python example/vision_control/rps_game.py \
-    --dry-run \
-    --input-mode stream \
-    --stream-url http://127.0.0.1:8765/latest \
-    --rounds 3
-```
-
-### 6.4 完整测试流程（三个终端）
-
-终端1：
-```bash
-python example/vision_control/custom11_server.py --host 127.0.0.1 --port 8765
-```
-
-终端2：
-```bash
-python example/vision_control/stream_demo.py --interval 1.0 --loop
-```
-
-终端3：
-```bash
-python example/vision_control/left_hand_teleop.py --dry-run --input-mode stream
-# 或者
-python example/vision_control/rps_game.py --dry-run --input-mode stream --rounds 3
-```
-
-## 7. 手势映射
+## 9. 手势映射
 
 | 视觉手势 | O6 动作 |
 |----------|---------|
@@ -151,17 +142,39 @@ python example/vision_control/rps_game.py --dry-run --input-mode stream --rounds
 | pinch / ok | OK |
 | thumb_up | 点赞 |
 
-## 8. 安全提示
+## 10. 硬件冒烟测试
 
-- **默认 dry-run**
-- 只有 `--enable-hardware` 才控制机械手
+```bash
+python example/vision_control/hardware_smoke_test.py --list
+python example/vision_control/hardware_smoke_test.py --action 张开 --dry-run
+python example/vision_control/hardware_smoke_test.py --action 张开 --enable-hardware
+```
+
+## 11. 部署到另一台电脑
+
+1. 同步代码 + `pip install pyyaml opencv-python`
+2. dry-run 验证：`python left_hand_teleop.py --dry-run --preset balanced_realtime`
+3. 启动 server + stream_demo + 客户端测试 stream 链路
+4. 硬件冒烟：`python hardware_smoke_test.py --action 张开 --enable-hardware`
+5. 实时控制：`python left_hand_teleop.py --enable-hardware --input-mode stream --preset balanced_realtime`
+
+## 12. 安全注意事项
+
+- **默认 dry-run**，只有 `--enable-hardware` 才控制机械手
 - 无 fresh frame 时不下发 pose
-- 不建议与原 GUI 同时运行
-- 不设置速度/力矩，不读取触觉
+- **不建议与原 GUI 同时运行**（抢 CAN 总线）
+- 硬件模式前先 `hardware_smoke_test`
+- 不设置 speed/torque，不读取触觉
+- `thumb_swing` 是大拇指横摆，不是手腕
 
-## 9. 接入真实 11 点实时源
+## 13. 故障排查
 
-1. 实时源按 custom_11 格式输出 11 个 `{"x":float,"y":float,"z":float}` 点
-2. 通过 `POST /keypoints` 发送到 `custom11_server.py`
-3. 复用现有 recognizer / mapper / hardware adapter
-4. 如需摄像头模型，在 requirements_vision.txt 添加依赖，保证默认 dry-run 仍可运行
+| 问题 | 解决 |
+|------|------|
+| `No module named yaml` | `pip install pyyaml` |
+| `No module named can` | `pip install python-can` |
+| CAN 设备找不到 | 检查 setting.yaml CAN 配置 |
+| 没有 fresh frame | 确保 server + demo 都在运行 |
+| 中文乱码但 pose 正确 | 不影响功能，pose 数值正确 |
+| GUI 与视觉控制抢控制 | 关闭 GUI 再运行 |
+| scissors 临时「贰」 | 设计行为，非 bug |
