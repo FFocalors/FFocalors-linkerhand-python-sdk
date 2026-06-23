@@ -11,7 +11,7 @@ import cv2, mediapipe as mp, numpy as np
 
 from PyQt5.QtWidgets import (
     QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QCheckBox, QMessageBox,
-    QFileDialog, QComboBox,
+    QFileDialog, QComboBox, QSpinBox, QDoubleSpinBox,
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -31,17 +31,16 @@ INVERT     = [False]*6  # 默认不反转
 EMA_ALPHA  = 0.35
 DEADBAND   = 4
 THUMB_BEND_MIN = 0
-THUMB_BEND_MAX = 250
+THUMB_BEND_MAX = 255
 THUMB_SWING_MIN = 0
 THUMB_SWING_MAX = 255
 THUMB_SWING_INVERT_DEFAULT = False
 THUMB_BEND_INVERT = False
-FINGER_PROXIMAL_WEIGHT = 0.65
+FINGER_PROXIMAL_WEIGHT = 0.45
 FINGER_DISTAL_WEIGHT = 0.35
 FINGER_TIP_AUX_WEIGHT = 0.20
-FINGER_JOINT_WEIGHT = 1.0 - FINGER_TIP_AUX_WEIGHT
-MAX_STEP_FINGER = 30
-MAX_STEP_THUMB_SWING = 18
+MAX_STEP_FINGER = 35
+MAX_STEP_THUMB_SWING = 20
 SEND_INTERVAL = 0.12  # ~8Hz
 RECORD_INTERVAL = 0.12
 MAX_REPLAY_STEP = 30
@@ -107,6 +106,7 @@ class ImitationWorker(QThread):
         self._calib_open=None; self._calib_close=None
         self._thumb_open_baseline=None; self._thumb_close_baseline=None
         self._thumb_swing_invert=THUMB_SWING_INVERT_DEFAULT
+        self._thumb_bend_invert=THUMB_BEND_INVERT
         self._mp_hands=None; self._mp_drawing=None
         self._mp_vision=None; self._backend=None
         self._frame_idx=0
@@ -116,10 +116,12 @@ class ImitationWorker(QThread):
         self._calib_open=list(open_vec) if open_vec else None
         self._calib_close=list(close_vec) if close_vec else None
 
-    def set_thumb_config(self, open_baseline, close_baseline, invert):
+    def set_thumb_config(self, open_baseline, close_baseline, swing_invert, bend_invert=None):
         self._thumb_open_baseline=float(open_baseline) if open_baseline is not None else None
         self._thumb_close_baseline=float(close_baseline) if close_baseline is not None else None
-        self._thumb_swing_invert=bool(invert)
+        self._thumb_swing_invert=bool(swing_invert)
+        if bend_invert is not None:
+            self._thumb_bend_invert=bool(bend_invert)
 
     def run(self):
         self._running=True
@@ -423,8 +425,11 @@ class ImitationWorker(QThread):
             proximal=clamp01(0.45*mcp_bend+0.55*pip_bend)
             distal=clamp01(0.55*pip_bend+0.45*dip_bend)
             tip_aux=tip_aux_curl(mcp,tip,[mcp,pip,dip,tip])
-            joint_fused=clamp01(FINGER_PROXIMAL_WEIGHT*proximal+FINGER_DISTAL_WEIGHT*distal)
-            fused=clamp01(FINGER_JOINT_WEIGHT*joint_fused+FINGER_TIP_AUX_WEIGHT*tip_aux)
+            fused=clamp01(
+                FINGER_PROXIMAL_WEIGHT*proximal
+                + FINGER_DISTAL_WEIGHT*distal
+                + FINGER_TIP_AUX_WEIGHT*tip_aux
+            )
             return {
                 "mcp":mcp_bend,
                 "pip":pip_bend,
@@ -472,7 +477,7 @@ class ImitationWorker(QThread):
                 if abs(diff)>0.02:
                     curls[i]=(raw_curls[i]-oi)/diff
                 curls[i]=clamp01(curls[i])
-        if THUMB_BEND_INVERT:
+        if self._thumb_bend_invert:
             curls[0]=1.0-curls[0]
 
         def lerp(f,a,b):
@@ -514,6 +519,7 @@ class ImitationWorker(QThread):
                 "swing_norm":r3(thumb_swing_norm),
                 "swing_mapped":pose[1],
                 "swing_invert":bool(self._thumb_swing_invert),
+                "bend_invert":bool(self._thumb_bend_invert),
                 "swing_open_baseline":self._thumb_open_baseline,
                 "swing_close_baseline":self._thumb_close_baseline,
                 "spread_dist":r3(spread_dist),
@@ -540,7 +546,9 @@ class VisionPage(QFrame):
         self._calib_open=None; self._calib_close=None
         self._thumb_open_baseline=None; self._thumb_close_baseline=None
         self._thumb_swing_invert=THUMB_SWING_INVERT_DEFAULT
+        self._thumb_bend_invert=THUMB_BEND_INVERT
         self._last_dbg=None; self._last_has_hand=False; self._last_curls=None
+        self._last_no_hand_log_t=0.0
         self._start_t=0.0
         self._recording=False
         self._record_frames=[]
@@ -597,12 +605,45 @@ class VisionPage(QFrame):
         thumb_row=QHBoxLayout()
         self.btn_cal_thumb_open=self._btn("Cal thumb out", "#6c5ce7",10)
         self.btn_cal_thumb_close=self._btn("Cal thumb in", "#6c5ce7",10)
+        self.chk_thumb_bend_invert=QCheckBox("Invert thumb bend")
+        self.chk_thumb_bend_invert.setChecked(self._thumb_bend_invert)
         self.chk_thumb_invert=QCheckBox("Invert thumb swing")
         self.chk_thumb_invert.setChecked(self._thumb_swing_invert)
         thumb_row.addWidget(self.btn_cal_thumb_open)
         thumb_row.addWidget(self.btn_cal_thumb_close)
+        thumb_row.addWidget(self.chk_thumb_bend_invert)
         thumb_row.addWidget(self.chk_thumb_invert)
         right.addLayout(thumb_row)
+
+        dim_row=QHBoxLayout()
+        self.btn_test_thumb_bend=self._btn("T bend", "#475569",9)
+        self.btn_test_thumb_swing=self._btn("T swing", "#475569",9)
+        self.btn_test_index=self._btn("Index", "#475569",9)
+        self.btn_test_middle=self._btn("Middle", "#475569",9)
+        self.btn_test_ring=self._btn("Ring", "#475569",9)
+        self.btn_test_little=self._btn("Little", "#475569",9)
+        for b in [
+            self.btn_test_thumb_bend,self.btn_test_thumb_swing,self.btn_test_index,
+            self.btn_test_middle,self.btn_test_ring,self.btn_test_little,
+        ]:
+            dim_row.addWidget(b)
+        right.addLayout(dim_row)
+
+        tune_row=QHBoxLayout()
+        self.spin_ema=QDoubleSpinBox(); self.spin_ema.setRange(0.05,0.95); self.spin_ema.setSingleStep(0.05); self.spin_ema.setDecimals(2); self.spin_ema.setValue(self._ema_alpha)
+        self.spin_deadband=QSpinBox(); self.spin_deadband.setRange(0,30); self.spin_deadband.setValue(self._deadband)
+        self.spin_interval=QDoubleSpinBox(); self.spin_interval.setRange(0.03,0.50); self.spin_interval.setSingleStep(0.01); self.spin_interval.setDecimals(2); self.spin_interval.setValue(self._emit_iv)
+        self.spin_step_finger=QSpinBox(); self.spin_step_finger.setRange(1,80); self.spin_step_finger.setValue(MAX_STEP_FINGER)
+        self.spin_step_thumb=QSpinBox(); self.spin_step_thumb.setRange(1,80); self.spin_step_thumb.setValue(MAX_STEP_THUMB_SWING)
+        for label,spin in [
+            ("EMA",self.spin_ema),
+            ("DB",self.spin_deadband),
+            ("IV",self.spin_interval),
+            ("Fstep",self.spin_step_finger),
+            ("Tstep",self.spin_step_thumb),
+        ]:
+            tune_row.addWidget(QLabel(label)); tune_row.addWidget(spin)
+        right.addLayout(tune_row)
 
         # 调试面板
         dbg=QFrame(); dbg.setObjectName("VisionDebugPanel")
@@ -611,19 +652,24 @@ class VisionPage(QFrame):
         self.d_hand=self._d("手势: 等待","#334155")
         self.d_c11=self._d("11点: 等待","#334155")
         self.d_hw=self._d("下发: 未启用","#b91c1c")
-        self.d_range=self._d("range: TB 0-250 TS 0-255 I/M/R/L 0-255","#475569")
+        self.d_range=self._d("range: O6 6D TB/TS/I/M/R/L 0-255","#475569")
+        self.d_o6_mode=self._d("mode: O6 finger_move 6D only, dim2=thumb_swing","#475569")
+        self.d_tuning=self._d(self._tuning_text(),"#475569")
         self.d_curl=self._d("curl: --","#111827")
         self.d_thumb=self._d("thumb: --","#111827")
-        self.d_index=self._d("index prox/dist/fused: --","#111827")
-        self.d_middle=self._d("middle prox/dist/fused: --","#111827")
-        self.d_ring=self._d("ring prox/dist/fused: --","#111827")
-        self.d_little=self._d("little prox/dist/fused: --","#111827")
+        self.d_index=self._d("index prox/dist/tip/fused: --","#111827")
+        self.d_middle=self._d("middle prox/dist/tip/fused: --","#111827")
+        self.d_ring=self._d("ring prox/dist/tip/fused: --","#111827")
+        self.d_little=self._d("little prox/dist/tip/fused: --","#111827")
         self.d_pose_raw=self._d("raw pose: --","#111827")
         self.d_pose_ema=self._d("ema pose: --","#111827")
+        self.d_similarity=self._d("similarity: --","#111827")
+        self.d_errors=self._d("errors: --","#111827")
         self.d_pose_sent=self._d("sent: --","#111827")
+        self.d_last_test=self._d("last test: --","#111827")
         self.d_freq=self._d("freq: --","#111827")
         self.d_status=self._d("状态: 等待启动","#334155")
-        for w in [self.d_hand,self.d_c11,self.d_range,self.d_hw,self.d_curl,self.d_thumb,self.d_index,self.d_middle,self.d_ring,self.d_little,self.d_pose_raw,self.d_pose_ema,self.d_pose_sent,self.d_freq,self.d_status]:
+        for w in [self.d_hand,self.d_c11,self.d_range,self.d_o6_mode,self.d_tuning,self.d_hw,self.d_curl,self.d_thumb,self.d_index,self.d_middle,self.d_ring,self.d_little,self.d_pose_raw,self.d_pose_ema,self.d_similarity,self.d_errors,self.d_pose_sent,self.d_last_test,self.d_freq,self.d_status]:
             dl.addWidget(w)
         right.addWidget(dbg)
 
@@ -698,6 +744,13 @@ class VisionPage(QFrame):
         b.setStyleSheet(f"QPushButton{{background:{color};color:white;border:none;border-radius:4px;padding:5px 10px;font-size:{fs}px;font-weight:bold;}}QPushButton:hover{{background:#00ff88;}}QPushButton:pressed{{background:#008b5e;}}QPushButton:disabled{{background:#555;}}")
         return b
 
+    def _tuning_text(self):
+        return f"tuning: ema={self._ema_alpha:.2f} deadband={self._deadband} interval={self._emit_iv:.2f}s step={self._max_delta}"
+
+    def _sync_tuning_label(self):
+        if hasattr(self,"d_tuning"):
+            self.d_tuning.setText(self._tuning_text())
+
     def _wire(self):
         self.btn_start.clicked.connect(self._start)
         self.btn_stop.clicked.connect(self._stop_page)
@@ -706,9 +759,16 @@ class VisionPage(QFrame):
         self.btn_cal_close.clicked.connect(self._calibrate_close)
         self.btn_cal_thumb_open.clicked.connect(self._calibrate_thumb_open)
         self.btn_cal_thumb_close.clicked.connect(self._calibrate_thumb_close)
+        self.chk_thumb_bend_invert.toggled.connect(self._on_thumb_bend_invert_toggled)
         self.chk_thumb_invert.toggled.connect(self._on_thumb_invert_toggled)
-        self.btn_test_open.clicked.connect(lambda: self._safe_emit(OPEN_POSE,"test_open"))
-        self.btn_test_close.clicked.connect(lambda: self._safe_emit(CLOSE_POSE,"test_close"))
+        self.btn_test_open.clicked.connect(lambda: self._send_o6_test_pose("open", OPEN_POSE))
+        self.btn_test_close.clicked.connect(lambda: self._send_o6_test_pose("fist", CLOSE_POSE))
+        self.btn_test_thumb_bend.clicked.connect(lambda: self._send_o6_test_pose("thumb_bend", [CLOSE_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
+        self.btn_test_thumb_swing.clicked.connect(lambda: self._send_o6_test_pose("thumb_swing", [OPEN_POSE[0],CLOSE_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
+        self.btn_test_index.clicked.connect(lambda: self._send_o6_test_pose("index", [OPEN_POSE[0],OPEN_POSE[1],CLOSE_POSE[2],OPEN_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
+        self.btn_test_middle.clicked.connect(lambda: self._send_o6_test_pose("middle", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],CLOSE_POSE[3],OPEN_POSE[4],OPEN_POSE[5]]))
+        self.btn_test_ring.clicked.connect(lambda: self._send_o6_test_pose("ring", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],CLOSE_POSE[4],OPEN_POSE[5]]))
+        self.btn_test_little.clicked.connect(lambda: self._send_o6_test_pose("little", [OPEN_POSE[0],OPEN_POSE[1],OPEN_POSE[2],OPEN_POSE[3],OPEN_POSE[4],CLOSE_POSE[5]]))
         self.btn_record_start.clicked.connect(self._start_recording)
         self.btn_record_stop.clicked.connect(self._stop_recording)
         self.btn_record_clear.clicked.connect(self._clear_recording)
@@ -719,6 +779,21 @@ class VisionPage(QFrame):
         self.btn_play_stop.clicked.connect(self._stop_playback)
         self.chk_play_loop.toggled.connect(lambda checked: setattr(self,"_playback_loop",bool(checked)))
         self.cmb_play_speed.currentTextChanged.connect(self._on_playback_speed_changed)
+        self.spin_ema.valueChanged.connect(self._on_tuning_changed)
+        self.spin_deadband.valueChanged.connect(self._on_tuning_changed)
+        self.spin_interval.valueChanged.connect(self._on_tuning_changed)
+        self.spin_step_finger.valueChanged.connect(self._on_tuning_changed)
+        self.spin_step_thumb.valueChanged.connect(self._on_tuning_changed)
+
+    def _on_tuning_changed(self,*_):
+        self._ema_alpha=float(self.spin_ema.value())
+        self._deadband=int(self.spin_deadband.value())
+        self._emit_iv=float(self.spin_interval.value())
+        finger_step=int(self.spin_step_finger.value())
+        thumb_step=int(self.spin_step_thumb.value())
+        self._max_delta=[finger_step,thumb_step,finger_step,finger_step,finger_step,finger_step]
+        self._sync_tuning_label()
+        _jlog(self._tuning_text())
 
     def _on_hw_toggled(self,checked):
         if checked:
@@ -737,16 +812,43 @@ class VisionPage(QFrame):
             _vlog("hardware DISABLED")
 
     def _safe_emit(self,pose,tag=""):
-        pose=[int(max(POSE_MIN,min(POSE_MAX,v))) for v in pose]
+        pose=self._sanitize_pose(pose)
+        if pose is None:
+            self.d_status.setText("状态: invalid O6 pose, skipped")
+            _jlog(f"invalid pose skipped tag={tag or 'live'}")
+            return False
+        if not self._hw_enabled:
+            self.d_status.setText("状态: hardware output disabled, pose not sent")
+            _vlog("hardware disabled, pose not sent")
+            _jlog(f"hardware disabled, pose not sent tag={tag or 'live'} pose={pose}")
+            return False
         try:
             signal_bus.finger_move_requested.emit(pose)
             _vlog(f"emit finger_move_requested ok tag={tag or 'live'} pose={pose}")
             _jlog(f"emit ok tag={tag or 'live'} pose={pose}")
             self.d_pose_sent.setText(f"sent: {pose} ({tag})")
             self._last_sent=list(pose); self._last_sent_t=time.time()
+            return True
         except Exception as e:
             self.d_status.setText(f"状态: emit 失败 {e}")
             _vlog(f"emit finger_move_requested failed: {e}")
+            _jlog(f"emit failed tag={tag or 'live'} err={e}")
+            return False
+
+    def _send_o6_test_pose(self, name, pose):
+        safe=self._sanitize_pose(pose)
+        if safe is None:
+            self.d_last_test.setText(f"last test: {name} invalid")
+            self.d_status.setText("状态: invalid O6 test pose")
+            _jlog(f"O6 test invalid name={name} pose={pose}")
+            return False
+        ok=self._safe_emit(safe,f"test_{name}")
+        if ok:
+            self.d_last_test.setText(f"last test: {name} {safe}")
+            self.d_status.setText(f"状态: O6 test sent {name}")
+        else:
+            self.d_last_test.setText(f"last test: {name} blocked {safe}")
+        return ok
 
     # ── 校准 ──
     def _calibrate_open(self):
@@ -759,6 +861,7 @@ class VisionPage(QFrame):
             self._calib_open=list(raw)
             if self._worker: self._worker.set_calibration(self._calib_open,self._calib_close)
             self.d_status.setText("状态: 已校准张开")
+            self._check_calibration_spacing()
             _vlog(f"calib OPEN: {self._calib_open}")
         else:
             self.d_status.setText("状态: 未检测到有效手势，不能校准张开")
@@ -773,9 +876,25 @@ class VisionPage(QFrame):
             self._calib_close=list(raw)
             if self._worker: self._worker.set_calibration(self._calib_open,self._calib_close)
             self.d_status.setText("状态: 已校准握拳")
+            self._check_calibration_spacing()
             _vlog(f"calib CLOSE: {self._calib_close}")
         else:
             self.d_status.setText("状态: 未检测到有效手势，不能校准握拳")
+
+    def _check_calibration_spacing(self):
+        if not (self._calib_open and self._calib_close):
+            return
+        names=["thumb_bend","index","middle","ring","little"]
+        close_dims=[]
+        for i,name in enumerate(names):
+            if i >= len(self._calib_open) or i >= len(self._calib_close):
+                continue
+            if abs(float(self._calib_close[i])-float(self._calib_open[i])) <= 0.02:
+                close_dims.append(name)
+        if close_dims:
+            msg="calibration warning: open/fist baselines too close for " + ",".join(close_dims)
+            self.d_status.setText("状态: " + msg)
+            _jlog(msg)
 
     def _apply_thumb_config(self):
         if self._worker:
@@ -783,6 +902,7 @@ class VisionPage(QFrame):
                 self._thumb_open_baseline,
                 self._thumb_close_baseline,
                 self._thumb_swing_invert,
+                self._thumb_bend_invert,
             )
 
     def _current_thumb_swing_raw(self):
@@ -801,6 +921,7 @@ class VisionPage(QFrame):
             self._apply_thumb_config()
             self.d_status.setText(f"status: thumb out calibrated raw={raw:.3f}")
             _jlog(f"thumb swing open baseline={raw:.3f}")
+            self._check_thumb_spacing()
         else:
             self.d_status.setText("status: no valid hand for thumb-out calibration")
 
@@ -814,13 +935,27 @@ class VisionPage(QFrame):
             self._apply_thumb_config()
             self.d_status.setText(f"status: thumb in calibrated raw={raw:.3f}")
             _jlog(f"thumb swing close baseline={raw:.3f}")
+            self._check_thumb_spacing()
         else:
             self.d_status.setText("status: no valid hand for thumb-in calibration")
+
+    def _check_thumb_spacing(self):
+        if self._thumb_open_baseline is None or self._thumb_close_baseline is None:
+            return
+        diff=abs(float(self._thumb_open_baseline)-float(self._thumb_close_baseline))
+        if diff <= 0.02:
+            self.d_status.setText("status: thumb swing out/in baselines too close")
+            _jlog(f"thumb swing calibration warning diff={diff:.3f}")
 
     def _on_thumb_invert_toggled(self,checked):
         self._thumb_swing_invert=bool(checked)
         self._apply_thumb_config()
         _jlog(f"thumb swing invert={self._thumb_swing_invert}")
+
+    def _on_thumb_bend_invert_toggled(self,checked):
+        self._thumb_bend_invert=bool(checked)
+        self._apply_thumb_config()
+        _jlog(f"thumb bend invert={self._thumb_bend_invert}")
 
     def _compute_current(self):
         """从最后缓存的 debug 读取当前 curl。"""
@@ -853,6 +988,60 @@ class VisionPage(QFrame):
                 return None
             safe.append(int(rounded))
         return safe
+
+    def _norm01(self, value):
+        try:
+            return max(0.0,min(1.0,float(value)))
+        except Exception:
+            return 0.0
+
+    def _pose_axis_drive(self, value, open_value, close_value):
+        denom=float(close_value)-float(open_value)
+        if abs(denom) < 1e-6:
+            return 0.0
+        return self._norm01((float(value)-float(open_value))/denom)
+
+    def _pose_axis_spread(self, value, closed_value, open_value):
+        denom=float(open_value)-float(closed_value)
+        if abs(denom) < 1e-6:
+            return 0.0
+        return self._norm01((float(value)-float(closed_value))/denom)
+
+    def _human_drive_from_debug(self, debug):
+        curls=debug.get("curls",[]) if debug else []
+        thumb=debug.get("thumb",{}) if debug else {}
+        if not isinstance(curls,(list,tuple)) or len(curls) != 5:
+            return None
+        return [
+            self._norm01(curls[0]),
+            self._norm01(thumb.get("swing_norm",debug.get("thumb_spread",0.0))),
+            self._norm01(curls[1]),
+            self._norm01(curls[2]),
+            self._norm01(curls[3]),
+            self._norm01(curls[4]),
+        ]
+
+    def _robot_drive_from_pose(self, pose):
+        safe=self._sanitize_pose(pose)
+        if safe is None:
+            return None
+        return [
+            self._pose_axis_drive(safe[0],OPEN_POSE[0],CLOSE_POSE[0]),
+            self._pose_axis_spread(safe[1],CLOSE_POSE[1],OPEN_POSE[1]),
+            self._pose_axis_drive(safe[2],OPEN_POSE[2],CLOSE_POSE[2]),
+            self._pose_axis_drive(safe[3],OPEN_POSE[3],CLOSE_POSE[3]),
+            self._pose_axis_drive(safe[4],OPEN_POSE[4],CLOSE_POSE[4]),
+            self._pose_axis_drive(safe[5],OPEN_POSE[5],CLOSE_POSE[5]),
+        ]
+
+    def _compute_similarity(self, pose, debug):
+        human=self._human_drive_from_debug(debug)
+        robot=self._robot_drive_from_pose(pose)
+        if not human or not robot:
+            return None, None
+        errors=[abs(human[i]-robot[i]) for i in range(6)]
+        score=max(0.0,min(1.0,1.0-(sum(errors)/len(errors))))*100.0
+        return score, errors
 
     def _pose_delta(self, a, b):
         pose_a=self._sanitize_pose(a)
@@ -1391,11 +1580,14 @@ class VisionPage(QFrame):
         self.d_c11.setText("11点: 未检测到手")
         self.d_curl.setText("curl: --"); self.d_pose_raw.setText("raw pose: --")
         self.d_thumb.setText("thumb: --")
-        self.d_index.setText("index prox/dist/fused: --")
-        self.d_middle.setText("middle prox/dist/fused: --")
-        self.d_ring.setText("ring prox/dist/fused: --")
-        self.d_little.setText("little prox/dist/fused: --")
-        self.d_pose_ema.setText("ema pose: --"); self.d_pose_sent.setText("sent: --")
+        self.d_index.setText("index prox/dist/tip/fused: --")
+        self.d_middle.setText("middle prox/dist/tip/fused: --")
+        self.d_ring.setText("ring prox/dist/tip/fused: --")
+        self.d_little.setText("little prox/dist/tip/fused: --")
+        self.d_pose_ema.setText("ema pose: --")
+        self.d_similarity.setText("similarity: --")
+        self.d_errors.setText("errors: --")
+        self.d_pose_sent.setText("sent: --")
         self.d_freq.setText("freq: --"); self.d_status.setText("状态: 已停止"); self.btn_start.setEnabled(True)
         _vlog("stopped")
 
@@ -1405,7 +1597,8 @@ class VisionPage(QFrame):
     def _go_home(self):
         if self._playing:
             self._stop_playback()
-        self._safe_emit(SAFE_NEUTRAL,"home"); self.d_status.setText("状态: 复位已发送")
+        if self._safe_emit(SAFE_NEUTRAL,"home"):
+            self.d_status.setText("状态: 复位已发送")
 
     def _set_state(self,s):
         self._state=s; self.btn_stop.setEnabled(s in ("opening","running"))
@@ -1433,9 +1626,10 @@ class VisionPage(QFrame):
         thumb=debug.get("thumb",{})
         fingers=debug.get("fingers",{})
         self.d_thumb.setText(
-            "thumb: bend {:.2f}->{}, swing {:.2f}/{:.2f}->{} inv={}".format(
+            "thumb: bend {:.2f}->{} inv={}, swing {:.2f}/{:.2f}->{} inv={}".format(
                 thumb.get("bend_raw",0.0),
                 thumb.get("bend_mapped",raw[0]),
+                thumb.get("bend_invert",False),
                 thumb.get("swing_raw",0.0),
                 thumb.get("swing_norm",spread),
                 thumb.get("swing_mapped",raw[1]),
@@ -1450,10 +1644,11 @@ class VisionPage(QFrame):
         ]:
             fd=fingers.get(name,{})
             label.setText(
-                "{} prox/dist/fused: {:.2f}/{:.2f}/{:.2f}".format(
+                "{} prox/dist/tip/fused: {:.2f}/{:.2f}/{:.2f}/{:.2f}".format(
                     name,
                     fd.get("proximal",0.0),
                     fd.get("distal",0.0),
+                    fd.get("tip_aux",0.0),
                     fd.get("fused",0.0),
                 )
             )
@@ -1468,6 +1663,20 @@ class VisionPage(QFrame):
         if debug.get("log_joint"):
             _jlog(f"ema pose: {ema}")
 
+        score,errors=self._compute_similarity(ema,debug)
+        if score is not None and errors:
+            self.d_similarity.setText(f"similarity: {score:.1f}%")
+            self.d_errors.setText(
+                "errors: " + " ".join(
+                    f"{name}={err:.2f}" for name,err in zip(POSE_FIELDS,errors)
+                )
+            )
+            if debug.get("log_joint"):
+                _jlog(f"similarity={score:.1f}% errors={[round(e,3) for e in errors]}")
+        else:
+            self.d_similarity.setText("similarity: --")
+            self.d_errors.setText("errors: --")
+
         self._record_pose(ema,raw,debug)
 
         if self._live_emit_blocked_by_playback or self._playing:
@@ -1480,13 +1689,8 @@ class VisionPage(QFrame):
             self.d_status.setText("状态: 硬件未启用，pose 不下发")
             if debug.get("log_joint"):
                 _vlog("hardware disabled, pose not sent")
+                _jlog("hardware disabled, pose not sent")
             return
-
-        # deadband
-        if self._last_sent:
-            md=max(abs(ema[i]-self._last_sent[i]) for i in range(6))
-            if md<self._deadband:
-                self._skip_cnt+=1; self.d_status.setText(f"状态: 无变化跳过 (Δ={md})"); return
 
         # 限频
         if now-self._last_sent_t<self._emit_iv: return
@@ -1500,13 +1704,23 @@ class VisionPage(QFrame):
                 if abs(d)>limit:
                     clamped[i]=self._last_sent[i]+(limit if d>0 else -limit)
 
+        # deadband
+        if self._last_sent:
+            md=max(abs(clamped[i]-self._last_sent[i]) for i in range(6))
+            if md<self._deadband:
+                self._skip_cnt+=1
+                self.d_status.setText(f"状态: 无变化跳过 (Δ={md})")
+                if debug.get("log_joint"):
+                    _jlog(f"deadband skip delta={md}")
+                return
+
         _vlog(f"sending pose: {clamped}")
         _jlog(f"sending pose: {clamped}")
-        self._safe_emit(clamped,"live")
-        self._sent_cnt+=1
-        hz=self._sent_cnt/max(now-self._start_t,1.0)
-        self.d_freq.setText(f"freq: ~{hz:.1f}Hz sent={self._sent_cnt}")
-        self.d_status.setText(f"状态: 已下发 #{self._sent_cnt}")
+        if self._safe_emit(clamped,"live"):
+            self._sent_cnt+=1
+            hz=self._sent_cnt/max(now-self._start_t,1.0)
+            self.d_freq.setText(f"freq: ~{hz:.1f}Hz sent={self._sent_cnt}")
+            self.d_status.setText(f"状态: 已下发 #{self._sent_cnt}")
 
     # ── 回调 ──
     def _on_frame(self,qimg):
@@ -1523,6 +1737,12 @@ class VisionPage(QFrame):
                 self._last_has_hand=False
                 self.d_hand.setText("手势: 未检测到手"); self.d_hand.setStyleSheet("color:#b91c1c;font-size:12px;font-family:monospace;font-weight:700;")
                 self.d_c11.setText("11点: 未检测到手"); self.d_c11.setStyleSheet("color:#b91c1c;font-size:12px;font-family:monospace;font-weight:700;")
+                self.d_similarity.setText("similarity: --")
+                self.d_errors.setText("errors: --")
+                now=time.time()
+                if now-self._last_no_hand_log_t > 1.0:
+                    _jlog("no hand, skip sending")
+                    self._last_no_hand_log_t=now
                 if self._hw_enabled:
                     self.d_status.setText("状态: 未检测到手，跳过下发")
 
