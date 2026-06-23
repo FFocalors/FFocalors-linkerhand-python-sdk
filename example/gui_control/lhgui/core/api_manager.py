@@ -42,6 +42,7 @@ class ApiManager(QObject):
         self.api: Optional[LinkerHandApi] = None
         self._lock = threading.Lock()
         self._connected = False
+        self._consecutive_failures = 0
 
         self._read_config()
         self._wire_signals()
@@ -99,35 +100,46 @@ class ApiManager(QObject):
     def _do_connect(self):
         signal_bus.connection_changed.emit("connecting")
         with self._lock:
+            api_instance = None
             try:
-                self.api = LinkerHandApi(
+                api_instance = LinkerHandApi(
                     hand_joint=self.hand_joint,
                     hand_type=self.hand_type,
                     modbus=self.modbus,
                     can=self.can,
                 )
-                self._connected = True
-                
-                signal_bus.connection_changed.emit("connected")
-                signal_bus.connection_message.emit("success", "已连接设备")
                 
                 # 初始化电机速度与扭矩（默认 255），避免手部固件默认状态为 0 导致不动
                 try:
                     joint_count = len(HAND_CONFIGS[self.hand_joint].init_pos)
-                    self.api.set_speed([255] * joint_count)
-                    self.api.set_torque([255] * joint_count)
+                    api_instance.set_speed([255] * joint_count)
+                    api_instance.set_torque([255] * joint_count)
                 except Exception as ex:
                     print(f"Failed to set initial speed/torque: {ex}")
                     
+                # 校验物理硬件的真实在线可达性，读取版本与序列号，防范假在线
                 version = None
                 serial = None
                 try:
-                    version = self.api.get_embedded_version()
-                    serial = self.api.get_serial_number()
-                except Exception:
-                    pass
+                    version = api_instance.get_embedded_version()
+                    serial = api_instance.get_serial_number()
+                except Exception as ex:
+                    raise ConnectionError(f"读取设备参数失败: {ex}")
+                
+                if not version or serial in ("-1", "", None):
+                    raise ConnectionError("未检测到有效的硬件版本或序列号，硬件可能未上电或未插入")
+                
+                self.api = api_instance
+                self._connected = True
+                
+                signal_bus.connection_changed.emit("connected")
+                signal_bus.connection_message.emit("success", "已连接设备")
             except Exception as e:
-                # 物理连接失败，自动切入虚拟/离线调试模式，激活 UI 以供预览调试
+                # 物理连接失败，若有 api_instance 必须彻底清理以释放 CAN 端口和线程！
+                if api_instance is not None:
+                    self.api = api_instance
+                    self._dispose_api()
+                
                 self.api = None
                 self._connected = True
                 
@@ -245,9 +257,25 @@ class ApiManager(QObject):
                 return self._virtual_pose
             return None
         try:
-            return self.api.get_state()
-        except Exception:
+            val = self.api.get_state()
+            if val is not None:
+                self._consecutive_failures = 0
+                return val
+            else:
+                raise ValueError("Returned empty state")
+        except Exception as e:
+            self._consecutive_failures += 1
+            if self._consecutive_failures >= 5:
+                self._consecutive_failures = 0
+                self._handle_physical_disconnect(str(e))
             return None
+
+    def _handle_physical_disconnect(self, reason: str):
+        if not self._connected or self.api is None:
+            return
+        self._dispose_api()
+        signal_bus.connection_changed.emit("disconnected")
+        signal_bus.connection_message.emit("error", f"物理设备连接已断开: {reason}")
 
     def get_current(self):
         if not self._ensure_api(silent=True):
