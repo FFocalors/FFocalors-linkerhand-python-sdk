@@ -38,6 +38,9 @@ THUMB_SWING_MIN = 0
 THUMB_SWING_MAX = 255
 THUMB_SWING_INVERT_DEFAULT = False
 THUMB_BEND_INVERT = False
+THUMB_BEND_RATIO_STRAIGHT = 0.96
+THUMB_BEND_RATIO_BENT = 0.58
+THUMB_BEND_CURVE_GAMMA = 0.62
 FINGER_PROXIMAL_WEIGHT = 0.45
 FINGER_DISTAL_WEIGHT = 0.35
 FINGER_TIP_AUX_WEIGHT = 0.20
@@ -231,9 +234,14 @@ class ImitationWorker(QThread):
                                 )
                             thumb=debug.get("thumb",{})
                             _jlog(
-                                "thumb bend_raw={:.3f} bend_mapped={} swing_raw={:.3f} swing_norm={:.3f} swing_mapped={} invert={}".format(
+                                "thumb bend_raw={:.3f} mapped={} joint={:.3f} opp={:.3f} chain={:.3f} angle={:.3f} near={:.3f} swing_raw={:.3f} swing_norm={:.3f} swing_mapped={} invert={}".format(
                                     thumb.get("bend_raw",0.0),
                                     thumb.get("bend_mapped",0),
+                                    thumb.get("bend_joint",0.0),
+                                    thumb.get("bend_opposition",0.0),
+                                    thumb.get("bend_chain",0.0),
+                                    thumb.get("bend_angle",0.0),
+                                    max(thumb.get("bend_palm_aux",0.0),thumb.get("bend_base_aux",0.0)),
                                     thumb.get("swing_raw",0.0),
                                     thumb.get("swing_norm",0.0),
                                     thumb.get("swing_mapped",0),
@@ -453,6 +461,12 @@ class ImitationWorker(QThread):
             extension=max(0.0,tip_dist-mcp_dist)/(length*0.75)
             return 1.0-clamp01(extension)
 
+        def dist_ratio_score(base,tip,chain,straight=THUMB_BEND_RATIO_STRAIGHT,bent=THUMB_BEND_RATIO_BENT,dims=slice(None)):
+            base_tip=np.linalg.norm(pts[tip][dims]-pts[base][dims])
+            length=sum(np.linalg.norm(pts[chain[i+1]][dims]-pts[chain[i]][dims]) for i in range(len(chain)-1))
+            ratio=base_tip/max(length,1e-6)
+            return ratio,clamp01((straight-ratio)/(straight-bent))
+
         def finger_detail(name,wrist,mcp,pip,dip,tip):
             mcp_bend=bend_from_angle(angle_at(wrist,mcp,pip),straight=2.65,bent=1.05)
             pip_bend=bend_from_angle(angle_at(mcp,pip,dip),straight=2.85,bent=1.00)
@@ -484,7 +498,28 @@ class ImitationWorker(QThread):
 
         thumb_mcp_bend=bend_from_angle(angle_at(1,2,3),straight=2.55,bent=1.05)
         thumb_ip_bend=bend_from_angle(angle_at(2,3,4),straight=2.85,bent=1.00)
-        thumb_bend_raw=clamp01(0.65*thumb_mcp_bend+0.35*thumb_ip_bend)
+        thumb_angle_bend=clamp01(0.55*thumb_mcp_bend+0.45*thumb_ip_bend)
+        thumb_tip_ratio_xyz,thumb_short_xyz=dist_ratio_score(2,4,[2,3,4])
+        thumb_tip_ratio_xy,thumb_short_xy=dist_ratio_score(2,4,[2,3,4],dims=slice(0,2))
+        thumb_chain_bend=max(thumb_short_xyz,thumb_short_xy)
+        thumb_tip_aux=tip_aux_curl(2,4,[1,2,3,4])
+        thumb_tip_palm_dist=np.linalg.norm(pts[4]-palm_center)/palm_scale
+        thumb_palm_aux=clamp01((1.15-thumb_tip_palm_dist)/(1.15-0.35))
+        thumb_tip_base_dist=min(np.linalg.norm(pts[4]-pts[i]) for i in (5,9,13,17))/palm_scale
+        thumb_base_aux=clamp01((1.05-thumb_tip_base_dist)/(1.05-0.30))
+        thumb_joint_bend=max(thumb_chain_bend,thumb_angle_bend)
+        thumb_opposition_bend=max(thumb_tip_aux,thumb_palm_aux,thumb_base_aux)
+        thumb_bend_linear=clamp01(
+            0.50*thumb_joint_bend
+            + 0.34*thumb_opposition_bend
+            + 0.16*max(thumb_joint_bend,thumb_opposition_bend)
+        )
+        thumb_bend_linear=max(
+            thumb_bend_linear,
+            clamp01(0.95*thumb_joint_bend),
+            clamp01(0.90*thumb_opposition_bend),
+        )
+        thumb_bend_raw=clamp01(thumb_bend_linear ** THUMB_BEND_CURVE_GAMMA)
         spread_dist=np.linalg.norm(pts[4]-pts[5])/palm_scale
         thumb_swing_raw=clamp01((spread_dist-0.25)/0.85)
         thumb_swing_norm=thumb_swing_raw
@@ -548,6 +583,18 @@ class ImitationWorker(QThread):
             "thumb_spread":r3(thumb_swing_norm),
             "thumb":{
                 "bend_raw":r3(thumb_bend_raw),
+                "bend_angle":r3(thumb_angle_bend),
+                "bend_chain":r3(thumb_chain_bend),
+                "bend_joint":r3(thumb_joint_bend),
+                "bend_opposition":r3(thumb_opposition_bend),
+                "bend_linear":r3(thumb_bend_linear),
+                "tip_ratio_xyz":r3(thumb_tip_ratio_xyz),
+                "tip_ratio_xy":r3(thumb_tip_ratio_xy),
+                "bend_tip_aux":r3(thumb_tip_aux),
+                "bend_palm_aux":r3(thumb_palm_aux),
+                "bend_base_aux":r3(thumb_base_aux),
+                "tip_palm_dist":r3(thumb_tip_palm_dist),
+                "tip_base_dist":r3(thumb_tip_base_dist),
                 "bend_calibrated":r3(curls[0]),
                 "bend_mapped":pose[0],
                 "swing_raw":r3(thumb_swing_raw),
@@ -792,7 +839,7 @@ class VisionPage(QFrame):
         finger_grid = QGridLayout()
         finger_grid.setSpacing(6)
         finger_buttons = [
-            ("拇弯", "thumb_bend", [CLOSE_POSE[0], OPEN_POSE[1], OPEN_POSE[2], OPEN_POSE[3], OPEN_POSE[4], OPEN_POSE[5]]),
+            ("拇弯", "thumb_bend", [CLOSE_POSE[0], CLOSE_POSE[1], OPEN_POSE[2], OPEN_POSE[3], OPEN_POSE[4], OPEN_POSE[5]]),
             ("拇摆", "thumb_swing", [OPEN_POSE[0], CLOSE_POSE[1], OPEN_POSE[2], OPEN_POSE[3], OPEN_POSE[4], OPEN_POSE[5]]),
             ("食指", "index", [OPEN_POSE[0], OPEN_POSE[1], CLOSE_POSE[2], OPEN_POSE[3], OPEN_POSE[4], OPEN_POSE[5]]),
             ("中指", "middle", [OPEN_POSE[0], OPEN_POSE[1], OPEN_POSE[2], CLOSE_POSE[3], OPEN_POSE[4], OPEN_POSE[5]]),
@@ -1937,9 +1984,15 @@ class VisionPage(QFrame):
         thumb=debug.get("thumb",{})
         fingers=debug.get("fingers",{})
         self.d_thumb.setText(
-            "thumb: bend {:.2f}->{} inv={}, swing {:.2f}/{:.2f}->{} inv={}".format(
+            "thumb: bend {:.2f}->{} joint/opp={:.2f}/{:.2f} chain/ang/near={:.2f}/{:.2f}/{:.2f} lin={:.2f} inv={}, swing {:.2f}/{:.2f}->{} inv={}".format(
                 thumb.get("bend_raw",0.0),
                 thumb.get("bend_mapped",raw[0]),
+                thumb.get("bend_joint",0.0),
+                thumb.get("bend_opposition",0.0),
+                thumb.get("bend_chain",0.0),
+                thumb.get("bend_angle",0.0),
+                max(thumb.get("bend_palm_aux",0.0),thumb.get("bend_base_aux",0.0)),
+                thumb.get("bend_linear",0.0),
                 thumb.get("bend_invert",False),
                 thumb.get("swing_raw",0.0),
                 thumb.get("swing_norm",spread),
