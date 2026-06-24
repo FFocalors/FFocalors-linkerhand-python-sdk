@@ -231,6 +231,11 @@ class HandPoseView(gl.GLViewWidget):
             
         from lhgui.utils.signal_bus import signal_bus
         signal_bus.joint_state_updated.connect(self.update_joint_values)
+        from lhgui.styles.theme_manager import get_theme_manager
+        manager = get_theme_manager()
+        if manager is not None:
+            manager.theme_changed.connect(self._apply_theme)
+            self._apply_theme(manager.current)
 
     def _build_3d_hand(self):
         # 1. 构建手掌 (多面体机械装甲手掌)
@@ -534,6 +539,12 @@ class HandPoseView(gl.GLViewWidget):
                 
             QTimer.singleShot(450, _reset)
 
+    def _apply_theme(self, name: str):
+        if name == "dark":
+            self.setBackgroundColor((20, 29, 42, 255))
+        else:
+            self.setBackgroundColor((248, 250, 252, 255))
+        self.update()
     def is_supported(self) -> bool:
         return self._is_six
 

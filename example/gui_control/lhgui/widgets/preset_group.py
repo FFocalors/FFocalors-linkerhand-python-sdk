@@ -27,6 +27,7 @@ class PresetGroup(QWidget):
     def __init__(self, hand_joint: str):
         super().__init__()
         self.setObjectName("PresetGroup")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.hand_joint = hand_joint
         self.actions = HAND_CONFIGS[hand_joint].preset_actions or {}
         self._cards: Dict[str, PresetCard] = {}

@@ -9,8 +9,10 @@ from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QFrame, QToolButton, QSizePolicy
 )
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
+from PyQt5.QtGui import QIcon
 
-from lhgui.utils.icon_helper import get_icon
+from lhgui.styles.theme_manager import get_theme_manager, is_dark_theme
+from lhgui.utils.icon_helper import get_pixmap
 from lhgui.utils.style_utils import set_dynamic_property
 
 
@@ -20,6 +22,8 @@ class SidebarItem(QWidget):
     def __init__(self, page, text: str, icon_name: str, parent=None):
         super().__init__(parent)
         self.page = page
+        self._icon_name = icon_name
+        self._active = False
         self.setObjectName("SidebarItem")
         self.setCursor(Qt.PointingHandCursor)
         self.setFixedHeight(44)
@@ -39,7 +43,7 @@ class SidebarItem(QWidget):
         self.button = QToolButton(self)
         self.button.setObjectName("SidebarButton")
         self.button.setText(text)
-        self.button.setIcon(get_icon(icon_name, 20, target_widget=self))
+        self._refresh_icon()
         self.button.setIconSize(QSize(20, 20))
         self.button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.button.setCheckable(True)
@@ -48,7 +52,25 @@ class SidebarItem(QWidget):
         self.button.setToolTip(text)
         layout.addWidget(self.button)
 
+        manager = get_theme_manager()
+        if manager is not None:
+            manager.theme_changed.connect(lambda _name: self._refresh_icon())
+
+    def _refresh_icon(self):
+        """为所有 QIcon 状态提供同一高对比位图，避免 Qt 自动压暗图标。"""
+        if is_dark_theme():
+            color = "#7EA2FF" if self._active else "#C2CDDB"
+        else:
+            color = "#4F7FF7" if self._active else "#334155"
+        pixmap = get_pixmap(self._icon_name, 20, color=color, target_widget=self)
+        icon = QIcon()
+        for mode in (QIcon.Normal, QIcon.Disabled, QIcon.Active, QIcon.Selected):
+            icon.addPixmap(pixmap, mode, QIcon.Off)
+            icon.addPixmap(pixmap, mode, QIcon.On)
+        self.button.setIcon(icon)
+
     def set_active(self, active: bool):
+        self._active = active
         self.button.blockSignals(True)
         self.button.setChecked(active)
         self.button.blockSignals(False)
@@ -57,6 +79,7 @@ class SidebarItem(QWidget):
         else:
             self.indicator.setStyleSheet("background-color: transparent; border: none;")
         set_dynamic_property(self, "active", "true" if active else "false")
+        self._refresh_icon()
 
     def set_compact(self, compact: bool):
         self.button.setToolButtonStyle(Qt.ToolButtonIconOnly if compact else Qt.ToolButtonTextBesideIcon)

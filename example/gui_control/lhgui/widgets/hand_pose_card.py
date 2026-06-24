@@ -29,6 +29,7 @@ class HandPoseCard(QWidget):
     def __init__(self, hand_joint: str, parent=None):
         super().__init__(parent)
         self.setObjectName("HandPoseCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.hand_joint = hand_joint
 
         full_names = list(HAND_CONFIGS[hand_joint].joint_names)[:6]

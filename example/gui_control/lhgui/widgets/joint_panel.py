@@ -22,6 +22,7 @@ class JointPanel(QWidget):
     def __init__(self, hand_joint: str):
         super().__init__()
         self.setObjectName("JointControlCard")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.hand_joint = hand_joint
         self.config = HAND_CONFIGS[hand_joint]
         self.rows: List[JointRow] = []

@@ -23,6 +23,7 @@ class Sidebar(QWidget):
     def __init__(self):
         super().__init__()
         self.setObjectName("Sidebar")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._items = {}
         self._build()
         signal_bus.page_changed.connect(self._on_page_changed)

@@ -18,6 +18,7 @@ class DemoPage(QWidget):
     def __init__(self, hand_joint: str, parent=None):
         super().__init__(parent)
         self.setObjectName("DemoPage")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.hand_joint = hand_joint
         self.config = HAND_CONFIGS[hand_joint]
         self._buttons = []

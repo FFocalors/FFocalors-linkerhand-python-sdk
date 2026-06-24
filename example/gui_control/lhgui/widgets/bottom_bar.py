@@ -71,6 +71,7 @@ class BottomBar(QWidget):
     def __init__(self, hand_joint: str):
         super().__init__()
         self.setObjectName("BottomBar")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.hand_joint = hand_joint
         self.joint_count = len(HAND_CONFIGS[hand_joint].joint_names)
         self._speed = 255

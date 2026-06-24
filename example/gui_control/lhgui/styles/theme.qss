@@ -15,6 +15,9 @@ QWidget {
 QMainWindow {
     background-color: #F3F6FA;
 }
+QStackedWidget, #ConsolePage, #LogPage, #SettingsPage, #DemoPage {
+    background-color: #F3F6FA;
+}
 QDialog {
     background-color: #FFFFFF;
 }
@@ -137,6 +140,30 @@ QPushButton[category="secondary"]:disabled, #SecondaryButton:disabled {
     color: #94A3B8;
 }
 
+/* Demo — 演示模式大尺寸动作卡片 */
+QPushButton[category="demo"] {
+    background-color: #FFFFFF;
+    border: 1px solid #D9E2EE;
+    border-radius: 12px;
+    padding: 18px 24px;
+    color: #1E293B;
+    font-size: 18px;
+    font-weight: 600;
+}
+QPushButton[category="demo"]:hover {
+    background-color: #EAF1FF;
+    border-color: #4F7FF7;
+    color: #3E6FEA;
+}
+QPushButton[category="demo"]:pressed {
+    background-color: #DBEAFE;
+    border-color: #3E6FEA;
+}
+QPushButton[category="demo"]:disabled {
+    background-color: #F8FAFC;
+    border-color: #E8EDF3;
+    color: #94A3B8;
+}
 /* Warning — 警告按钮 (浅黄底深黄字) */
 QPushButton[category="warning"], #WarningButton {
     background-color: #FFFBEB;

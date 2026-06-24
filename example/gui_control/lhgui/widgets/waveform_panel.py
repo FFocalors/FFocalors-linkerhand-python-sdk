@@ -40,10 +40,18 @@ class WaveformPanel(QWidget):
         ("#6279B7", "#EFF2FA", "#BEC9E5"),  # 小指 — 柔靛
     ]
     COLORS = [entry[0] for entry in PALETTE]
-
+    DARK_PALETTE = [
+        ("#86A8E6", "#1C2B45", "#415C86"),
+        ("#75B2CC", "#18313D", "#3C6677"),
+        ("#76B99D", "#19352F", "#3D6B5B"),
+        ("#D5A665", "#382B19", "#745A34"),
+        ("#A194D8", "#2A2540", "#5C527F"),
+        ("#879DDB", "#202D49", "#465D8D"),
+    ]
     def __init__(self, hand_joint: str = "O6", parent=None):
         super().__init__(parent)
         self.setObjectName("WaveformPanel")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self.hand_joint = hand_joint
         self._collapsed = False
         self._is_fullscreen = False
@@ -69,6 +77,11 @@ class WaveformPanel(QWidget):
 
         self._build()
         signal_bus.waveform_updated.connect(self._on_data)
+        from lhgui.styles.theme_manager import get_theme_manager
+        manager = get_theme_manager()
+        if manager is not None:
+            manager.theme_changed.connect(self._apply_theme)
+            self._apply_theme(manager.current)
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -121,7 +134,6 @@ class WaveformPanel(QWidget):
         joint_labels = ["拇弯", "拇摆", "食指", "中指", "无名", "小指"]
         for i in range(self.joint_count):
             name = joint_labels[i] if i < len(joint_labels) else self.joint_names_short[i]
-            color, tint, border = self.PALETTE[i % len(self.PALETTE)]
             btn = QPushButton(f"●  {name}")
             btn.setObjectName("WaveformToggle")
             btn.setCheckable(True)
@@ -129,32 +141,8 @@ class WaveformPanel(QWidget):
             btn.setCursor(Qt.PointingHandCursor)
             btn.setToolTip(f"显示或隐藏{name}曲线")
             btn.setFixedHeight(24)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    border: 1px solid #E2E8F0;
-                    border-radius: 12px;
-                    padding: 1px 9px;
-                    background: #F8FAFC;
-                    color: #94A3B8;
-                    font-size: 10px;
-                    font-weight: 500;
-                }}
-                QPushButton:hover {{
-                    background: #F1F5F9;
-                    border-color: {border};
-                    color: {color};
-                }}
-                QPushButton:checked {{
-                    background: {tint};
-                    border-color: {border};
-                    color: {color};
-                    font-weight: 600;
-                }}
-                QPushButton:checked:hover {{
-                    background: #FFFFFF;
-                    border-color: {color};
-                }}
-            """)
+            btn.setProperty("_lh_theme_native", True)
+            self._style_toggle(btn, i)
             btn.toggled.connect(lambda checked, idx=i: self._toggle(idx, checked))
             self.toggles.append(btn)
             filter_row.addWidget(btn)
@@ -189,6 +177,63 @@ class WaveformPanel(QWidget):
 
         layout.addWidget(self.canvas, stretch=1)
 
+    def _style_toggle(self, button, index: int):
+        from lhgui.styles.theme_manager import is_dark_theme
+        dark = is_dark_theme()
+        palette = self.DARK_PALETTE if dark else self.PALETTE
+        color, tint, border = palette[index % len(palette)]
+        base = "#1D2837" if dark else "#F8FAFC"
+        hover = "#243143" if dark else "#F1F5F9"
+        muted = "#8FA0B5" if dark else "#94A3B8"
+        selected_hover = "#26364D" if dark else "#FFFFFF"
+        button.setStyleSheet(f"""
+            QPushButton {{
+                border: 1px solid {"#334258" if dark else "#E2E8F0"};
+                border-radius: 12px;
+                padding: 1px 9px;
+                background: {base};
+                color: {muted};
+                font-size: 10px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background: {hover};
+                border-color: {border};
+                color: {color};
+            }}
+            QPushButton:checked {{
+                background: {tint};
+                border-color: {border};
+                color: {color};
+                font-weight: 600;
+            }}
+            QPushButton:checked:hover {{
+                background: {selected_hover};
+                border-color: {color};
+            }}
+        """)
+
+    def _apply_theme(self, name: str):
+        dark = name == "dark"
+        palette = self.DARK_PALETTE if dark else self.PALETTE
+        for index, button in enumerate(self.toggles):
+            self._style_toggle(button, index)
+        for index, line in enumerate(self.lines):
+            line.set_color(palette[index % len(palette)][0])
+
+        face = "#182230" if dark else "#FAFBFD"
+        text = "#98A8BC" if dark else "#94A3B8"
+        grid = "#334258" if dark else "#E8EDF3"
+        spine = "#40516A" if dark else "#DCE3EC"
+        self.figure.set_facecolor(face)
+        self.ax.set_facecolor(face)
+        self.ax.xaxis.label.set_color(text)
+        self.ax.yaxis.label.set_color(text)
+        self.ax.tick_params(colors=text)
+        self.ax.grid(True, color=grid, linewidth=0.5, alpha=0.75)
+        self.ax.spines["left"].set_color(spine)
+        self.ax.spines["bottom"].set_color(spine)
+        self.canvas.draw_idle()
     def _toggle(self, idx: int, on: bool):
         if idx < len(self._show):
             self._show[idx] = on

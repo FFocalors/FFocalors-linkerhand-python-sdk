@@ -176,15 +176,29 @@ class PresetCard(QAbstractButton):
             self._refresh_icon()
 
     def _surface_colors(self):
-        """返回自绘卡片表面的背景色和边框色。"""
+        """返回随主题变化的自绘卡片表面背景色和边框色。"""
+        from lhgui.styles.theme_manager import is_dark_theme
+        dark = is_dark_theme()
         if self.property("error") == "true":
-            return "#FFF1F1", "#E5484D"
+            return ("#3A2028", "#FF777C") if dark else ("#FFF1F1", "#E5484D")
         if self.property("running") == "true" or self.isDown():
-            return "#E4ECFA", "#6F8FCE"
+            return ("#1D3152", "#7EA2FF") if dark else ("#E4ECFA", "#6F8FCE")
 
         hovered = self.underMouse() and self.isEnabled()
         if self.variant == "number":
+            if dark:
+                return ("#24334A", "#6484B8") if hovered else ("#1B2635", "#3B4D66")
             return ("#EEF4FC", "#88A2D0") if hovered else ("#F7FAFE", "#C8D5E7")
+
+        if dark:
+            core_surfaces = {
+                "blue": ("#1C2B45", "#415C86"),
+                "slate": ("#222E3E", "#465970"),
+                "teal": ("#18352F", "#3D6B5B"),
+                "indigo": ("#2A2540", "#5C527F"),
+            }
+            background, border = core_surfaces.get(self.property("tone"), core_surfaces["blue"])
+            return ("#26364A", "#708FBF") if hovered else (background, border)
 
         core_surfaces = {
             "blue": ("#EDF3FC", "#B7C8E7"),
@@ -194,7 +208,6 @@ class PresetCard(QAbstractButton):
         }
         background, border = core_surfaces.get(self.property("tone"), core_surfaces["blue"])
         return ("#FFFFFF", "#88A2D0") if hovered else (background, border)
-
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)

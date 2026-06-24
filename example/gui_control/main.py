@@ -58,9 +58,10 @@ def main():
         app.setApplicationName("LinkerHand 控制台 - 重构测试版 [7C2D28B]")
 
         theme = ThemeManager(app)
-        theme.apply(ThemeManager.THEME)
+        theme.apply(theme.saved_theme)
 
         window = MainWindow()
+        theme.refresh_widgets(window)
         window.setWindowTitle("LinkerHand 控制台 - 重构测试版 [7C2D28B]")
         window.show()
         exit_code = app.exec_()

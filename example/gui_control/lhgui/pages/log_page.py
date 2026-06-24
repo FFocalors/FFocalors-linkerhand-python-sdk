@@ -20,6 +20,12 @@ _LEVEL_COLOR = {
     "warning": "#92400e",
     "error": "#991b1b",
 }
+_DARK_LEVEL_COLOR = {
+    "info": "#AEBBCD",
+    "success": "#61D49A",
+    "warning": "#F2B84B",
+    "error": "#FF8585",
+}
 
 
 class LogPage(QWidget):
@@ -28,9 +34,14 @@ class LogPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("LogPage")
+        self.setAttribute(Qt.WA_StyledBackground, True)
         self._entries = deque(maxlen=self.MAX_ENTRIES)
         self._build()
         signal_bus.connection_message.connect(self._append)
+        from lhgui.styles.theme_manager import get_theme_manager
+        manager = get_theme_manager()
+        if manager is not None:
+            manager.theme_changed.connect(lambda _: self._render())
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -79,11 +90,15 @@ class LogPage(QWidget):
         self._render()
 
     def _render(self):
+        from lhgui.styles.theme_manager import is_dark_theme
+        dark = is_dark_theme()
+        colors = _DARK_LEVEL_COLOR if dark else _LEVEL_COLOR
+        timestamp_color = "#91A1B6" if dark else "#9ca3af"
         lines = []
         for ts, level, msg in self._entries:
-            color = _LEVEL_COLOR.get(level, "#6b7280")
+            color = colors.get(level, colors["info"])
             lines.append(
-                f'<span style="color:#9ca3af;">[{ts}]</span> '
+                f'<span style="color:{timestamp_color};">[{ts}]</span> '
                 f'<span style="color:{color};">[{level.upper()}]</span> '
                 f'<span style="color:{color};">{msg}</span>'
             )
@@ -91,7 +106,6 @@ class LogPage(QWidget):
         if self.auto_scroll_cb.isChecked():
             scrollbar = self.view.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
-
     def _copy(self):
         text = "\n".join(f"[{ts}] [{level.upper()}] {msg}" for ts, level, msg in self._entries)
         from PyQt5.QtWidgets import QApplication
