@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-猜拳小游戏：摄像头识别人类石头/剪刀/布，机械手作为机器玩家随机出拳。
+猜拳小游戏：摄像头识别人类石头/剪刀/布，机械手作为机器玩家策略出拳。
 
 本页只做手势分类和游戏判定，不做人手到 O6 pose 的实时模仿映射。
 """
@@ -22,6 +22,7 @@ from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -57,6 +58,49 @@ RPS_POSES = {
     "剪刀": SCISSORS_POSE,
     "布": PAPER_POSE,
 }
+COUNTER_GESTURE = {"石头": "布", "剪刀": "石头", "布": "剪刀"}
+
+STRATEGY_RANDOM = "random"
+STRATEGY_FREQUENCY = "frequency"
+STRATEGY_MARKOV = "markov"
+STRATEGY_PERSONALIZED = "personalized_adaptive"
+STRATEGY_LABELS = {
+    STRATEGY_RANDOM: "随机模式",
+    STRATEGY_FREQUENCY: "频率统计",
+    STRATEGY_MARKOV: "马尔可夫预测",
+    STRATEGY_PERSONALIZED: "个体化自适应",
+}
+STRATEGY_ORDER = (
+    STRATEGY_RANDOM,
+    STRATEGY_FREQUENCY,
+    STRATEGY_MARKOV,
+    STRATEGY_PERSONALIZED,
+)
+RECENT_WINDOW_SIZE = 10
+MIN_HISTORY_FOR_CONFIDENT_STRATEGY = 3
+LOW_CONFIDENCE_THRESHOLD = 0.45
+EPSILON = 0.15
+WEIGHT_GLOBAL_FREQ = 0.25
+WEIGHT_RECENT = 0.30
+WEIGHT_MARKOV = 0.25
+WEIGHT_RESULT_REACTION = 0.15
+WEIGHT_REPEAT = 0.05
+EXPERT_NAMES = (
+    "streak",
+    "cycle",
+    "alternation",
+    "transition",
+    "result_reaction",
+    "recent_shape",
+    "frequency_bias",
+)
+EXPERT_SCORE_INIT = 1.0
+EXPERT_SCORE_MIN = 0.25
+EXPERT_SCORE_MAX = 3.0
+EXPERT_REWARD = 0.35
+EXPERT_PENALTY = 0.12
+PLAYER_CYCLE_FORWARD = {"石头": "剪刀", "剪刀": "布", "布": "石头"}
+PLAYER_CYCLE_REVERSE = {"石头": "布", "布": "剪刀", "剪刀": "石头"}
 
 STABLE_FRAMES = 6
 HUMAN_LOCK_WINDOW = 2.0
@@ -420,6 +464,16 @@ class GamePage(QFrame):
         self._last_candidate = "未识别"
         self._last_stable_count = 0
         self._gesture_history = deque(maxlen=STABLE_FRAMES)
+        self.player_profile = self._new_player_profile()
+        self.round_history = []
+        self._strategy_mode = STRATEGY_PERSONALIZED
+        self._last_prediction = "--"
+        self._last_prediction_confidence = 0.0
+        self._last_prediction_reason = "history_empty"
+        self._last_machine_decision = "--"
+        self._last_machine_decision_reason = "not_started"
+        self._last_predict_scores = {gesture: 0.0 for gesture in VALID_GESTURES}
+        self._last_strategy_experts = []
 
         self._countdown_timer = QTimer(self)
         self._countdown_timer.timeout.connect(self._on_countdown_tick)
@@ -440,6 +494,7 @@ class GamePage(QFrame):
         self._build_ui()
         self._wire()
         self._set_state(self.STATE_IDLE)
+        self._update_strategy_panel()
 
     @staticmethod
     def _section_card(title_text, subtitle=""):
@@ -457,6 +512,32 @@ class GamePage(QFrame):
             subtitle_lbl.setWordWrap(True)
             layout.addWidget(subtitle_lbl)
         return card, layout
+
+    @staticmethod
+    def _empty_gesture_counts():
+        return {gesture: 0 for gesture in VALID_GESTURES}
+
+    @classmethod
+    def _new_player_profile(cls):
+        return {
+            "valid_rounds": 0,
+            "human_counts": cls._empty_gesture_counts(),
+            "recent_window": [],
+            "transition_counts": {
+                gesture: cls._empty_gesture_counts() for gesture in VALID_GESTURES
+            },
+            "after_win_counts": cls._empty_gesture_counts(),
+            "after_lose_counts": cls._empty_gesture_counts(),
+            "after_draw_counts": cls._empty_gesture_counts(),
+            "last_human": None,
+            "last_result_for_human": None,
+            "machine_wins": 0,
+            "human_wins": 0,
+            "draws": 0,
+            "expert_scores": {name: EXPERT_SCORE_INIT for name in EXPERT_NAMES},
+            "pending_expert_predictions": {},
+            "selected_expert": None,
+        }
 
     def _build_ui(self):
         main = QHBoxLayout(self)
@@ -632,7 +713,82 @@ class GamePage(QFrame):
         status.addWidget(self.d_status)
         right.addWidget(status_card)
 
-        # 3. 动作测试
+        # 3. 个体化策略
+        strategy_card, strategy = self._section_card(
+            "个体化策略",
+            "机器只根据历史对局习惯预测，不读取当前轮最终手势。",
+        )
+        strategy_select_row = QFrame()
+        strategy_select_row.setObjectName("ToggleRow")
+        strategy_select_layout = QHBoxLayout(strategy_select_row)
+        strategy_select_layout.setContentsMargins(10, 8, 10, 8)
+        strategy_label = QLabel("当前策略")
+        strategy_label.setObjectName("ToggleTitle")
+        self.combo_strategy = QComboBox()
+        self.combo_strategy.setObjectName("ParamCellInput")
+        for mode in STRATEGY_ORDER:
+            self.combo_strategy.addItem(STRATEGY_LABELS[mode], mode)
+        self.combo_strategy.setCurrentIndex(self.combo_strategy.findData(STRATEGY_PERSONALIZED))
+        strategy_select_layout.addWidget(strategy_label)
+        strategy_select_layout.addStretch()
+        strategy_select_layout.addWidget(self.combo_strategy)
+        strategy.addWidget(strategy_select_row)
+
+        strategy_grid = QGridLayout()
+        strategy_grid.setSpacing(7)
+        self.d_strategy_rounds = QLabel("0")
+        self.d_strategy_prediction = QLabel("--")
+        self.d_strategy_confidence = QLabel("0%")
+        self.d_strategy_reason = QLabel("history_empty")
+        self.d_strategy_decision = QLabel("--")
+        self.d_strategy_counts = QLabel("石头0 剪刀0 布0")
+        self.d_strategy_recent = QLabel("--")
+        self.d_strategy_transition = QLabel("--")
+        self.d_strategy_reaction = QLabel("--")
+        self.d_strategy_winrate = QLabel("0%")
+        strategy_defs = [
+            ("有效学习局数", self.d_strategy_rounds),
+            ("当前预测", self.d_strategy_prediction),
+            ("预测置信度", self.d_strategy_confidence),
+            ("预测依据", self.d_strategy_reason),
+            ("机器决策", self.d_strategy_decision),
+            ("历史偏好", self.d_strategy_counts),
+            ("最近窗口", self.d_strategy_recent),
+            ("上一手转移", self.d_strategy_transition),
+            ("输赢后习惯", self.d_strategy_reaction),
+            ("机器策略胜率", self.d_strategy_winrate),
+        ]
+        for index, (label, value) in enumerate(strategy_defs):
+            tile = QFrame()
+            tile.setObjectName("GameStatusTile")
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(9, 7, 9, 8)
+            tile_layout.setSpacing(2)
+            caption = QLabel(label)
+            caption.setObjectName("GameStatusLabel")
+            value.setObjectName("GameStatusValue")
+            value.setWordWrap(True)
+            tile_layout.addWidget(caption)
+            tile_layout.addWidget(value)
+            row, column = divmod(index, 2)
+            strategy_grid.addWidget(tile, row, column)
+        strategy_grid.setColumnStretch(0, 1)
+        strategy_grid.setColumnStretch(1, 1)
+        strategy.addLayout(strategy_grid)
+
+        self.d_strategy_fairness = QLabel("公平性: prediction_source=history_only，本轮机器先锁定出拳。")
+        self.d_strategy_fairness.setObjectName("GamePrompt")
+        self.d_strategy_fairness.setWordWrap(True)
+        strategy.addWidget(self.d_strategy_fairness)
+
+        self.btn_reset_strategy = QPushButton("重置当前玩家策略")
+        self.btn_reset_strategy.setProperty("category", "secondary")
+        self.btn_reset_strategy.setCursor(Qt.PointingHandCursor)
+        self.btn_reset_strategy.setMinimumHeight(32)
+        strategy.addWidget(self.btn_reset_strategy)
+        right.addWidget(strategy_card)
+
+        # 4. 动作测试
         action_card, action = self._section_card("动作测试", "单独验证三种出拳姿态，不影响当前比分。")
         action_grid = QGridLayout()
         action_grid.setSpacing(7)
@@ -650,7 +806,7 @@ class GamePage(QFrame):
         action.addLayout(action_grid)
         right.addWidget(action_card)
 
-        # 4. 游戏控制
+        # 5. 游戏控制
         control_card, control = self._section_card("游戏控制", "开始为主操作；停止后保留当前比分。")
         output_row = QFrame()
         output_row.setObjectName("ToggleRow")
@@ -733,8 +889,10 @@ class GamePage(QFrame):
         self.btn_start.clicked.connect(self._start)
         self.btn_stop.clicked.connect(self._stop_page)
         self.btn_reset.clicked.connect(self._reset_score)
+        self.btn_reset_strategy.clicked.connect(self._reset_player_strategy)
         self.btn_home.clicked.connect(self._emit_home)
         self.chk_hw.toggled.connect(self._on_hw_toggled)
+        self.combo_strategy.currentIndexChanged.connect(self._on_strategy_mode_changed)
         self.btn_test_rock.clicked.connect(lambda: self._send_manual_pose("石头"))
         self.btn_test_scissors.clicked.connect(lambda: self._send_manual_pose("剪刀"))
         self.btn_test_paper.clicked.connect(lambda: self._send_manual_pose("布"))
@@ -848,6 +1006,416 @@ class GamePage(QFrame):
         self._update_score()
         self.d_status.setText("提示: 比分已重置")
 
+    def _current_strategy_mode(self):
+        if hasattr(self, "combo_strategy"):
+            mode = self.combo_strategy.currentData()
+            if mode in STRATEGY_LABELS:
+                return mode
+        return self._strategy_mode
+
+    def _on_strategy_mode_changed(self, *_):
+        self._strategy_mode = self._current_strategy_mode()
+        rps_log(f"strategy mode changed: {self._strategy_mode}")
+        self._update_strategy_panel()
+
+    def _add_weighted_counts(self, scores, counts, weight):
+        total = sum(int(counts.get(gesture, 0)) for gesture in VALID_GESTURES)
+        if total <= 0:
+            return False
+        for gesture in VALID_GESTURES:
+            scores[gesture] += float(weight) * (int(counts.get(gesture, 0)) / total)
+        return True
+
+    def _prediction_from_scores(self, scores, reason):
+        total = sum(float(scores.get(gesture, 0.0)) for gesture in VALID_GESTURES)
+        if total <= 1e-9:
+            prediction = random.choice(list(VALID_GESTURES))
+            confidence = 0.0
+            self._last_predict_scores = {gesture: 0.0 for gesture in VALID_GESTURES}
+            return prediction, confidence, "random_fallback"
+
+        normalized = {gesture: float(scores[gesture]) / total for gesture in VALID_GESTURES}
+        prediction = max(VALID_GESTURES, key=lambda gesture: normalized[gesture])
+        history_factor = min(1.0, self.player_profile["valid_rounds"] / max(1, MIN_HISTORY_FOR_CONFIDENT_STRATEGY))
+        confidence = normalized[prediction] * history_factor
+        self._last_predict_scores = normalized
+        return prediction, confidence, reason
+
+    def _predict_by_frequency(self):
+        scores = {gesture: 0.0 for gesture in VALID_GESTURES}
+        if self._add_weighted_counts(scores, self.player_profile["human_counts"], 1.0):
+            return self._prediction_from_scores(scores, "frequency")
+        return self._prediction_from_scores(scores, "frequency_empty")
+
+    def _predict_by_markov(self):
+        scores = {gesture: 0.0 for gesture in VALID_GESTURES}
+        last_human = self.player_profile.get("last_human")
+        if last_human in VALID_GESTURES:
+            row = self.player_profile["transition_counts"].get(last_human, {})
+            if self._add_weighted_counts(scores, row, 1.0):
+                return self._prediction_from_scores(scores, "markov")
+        if self._add_weighted_counts(scores, self.player_profile["human_counts"], 1.0):
+            return self._prediction_from_scores(scores, "markov_frequency_fallback")
+        return self._prediction_from_scores(scores, "markov_empty")
+
+    def _dominant_gesture(self, gestures):
+        counts = self._empty_gesture_counts()
+        for gesture in gestures:
+            if gesture in counts:
+                counts[gesture] += 1
+        total = sum(counts.values())
+        if total <= 0:
+            return None, 0, 0
+        top = max(VALID_GESTURES, key=lambda gesture: counts[gesture])
+        return top, counts[top], total
+
+    def _repeat_len(self, recent):
+        if not recent:
+            return None, 0
+        repeated = recent[-1]
+        length = 0
+        for gesture in reversed(recent):
+            if gesture != repeated:
+                break
+            length += 1
+        return repeated, length
+
+    def _expert_candidate(self, name, prediction, confidence, detail):
+        if prediction not in VALID_GESTURES:
+            return None
+        confidence = max(0.0, min(1.0, float(confidence)))
+        if confidence <= 0.0:
+            return None
+        return {
+            "name": name,
+            "prediction": prediction,
+            "confidence": confidence,
+            "detail": detail,
+        }
+
+    def _build_personalized_experts(self):
+        profile = self.player_profile
+        recent = list(profile["recent_window"])
+        experts = []
+
+        repeated, repeat_len = self._repeat_len(recent)
+        if repeat_len >= 2:
+            confidence = min(0.92, 0.52 + 0.12 * repeat_len)
+            experts.append(self._expert_candidate("streak", repeated, confidence, f"repeat_len={repeat_len}"))
+
+        if len(recent) >= 4:
+            for name, cycle_map in (("cycle_forward", PLAYER_CYCLE_FORWARD), ("cycle_reverse", PLAYER_CYCLE_REVERSE)):
+                pairs = list(zip(recent[-5:-1], recent[-4:]))
+                if not pairs:
+                    continue
+                hits = sum(1 for prev, cur in pairs if cycle_map.get(prev) == cur)
+                ratio = hits / len(pairs)
+                if ratio >= 0.66 and recent[-1] in cycle_map:
+                    experts.append(
+                        self._expert_candidate("cycle", cycle_map[recent[-1]], min(0.90, 0.45 + 0.45 * ratio), name)
+                    )
+
+        if len(recent) >= 4:
+            suffix = recent[-4:]
+            if suffix[0] == suffix[2] and suffix[1] == suffix[3] and suffix[0] != suffix[1]:
+                experts.append(self._expert_candidate("alternation", suffix[0], 0.82, "ABAB"))
+
+        last_human = profile.get("last_human")
+        if last_human in VALID_GESTURES:
+            row = profile["transition_counts"].get(last_human, {})
+            top, top_count, total = self._dominant_gesture(
+                [gesture for gesture, count in row.items() for _ in range(int(count))]
+            )
+            if top and total:
+                confidence = min(0.88, 0.35 + 0.50 * (top_count / total) + 0.05 * min(total, 3))
+                experts.append(
+                    self._expert_candidate("transition", top, confidence, f"after_{last_human}:{top_count}/{total}")
+                )
+
+        reaction_map = {
+            "win": ("after_win_counts", "after_win"),
+            "lose": ("after_lose_counts", "after_lose"),
+            "draw": ("after_draw_counts", "after_draw"),
+        }
+        result_key = profile.get("last_result_for_human")
+        if result_key in reaction_map:
+            count_key, detail_key = reaction_map[result_key]
+            counts = profile[count_key]
+            top, top_count, total = self._dominant_gesture(
+                [gesture for gesture, count in counts.items() for _ in range(int(count))]
+            )
+            if top and total:
+                confidence = min(0.84, 0.34 + 0.48 * (top_count / total) + 0.04 * min(total, 3))
+                experts.append(
+                    self._expert_candidate("result_reaction", top, confidence, f"{detail_key}:{top_count}/{total}")
+                )
+
+        if len(recent) >= 3:
+            window = recent[-min(5, len(recent)):]
+            top, top_count, total = self._dominant_gesture(window)
+            if top and top_count >= 2:
+                confidence = min(0.78, 0.30 + 0.45 * (top_count / total))
+                experts.append(self._expert_candidate("recent_shape", top, confidence, f"last{total}:{top_count}"))
+
+        top, top_count, total = self._dominant_gesture(
+            [gesture for gesture, count in profile["human_counts"].items() for _ in range(int(count))]
+        )
+        if top and total:
+            confidence = min(0.70, 0.25 + 0.40 * (top_count / total) + 0.03 * min(total, 5))
+            experts.append(self._expert_candidate("frequency_bias", top, confidence, f"global:{top_count}/{total}"))
+
+        return [expert for expert in experts if expert is not None]
+
+    def _select_personalized_expert(self, experts):
+        if not experts:
+            return None, None, 0.0, "expert_cold_start"
+
+        profile = self.player_profile
+        ranked = []
+        for expert in experts:
+            name = expert["name"]
+            learned_score = float(profile["expert_scores"].get(name, EXPERT_SCORE_INIT))
+            learned_factor = 0.72 + min(EXPERT_SCORE_MAX, learned_score) / EXPERT_SCORE_MAX * 0.55
+            history_factor = min(1.0, max(0.35, profile["valid_rounds"] / max(1, MIN_HISTORY_FOR_CONFIDENT_STRATEGY)))
+            final_score = expert["confidence"] * learned_factor * history_factor
+            ranked.append((final_score, learned_score, expert))
+
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        final_score, learned_score, selected = ranked[0]
+        confidence = max(0.0, min(0.98, final_score))
+        reason = f"expert:{selected['name']}:{selected['detail']}:learned={learned_score:.2f}"
+        return selected["prediction"], selected["name"], confidence, reason
+
+    def predict_human_next_gesture(self):
+        mode = self._current_strategy_mode()
+        scores = {gesture: 0.0 for gesture in VALID_GESTURES}
+        self._last_strategy_experts = []
+        self.player_profile["pending_expert_predictions"] = {}
+
+        if mode == STRATEGY_RANDOM:
+            prediction = random.choice(list(VALID_GESTURES))
+            confidence = 0.0
+            reason = "random"
+            self._last_predict_scores = {gesture: 1.0 / len(VALID_GESTURES) for gesture in VALID_GESTURES}
+        elif mode == STRATEGY_FREQUENCY:
+            prediction, confidence, reason = self._predict_by_frequency()
+        elif mode == STRATEGY_MARKOV:
+            prediction, confidence, reason = self._predict_by_markov()
+        else:
+            experts = self._build_personalized_experts()
+            self._last_strategy_experts = experts
+            pending = {
+                expert["name"]: expert["prediction"]
+                for expert in experts
+                if expert["name"] in EXPERT_NAMES
+            }
+            self.player_profile["pending_expert_predictions"] = pending
+            prediction, selected_expert, confidence, reason = self._select_personalized_expert(experts)
+            self.player_profile["selected_expert"] = selected_expert
+            if prediction is None:
+                prediction = random.choice(list(VALID_GESTURES))
+                confidence = 0.0
+                reason = "expert_cold_start"
+            self._last_predict_scores = {gesture: 0.0 for gesture in VALID_GESTURES}
+            self._last_predict_scores[prediction] = confidence
+
+        if mode == STRATEGY_PERSONALIZED:
+            if self._last_strategy_experts:
+                rps_log(
+                    "personalized expert candidates: "
+                    + " | ".join(
+                        "{}->{} base={:.2f} detail={}".format(
+                            expert["name"],
+                            expert["prediction"],
+                            expert["confidence"],
+                            expert["detail"],
+                        )
+                        for expert in self._last_strategy_experts
+                    )
+                )
+            else:
+                rps_log("personalized expert candidates: none")
+        else:
+            rps_log(
+                "personalized predict scores: "
+                + " ".join(f"{gesture}={self._last_predict_scores.get(gesture, 0.0):.3f}" for gesture in VALID_GESTURES)
+            )
+        rps_log(
+            f"personalized predict: human={prediction} confidence={confidence:.2f} "
+            f"reason={reason} prediction_source=history_only"
+        )
+        return prediction, confidence, reason
+
+    def choose_machine_gesture_by_personalized_strategy(self):
+        mode = self._current_strategy_mode()
+        prediction, confidence, reason = self.predict_human_next_gesture()
+
+        if mode == STRATEGY_RANDOM:
+            machine_gesture = random.choice(list(VALID_GESTURES))
+            decision_reason = "random_mode"
+        elif confidence < LOW_CONFIDENCE_THRESHOLD:
+            machine_gesture = random.choice(list(VALID_GESTURES))
+            decision_reason = f"low_confidence:{reason}"
+            rps_log(f"personalized low confidence random: machine={machine_gesture}")
+        elif mode == STRATEGY_PERSONALIZED and random.random() < EPSILON:
+            machine_gesture = random.choice(list(VALID_GESTURES))
+            decision_reason = f"epsilon_random:{reason}"
+            rps_log(f"personalized epsilon random: machine={machine_gesture}")
+        else:
+            machine_gesture = COUNTER_GESTURE[prediction]
+            decision_reason = f"counter:{reason}"
+
+        self._last_prediction = prediction
+        self._last_prediction_confidence = confidence
+        self._last_prediction_reason = reason
+        self._last_machine_decision = machine_gesture
+        self._last_machine_decision_reason = decision_reason
+        rps_log(
+            f"personalized choose: machine={machine_gesture} prediction={prediction} "
+            f"confidence={confidence:.2f} reason={decision_reason} prediction_source=history_only"
+        )
+        return machine_gesture, prediction, confidence, reason
+
+    def _result_for_human(self, result):
+        if result == "human":
+            return "win"
+        if result == "machine":
+            return "lose"
+        if result == "draw":
+            return "draw"
+        return None
+
+    def _update_player_profile(self, human, machine, result):
+        if human not in VALID_GESTURES:
+            return
+
+        profile = self.player_profile
+        previous_human = profile.get("last_human")
+        previous_result = profile.get("last_result_for_human")
+        profile["valid_rounds"] += 1
+        profile["human_counts"][human] += 1
+
+        profile["recent_window"].append(human)
+        if len(profile["recent_window"]) > RECENT_WINDOW_SIZE:
+            profile["recent_window"] = profile["recent_window"][-RECENT_WINDOW_SIZE:]
+
+        if previous_human in VALID_GESTURES:
+            profile["transition_counts"][previous_human][human] += 1
+            rps_log(f"profile transition update: {previous_human} -> {human}")
+
+        reaction_keys = {
+            "win": "after_win_counts",
+            "lose": "after_lose_counts",
+            "draw": "after_draw_counts",
+        }
+        if previous_result in reaction_keys:
+            profile[reaction_keys[previous_result]][human] += 1
+            rps_log(f"profile after {previous_result} update: {human} += 1")
+
+        pending = profile.get("pending_expert_predictions", {})
+        if pending:
+            for expert_name, predicted in pending.items():
+                if expert_name not in EXPERT_NAMES or predicted not in VALID_GESTURES:
+                    continue
+                current = float(profile["expert_scores"].get(expert_name, EXPERT_SCORE_INIT))
+                if predicted == human:
+                    updated = min(EXPERT_SCORE_MAX, current + EXPERT_REWARD)
+                else:
+                    updated = max(EXPERT_SCORE_MIN, current - EXPERT_PENALTY)
+                profile["expert_scores"][expert_name] = updated
+            profile["pending_expert_predictions"] = {}
+            rps_log(
+                "profile expert scores: "
+                + " ".join(f"{name}={profile['expert_scores'].get(name, EXPERT_SCORE_INIT):.2f}" for name in EXPERT_NAMES)
+            )
+
+        if result == "machine":
+            profile["machine_wins"] += 1
+        elif result == "human":
+            profile["human_wins"] += 1
+        elif result == "draw":
+            profile["draws"] += 1
+
+        profile["last_human"] = human
+        profile["last_result_for_human"] = self._result_for_human(result)
+        self.round_history.append({
+            "round": self._round_num,
+            "human": human,
+            "machine": machine,
+            "result": result,
+            "prediction": self._last_prediction,
+            "confidence": round(float(self._last_prediction_confidence), 3),
+            "reason": self._last_prediction_reason,
+        })
+
+        rps_log(f"profile update: human={human} machine={machine} result={result}")
+        rps_log(
+            "profile counts: "
+            + " ".join(f"{gesture}={profile['human_counts'][gesture]}" for gesture in VALID_GESTURES)
+        )
+        self._update_strategy_panel()
+
+    def _reset_player_strategy(self):
+        self.player_profile = self._new_player_profile()
+        self.round_history = []
+        self._last_prediction = "--"
+        self._last_prediction_confidence = 0.0
+        self._last_prediction_reason = "history_empty"
+        self._last_machine_decision = "--"
+        self._last_machine_decision_reason = "reset"
+        self._last_predict_scores = {gesture: 0.0 for gesture in VALID_GESTURES}
+        self._last_strategy_experts = []
+        self._update_strategy_panel()
+        self.d_status.setText("提示: 已重置当前玩家策略")
+        rps_log("player profile reset")
+
+    def _top_count_label(self, counts):
+        total = sum(int(counts.get(gesture, 0)) for gesture in VALID_GESTURES)
+        if total <= 0:
+            return "--"
+        top = max(VALID_GESTURES, key=lambda gesture: int(counts.get(gesture, 0)))
+        return f"{top}({int(counts.get(top, 0))})"
+
+    def _format_recent_window(self):
+        recent = self.player_profile["recent_window"]
+        return "-".join(recent[-RECENT_WINDOW_SIZE:]) if recent else "--"
+
+    def _format_transition_hint(self):
+        last_human = self.player_profile.get("last_human")
+        if last_human not in VALID_GESTURES:
+            return "--"
+        top = self._top_count_label(self.player_profile["transition_counts"].get(last_human, {}))
+        return f"{last_human} 后常转 {top}"
+
+    def _format_reaction_hint(self):
+        return "输:{} 赢:{} 平:{}".format(
+            self._top_count_label(self.player_profile["after_lose_counts"]),
+            self._top_count_label(self.player_profile["after_win_counts"]),
+            self._top_count_label(self.player_profile["after_draw_counts"]),
+        )
+
+    def _update_strategy_panel(self):
+        if not hasattr(self, "d_strategy_rounds"):
+            return
+        profile = self.player_profile
+        valid_rounds = int(profile.get("valid_rounds", 0))
+        total_decided = profile["machine_wins"] + profile["human_wins"] + profile["draws"]
+        win_rate = (profile["machine_wins"] / total_decided * 100.0) if total_decided else 0.0
+        self.d_strategy_rounds.setText(str(valid_rounds))
+        self.d_strategy_prediction.setText(f"人类可能出 {self._last_prediction}")
+        self.d_strategy_confidence.setText(f"{self._last_prediction_confidence * 100:.0f}%")
+        self.d_strategy_reason.setText(self._last_prediction_reason)
+        self.d_strategy_decision.setText(
+            f"机械手出 {self._last_machine_decision} ({self._last_machine_decision_reason})"
+        )
+        self.d_strategy_counts.setText(
+            " ".join(f"{gesture}{profile['human_counts'][gesture]}" for gesture in VALID_GESTURES)
+        )
+        self.d_strategy_recent.setText(self._format_recent_window())
+        self.d_strategy_transition.setText(self._format_transition_hint())
+        self.d_strategy_reaction.setText(self._format_reaction_hint())
+        self.d_strategy_winrate.setText(f"{win_rate:.0f}%")
+
     def _start_next_round(self):
         if not self._running_game:
             return
@@ -888,18 +1456,24 @@ class GamePage(QFrame):
         QTimer.singleShot(500, self.cam_overlay.hide)
 
     def _shoot_machine_once(self):
-        self._machine_gesture = random.choice(["石头", "剪刀", "布"])
-        rps_log(f"round {self._round_num} machine random: {self._machine_gesture}")
+        self._machine_gesture, prediction, confidence, reason = self.choose_machine_gesture_by_personalized_strategy()
+        strategy_label = STRATEGY_LABELS.get(self._current_strategy_mode(), self._current_strategy_mode())
+        rps_log(
+            f"round {self._round_num} machine strategy={self._current_strategy_mode()} "
+            f"prediction={prediction} confidence={confidence:.2f} reason={reason} "
+            f"locked_before_human=True"
+        )
         self.d_machine.setText(f"机械手出: {self._machine_gesture}")
+        self._update_strategy_panel()
 
         pose = RPS_POSES[self._machine_gesture]
         if self._hw_enabled:
             self._emit_pose_once(pose, "machine")
-            self.d_status.setText(f"提示: 机械手随机出 {self._machine_gesture}，正在识别人类手势")
+            self.d_status.setText(f"提示: {strategy_label}出 {self._machine_gesture}，正在识别人类手势")
         else:
             rps_log("hardware disabled, pose not sent")
             command_trace(f"GamePage skipped because hardware switch disabled tag=machine pose={pose}")
-            self.d_status.setText(f"提示: 机器随机出 {self._machine_gesture}，机械手未启用")
+            self.d_status.setText(f"提示: {strategy_label}出 {self._machine_gesture}，机械手未启用")
 
         self._gesture_history.clear()
         self._locked_human = None
@@ -961,6 +1535,7 @@ class GamePage(QFrame):
 
         machine = self._machine_gesture or "--"
         rps_log(f"judge result: {result}")
+        self._update_player_profile(human_gesture, machine, result)
 
         result_cfg = {
             "human": {
