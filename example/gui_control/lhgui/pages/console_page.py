@@ -129,9 +129,20 @@ class ConsolePage(QWidget):
         # 中：手部姿态（直接作为视觉核心，不加多余顶栏）
         self.pose_card = HandPoseCard(self.hand_joint)
 
-        # 右：预设动作库
+        # 右：右侧组合容器，包含预设动作库与自适应抓取
+        self.right_widget = QWidget(self)
+        self.right_widget.setStyleSheet("background:transparent;")
+        self.right_layout = QVBoxLayout(self.right_widget)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_layout.setSpacing(14)
+
         self.preset_group = PresetGroup(self.hand_joint)
         self.preset_group.triggered.connect(signal_bus.preset_triggered.emit)
+        self.right_layout.addWidget(self.preset_group, stretch=1)
+
+        from lhgui.widgets.adaptive_grasp_card import AdaptiveGraspCard
+        self.adaptive_grasp_card = AdaptiveGraspCard(self.hand_joint, self)
+        self.right_layout.addWidget(self.adaptive_grasp_card, stretch=0)
 
         # 底部：控制条
         self.bottom_bar = BottomBar(self.hand_joint)
@@ -179,17 +190,16 @@ class ConsolePage(QWidget):
         if self._current_mode == mode:
             return
         
-        # 1. 首先把这三个主控件从它们当前的布局中 remove 出来
-        # 警告：这里绝对不要调用 setParent(None)！只用 removeWidget。
-        # 这样控件在转移过程中 parent 依旧是 ConsolePage，绝对不会作为顶层独立窗口弹出来！
+        # 1. 首先把控件从它们当前的布局中 remove 出来
         if self._current_mode == "narrow":
             self.scroll_layout.removeWidget(self.left_widget)
             self.scroll_layout.removeWidget(self.pose_card)
             self.scroll_layout.removeWidget(self.preset_group)
+            self.scroll_layout.removeWidget(self.adaptive_grasp_card)
         else:
             self.wide_layout.removeWidget(self.left_widget)
             self.wide_layout.removeWidget(self.pose_card)
-            self.wide_layout.removeWidget(self.preset_group)
+            self.wide_layout.removeWidget(self.right_widget)
             
         # 2. 根据新模式，重新分配到对应的布局中
         if mode == "narrow":
@@ -212,9 +222,14 @@ class ConsolePage(QWidget):
             
             self.scroll_layout.addLayout(row)
             self.scroll_layout.addWidget(self.preset_group)
+            self.scroll_layout.addWidget(self.adaptive_grasp_card)
         else:
             self.scroll_area.hide()
             self.wide_widget.show()
+            
+            # 宽屏模式下，重新将两小卡片纳回右侧组合容器
+            self.right_layout.addWidget(self.preset_group, stretch=1)
+            self.right_layout.addWidget(self.adaptive_grasp_card, stretch=0)
             
             spacing = 14 if mode == "wide" else 8
             self.wide_layout.setContentsMargins(0, 0, 0, 0)
@@ -223,7 +238,7 @@ class ConsolePage(QWidget):
             # 宽屏/紧凑屏并排填入三栏布局中
             self.wide_layout.addWidget(self.left_widget, stretch=28)
             self.wide_layout.addWidget(self.pose_card, stretch=36)
-            self.wide_layout.addWidget(self.preset_group, stretch=36)
+            self.wide_layout.addWidget(self.right_widget, stretch=36)
             
         self._current_mode = mode
 

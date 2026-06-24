@@ -43,6 +43,7 @@ class ApiManager(QObject):
         self.api: Optional[LinkerHandApi] = None
         self._lock = threading.Lock()
         self._connected = False
+        self.saved_torque: Optional[List[int]] = None
         self._offline_mode = False
         self._consecutive_failures = 0
 
@@ -263,6 +264,8 @@ class ApiManager(QObject):
             signal_bus.connection_message.emit("error", f"设置速度失败：{e}")
 
     def set_torque(self, torque: List[int]):
+        self.saved_torque = list(torque)
+        
         if self._connected and self.api is None:
             return
         if not self._ensure_api():
@@ -271,6 +274,31 @@ class ApiManager(QObject):
             self.api.set_torque(torque)
         except Exception as e:
             signal_bus.connection_message.emit("error", f"设置扭矩失败：{e}")
+
+    def set_temporary_torque(self, torque: List[int]):
+        """在自适应抓握开始时临时限矩，不污染用户备份设定的全局扭矩。"""
+        if self.saved_torque is None:
+            self.saved_torque = [255] * len(torque)
+        
+        if self._connected and self.api is None:
+            return
+        if not self._ensure_api(silent=True):
+            return
+        try:
+            self.api.set_torque(torque)
+        except Exception:
+            pass
+
+    def restore_saved_torque(self):
+        """退出自适应控制时，恢复先前设定的主界面全局扭矩。"""
+        if self.saved_torque is None or (self._connected and self.api is None):
+            return
+        if not self._ensure_api(silent=True):
+            return
+        try:
+            self.api.set_torque(self.saved_torque)
+        except Exception:
+            pass
 
     def _ensure_api(self, silent: bool = False) -> bool:
         if self.api is None or not self._connected:

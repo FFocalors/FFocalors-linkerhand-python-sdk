@@ -24,7 +24,7 @@ QDialog {
 
 /* ----- 一级卡片容器 ----- */
 #JointControlCard, #HandPoseCard, #WaveformPanel, #PresetGroup, #BottomBar,
-#PresetEditorDialog {
+#PresetEditorDialog, #AdaptiveGraspCard {
     background-color: #FFFFFF;
     border: 1px solid #DCE3EC;
     border-radius: 12px;
@@ -1268,4 +1268,27 @@ QTextEdit#VisionLogView {
 #ControlPanelScroll QScrollBar::add-page:vertical,
 #ControlPanelScroll QScrollBar::sub-page:vertical {
     background: transparent;
+}
+
+/* ----- 自适应抓取卡片定制样式 ----- */
+#AdaptiveGraspCard {
+    padding: 2px;
+}
+#GraspProfileCombo {
+    background-color: #F8FAFC;
+    border: 1px solid #DCE3EC;
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: #1E293B;
+}
+#GraspProfileCombo:hover {
+    background-color: #F1F5F9;
+    border-color: #4F7FF7;
+}
+#GraspListContainer {
+    background-color: #F8FAFC;
+    border: 1px solid #E8EDF3;
+    border-radius: 8px;
+    padding: 8px;
 }

@@ -3,10 +3,13 @@ chcp 65001 >nul
 setlocal
 set "PROJECT_ROOT=%~dp0"
 set "PYTHONPATH=%PROJECT_ROOT%"
-set "PYTHON_EXE=D:\develop_tools\mini\envs\linkerhand_py39\python.exe"
+set "PYTHON_EXE="
+for /f "delims=" %%P in ('where python 2^>nul') do (
+    if not defined PYTHON_EXE set "PYTHON_EXE=%%P"
+)
 
-if not exist "%PYTHON_EXE%" (
-    echo [ERROR] Required Python not found: "%PYTHON_EXE%"
+if not defined PYTHON_EXE (
+    echo [ERROR] Python not found. Please install Python 3.9+ and add it to PATH.
     pause
     exit /b 1
 )
