@@ -12,6 +12,7 @@ _STATUS_TEXT = {
     "connected": "已连接",
     "disconnected": "未连接",
     "connecting": "连接中",
+    "offline": "离线调试",
     "error": "连接错误",
 }
 

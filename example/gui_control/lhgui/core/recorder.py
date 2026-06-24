@@ -15,7 +15,7 @@ from typing import List, Dict, Optional
 
 from PyQt5.QtCore import QObject, QTimer
 
-from lhgui.utils.signal_bus import signal_bus
+from lhgui.utils.signal_bus import emit_finger_move_requested, signal_bus
 
 
 RECORDINGS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "recordings")
@@ -113,7 +113,7 @@ class Recorder(QObject):
             self.stop_playback()
             return
         frame = self._play_frames[self._play_index]
-        signal_bus.finger_move_requested.emit([int(v) for v in frame["pose"]])
+        emit_finger_move_requested(frame["pose"], source="Recorder:playback")
         signal_bus.playback_progress.emit(self._play_index + 1, len(self._play_frames))
         self._play_index += 1
         if self._play_index < len(self._play_frames):

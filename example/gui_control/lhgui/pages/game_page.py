@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
 )
 
 from lhgui.config.constants import HAND_CONFIGS
-from lhgui.utils.signal_bus import signal_bus
+from lhgui.utils.signal_bus import emit_finger_move_requested, signal_bus
 
 _O6 = HAND_CONFIGS["O6"]
 ROCK_POSE = list(_O6.preset_actions["握拳"])
@@ -1039,7 +1039,7 @@ class GamePage(QFrame):
                 rps_log(f"sending machine pose once: {safe_pose}")
             else:
                 rps_log(f"sending {tag} pose once: {safe_pose}")
-            signal_bus.finger_move_requested.emit(safe_pose)
+            emit_finger_move_requested(safe_pose, source=f"GamePage:{tag}")
             if tag == "machine":
                 rps_log("emit machine pose ok")
             else:

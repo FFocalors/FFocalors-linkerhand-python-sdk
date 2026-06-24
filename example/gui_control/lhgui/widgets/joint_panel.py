@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from lhgui.config.constants import HAND_CONFIGS
-from lhgui.utils.signal_bus import signal_bus
+from lhgui.utils.signal_bus import emit_finger_move_requested, signal_bus
 from lhgui.utils.ui_state import ui_state, ConnectionState, ActionState, PlaybackState
 from lhgui.widgets.joint_row import JointRow
 
@@ -76,7 +76,7 @@ class JointPanel(QWidget):
     def _on_row_changed(self, _):
         values = self.get_values()
         self.values_changed.emit(values)
-        signal_bus.finger_move_requested.emit(values)
+        emit_finger_move_requested(values, source="JointPanel:slider")
 
     def _on_feedback(self, state: list):
         if not state:
@@ -99,4 +99,4 @@ class JointPanel(QWidget):
             if i < len(self.rows):
                 self.rows[i].set_value(int(v), emit=False)
         if emit:
-            signal_bus.finger_move_requested.emit(self.get_values())
+            emit_finger_move_requested(self.get_values(), source="JointPanel:set_values")

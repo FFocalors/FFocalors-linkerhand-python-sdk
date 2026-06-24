@@ -8,7 +8,7 @@
 """
 from PyQt5.QtCore import QObject, QTimer
 
-from lhgui.utils.signal_bus import signal_bus
+from lhgui.utils.signal_bus import command_trace, emit_finger_move_requested, signal_bus
 from lhgui.utils.ui_state import ui_state, ConnectionState, ActionState
 
 
@@ -27,6 +27,7 @@ class ActionExecutor(QObject):
 
     def execute(self, name: str, positions: list):
         if ui_state.snapshot.connection != ConnectionState.CONNECTED:
+            command_trace(f"skipped because api not connected action={name} pose={positions!r}")
             signal_bus.connection_message.emit("warning", "设备未连接，动作未执行")
             return
         if ui_state.snapshot.action not in (ActionState.IDLE, ActionState.CYCLE_RUNNING):
@@ -75,7 +76,7 @@ class ActionExecutor(QObject):
         self._current_name = name
         ui_state.set_action_state(ActionState.ACTION_RUNNING)
         signal_bus.action_started.emit(name)
-        signal_bus.finger_move_requested.emit([int(v) for v in final_positions])
+        emit_finger_move_requested(final_positions, source=f"ActionExecutor:{name}")
         self._timer.start(self.ACTION_TIMEOUT_MS)
 
     def home(self, name: str, positions: list):

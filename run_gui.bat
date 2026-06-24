@@ -3,15 +3,16 @@ chcp 65001 >nul
 setlocal
 set "PROJECT_ROOT=%~dp0"
 set "PYTHONPATH=%PROJECT_ROOT%"
+set "PYTHON_EXE=D:\develop_tools\mini\envs\linkerhand_py39\python.exe"
 
-if not exist "%PROJECT_ROOT%.venv\Scripts\python.exe" (
-    echo [ERROR] Workspace Python not found: "%PROJECT_ROOT%.venv\Scripts\python.exe"
+if not exist "%PYTHON_EXE%" (
+    echo [ERROR] Required Python not found: "%PYTHON_EXE%"
     pause
     exit /b 1
 )
 
 pushd "%PROJECT_ROOT%example\gui_control"
-"%PROJECT_ROOT%.venv\Scripts\python.exe" "%PROJECT_ROOT%example\gui_control\main.py"
+"%PYTHON_EXE%" "%PROJECT_ROOT%example\gui_control\main.py"
 set "EXIT_CODE=%ERRORLEVEL%"
 popd
 

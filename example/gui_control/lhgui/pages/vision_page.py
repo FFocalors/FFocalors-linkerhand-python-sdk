@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
-from lhgui.utils.signal_bus import signal_bus
+from lhgui.utils.signal_bus import emit_finger_move_requested, signal_bus
 from lhgui.config.constants import HAND_CONFIGS
 
 # ── O6 端点（只读复用 constants.py） ──────────────────────────
@@ -1101,7 +1101,7 @@ class VisionPage(QFrame):
             _jlog(f"hardware disabled, pose not sent tag={tag or 'live'} pose={pose}")
             return False
         try:
-            signal_bus.finger_move_requested.emit(pose)
+            emit_finger_move_requested(pose, source=f"VisionPage:{tag or 'live'}")
             _vlog(f"emit finger_move_requested ok tag={tag or 'live'} pose={pose}")
             _jlog(f"emit ok tag={tag or 'live'} pose={pose}")
             self.d_pose_sent.setText(f"sent: {pose} ({tag})")
@@ -1801,7 +1801,7 @@ class VisionPage(QFrame):
             return
         _glog(f"playback send idx={idx} t={float(frame_t):.3f} pose={safe}")
         try:
-            signal_bus.finger_move_requested.emit(safe)
+            emit_finger_move_requested(safe, source=f"VisionPage:playback:{idx}")
             self._playback_last_sent=list(safe)
             self._last_playback_pose=list(safe)
             self._last_sent=list(safe)

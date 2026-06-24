@@ -14,11 +14,12 @@
 - 不录制回放（交给 core/recorder.py）。
 """
 import threading
+import traceback
 from typing import Optional, List
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from lhgui.utils.signal_bus import signal_bus
+from lhgui.utils.signal_bus import command_trace, sanitize_finger_pose, signal_bus
 from lhgui.config.constants import HAND_CONFIGS
 from LinkerHand.linker_hand_api import LinkerHandApi
 from LinkerHand.utils.load_write_yaml import LoadWriteYaml
@@ -42,6 +43,7 @@ class ApiManager(QObject):
         self.api: Optional[LinkerHandApi] = None
         self._lock = threading.Lock()
         self._connected = False
+        self._offline_mode = False
         self._consecutive_failures = 0
 
         self._read_config()
@@ -75,6 +77,10 @@ class ApiManager(QObject):
             f"当前配置：Linker Hand {self.hand_type} {self.hand_joint} "
             f"压感:{self.is_touch} modbus:{self.modbus} CAN:{self.can}",
         )
+        command_trace(
+            f"config hand_type={self.hand_type} hand_joint={self.hand_joint} "
+            f"touch={self.is_touch} modbus={self.modbus} CAN={self.can}"
+        )
 
     def _wire_signals(self):
         signal_bus.request_reconnect.connect(self.reconnect)
@@ -99,8 +105,14 @@ class ApiManager(QObject):
 
     def _do_connect(self):
         signal_bus.connection_changed.emit("connecting")
+        command_trace(
+            f"connect start hand_type={self.hand_type} hand_joint={self.hand_joint} "
+            f"modbus={self.modbus} CAN={self.can}"
+        )
         with self._lock:
             api_instance = None
+            version = None
+            serial = None
             try:
                 api_instance = LinkerHandApi(
                     hand_joint=self.hand_joint,
@@ -118,8 +130,6 @@ class ApiManager(QObject):
                     print(f"Failed to set initial speed/torque: {ex}")
                     
                 # 校验物理硬件的真实在线可达性，读取版本与序列号，防范假在线
-                version = None
-                serial = None
                 try:
                     version = api_instance.get_embedded_version()
                     serial = api_instance.get_serial_number()
@@ -131,17 +141,21 @@ class ApiManager(QObject):
                 
                 self.api = api_instance
                 self._connected = True
+                self._offline_mode = False
                 
                 signal_bus.connection_changed.emit("connected")
                 signal_bus.connection_message.emit("success", "已连接设备")
+                command_trace(f"connect success version={version!r} serial={serial!r}")
             except Exception as e:
+                command_trace(f"connect failed: {traceback.format_exc().strip()}")
                 # 物理连接失败，若有 api_instance 必须彻底清理以释放 CAN 端口和线程！
                 if api_instance is not None:
                     self.api = api_instance
                     self._dispose_api()
                 
                 self.api = None
-                self._connected = True
+                self._connected = False
+                self._offline_mode = True
                 
                 config = HAND_CONFIGS.get(self.hand_joint)
                 self._virtual_pose = list(config.init_pos) if config else [250] * 6
@@ -152,6 +166,7 @@ class ApiManager(QObject):
                 )
                 version = "Virtual"
                 serial = "Virtual-Mode"
+                command_trace("offline mode active; hardware commands will be skipped")
 
         signal_bus.hand_info_ready.emit({
             "hand_type": self.hand_type,
@@ -161,13 +176,14 @@ class ApiManager(QObject):
             "serial": serial,
             "joint_count": len(HAND_CONFIGS[self.hand_joint].joint_names),
         })
-        self.api_ready.emit(True)
+        self.api_ready.emit(bool(self._connected and self.api is not None))
 
     def _dispose_api(self):
         """回收旧实例：停接收线程、关 bus。Windows 下 close_can 为空操作，需手动处理。"""
         api = self.api
         self.api = None
         self._connected = False
+        self._offline_mode = False
         self.api_ready.emit(False)
         if api is None:
             return
@@ -203,19 +219,37 @@ class ApiManager(QObject):
     def connected(self) -> bool:
         return self._connected
 
+    @property
+    def offline_mode(self) -> bool:
+        return self._offline_mode
+
     def finger_move(self, pose: List[int]):
+        expected_len = len(HAND_CONFIGS[self.hand_joint].init_pos) if self.hand_joint in HAND_CONFIGS else None
+        command_trace(f"ApiManager received finger_move pose={pose!r}")
+        safe_pose, changed, reason = sanitize_finger_pose(pose, expected_len=expected_len)
+        if safe_pose is None:
+            command_trace(f"invalid pose: {reason}; raw={pose!r}")
+            signal_bus.connection_message.emit("error", f"非法关节位置，已忽略：{reason}")
+            return
+        if changed:
+            command_trace(f"pose sanitized in ApiManager: raw={pose!r} safe={safe_pose}")
         # 虚拟/离线模式：直接向界面广播反馈，模拟手指运动
-        if self._connected and self.api is None:
-            self._virtual_pose = list(pose)
-            signal_bus.joint_state_updated.emit(pose)
+        if self._offline_mode and self.api is None:
+            command_trace(f"skipped because demo/offline mode pose={safe_pose}")
+            self._virtual_pose = list(safe_pose)
+            signal_bus.joint_state_updated.emit(safe_pose)
+            signal_bus.connection_message.emit("warning", "当前为离线调试模式，指令未下发到真实机械手")
             return
             
         if not self._ensure_api():
             return
         try:
-            self.api.finger_move(pose)
-            signal_bus.connection_message.emit("info", f"已发送关节位置: {pose}")
+            command_trace(f"calling api.finger_move pose={safe_pose}")
+            result = self.api.finger_move(safe_pose)
+            command_trace(f"api.finger_move returned: {result!r}")
+            signal_bus.connection_message.emit("info", f"已发送关节位置: {safe_pose}")
         except Exception as e:
+            command_trace(f"api.finger_move failed: {traceback.format_exc().strip()}")
             signal_bus.connection_message.emit("error", f"发送关节位置失败：{e}")
 
     def set_speed(self, speed: List[int]):
@@ -242,6 +276,10 @@ class ApiManager(QObject):
         if self.api is None or not self._connected:
             if not silent:
                 signal_bus.connection_message.emit("warning", "设备未连接，操作被忽略")
+            if self._offline_mode:
+                command_trace("skipped because demo/offline mode")
+            else:
+                command_trace("skipped because api not connected")
             return False
         return True
 
