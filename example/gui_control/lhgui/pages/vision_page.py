@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 
-from lhgui.utils.signal_bus import emit_finger_move_requested, signal_bus
+from lhgui.utils.signal_bus import command_trace, emit_finger_move_requested, signal_bus
 from lhgui.config.constants import HAND_CONFIGS
 
 # ── O6 端点（只读复用 constants.py） ──────────────────────────
@@ -1037,6 +1037,7 @@ class VisionPage(QFrame):
         self.btn_start.clicked.connect(self._start)
         self.btn_stop.clicked.connect(self._stop_page)
         self.btn_home.clicked.connect(self._go_home)
+        self.chk_hw.toggled.connect(self._on_hw_toggled)
         # Calibration buttons
         self.btn_cal_open.clicked.connect(self._calibrate_open)
         self.btn_cal_close.clicked.connect(self._calibrate_close)
@@ -1074,20 +1075,24 @@ class VisionPage(QFrame):
         _jlog(self._tuning_text())
 
     def _on_hw_toggled(self,checked):
+        command_trace(f"VisionPage hardware toggle requested checked={bool(checked)}")
         if checked:
             reply=QMessageBox.question(self,"确认启用实时同步",
                 "请确认：\n1. 机械手已上电\n2. CAN 已连接\n3. 右上角状态为「已连接」\n\n是否启用实时同步？",
                 QMessageBox.Yes|QMessageBox.No,QMessageBox.No)
             if reply!=QMessageBox.Yes:
                 self.chk_hw.blockSignals(True); self.chk_hw.setChecked(False); self.chk_hw.blockSignals(False)
+                command_trace("VisionPage hardware toggle cancelled by user")
                 return
         self._hw_enabled=checked
         if checked:
             self.d_hw.setText("下发: 已启用 (~8Hz)"); self.d_hw.setStyleSheet("color:#22A06B; font-size:11px; font-weight:600;")
             _vlog("hardware ENABLED")
+            command_trace("VisionPage hardware output enabled")
         else:
             self.d_hw.setText("下发: 未启用"); self.d_hw.setStyleSheet("color:#E5484D; font-size:11px; font-weight:600;")
             _vlog("hardware DISABLED")
+            command_trace("VisionPage hardware output disabled")
 
     def _safe_emit(self,pose,tag=""):
         pose=self._sanitize_pose(pose)
@@ -1099,6 +1104,7 @@ class VisionPage(QFrame):
             self.d_status.setText("状态: hardware output disabled, pose not sent")
             _vlog("hardware disabled, pose not sent")
             _jlog(f"hardware disabled, pose not sent tag={tag or 'live'} pose={pose}")
+            command_trace(f"VisionPage skipped because hardware switch disabled tag={tag or 'live'} pose={pose}")
             return False
         try:
             emit_finger_move_requested(pose, source=f"VisionPage:{tag or 'live'}")

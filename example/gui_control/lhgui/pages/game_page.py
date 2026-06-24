@@ -34,12 +34,21 @@ from PyQt5.QtWidgets import (
 )
 
 from lhgui.config.constants import HAND_CONFIGS
-from lhgui.utils.signal_bus import emit_finger_move_requested, signal_bus
+from lhgui.utils.signal_bus import command_trace, emit_finger_move_requested, signal_bus
 
 _O6 = HAND_CONFIGS["O6"]
 ROCK_POSE = list(_O6.preset_actions["握拳"])
 PAPER_POSE = list(_O6.preset_actions["张开"])
-SCISSORS_POSE = list(_O6.preset_actions["贰"])
+# O6 order: [thumb_bend, thumb_swing, index_bend, middle_bend, ring_bend, little_bend].
+# Fist -> scissors: keep the whole fist pose, only move thumb_swing to the
+# measured clearance point, then extend index+middle together.
+SCISSORS_THUMB_SWING = 167
+SCISSORS_THUMB_SWING_POSE = list(ROCK_POSE)
+SCISSORS_THUMB_SWING_POSE[1] = SCISSORS_THUMB_SWING
+SCISSORS_POSE = list(SCISSORS_THUMB_SWING_POSE)
+SCISSORS_POSE[2] = 255
+SCISSORS_POSE[3] = 255
+SCISSORS_STAGE_DELAYS_MS = [0, 360]
 HOME_POSE = list(_O6.init_pos)
 
 VALID_GESTURES = ("石头", "剪刀", "布")
@@ -725,6 +734,7 @@ class GamePage(QFrame):
         self.btn_stop.clicked.connect(self._stop_page)
         self.btn_reset.clicked.connect(self._reset_score)
         self.btn_home.clicked.connect(self._emit_home)
+        self.chk_hw.toggled.connect(self._on_hw_toggled)
         self.btn_test_rock.clicked.connect(lambda: self._send_manual_pose("石头"))
         self.btn_test_scissors.clicked.connect(lambda: self._send_manual_pose("剪刀"))
         self.btn_test_paper.clicked.connect(lambda: self._send_manual_pose("布"))
@@ -738,6 +748,7 @@ class GamePage(QFrame):
         rps_log(f"state {old} -> {state}")
 
     def _on_hw_toggled(self, checked):
+        command_trace(f"GamePage hardware toggle requested checked={bool(checked)}")
         if checked:
             reply = QMessageBox.question(
                 self,
@@ -750,6 +761,7 @@ class GamePage(QFrame):
                 self.chk_hw.blockSignals(True)
                 self.chk_hw.setChecked(False)
                 self.chk_hw.blockSignals(False)
+                command_trace("GamePage hardware toggle cancelled by user")
                 return
 
         self._hw_enabled = checked
@@ -758,6 +770,7 @@ class GamePage(QFrame):
             f"color:{'#22A06B' if checked else '#E5484D'}; font-size:12px; font-weight:600;"
         )
         rps_log(f"hardware {'ENABLED' if checked else 'DISABLED'}")
+        command_trace(f"GamePage hardware output {'enabled' if checked else 'disabled'}")
 
     def _start(self):
         if self._running_game:
@@ -885,6 +898,7 @@ class GamePage(QFrame):
             self.d_status.setText(f"提示: 机械手随机出 {self._machine_gesture}，正在识别人类手势")
         else:
             rps_log("hardware disabled, pose not sent")
+            command_trace(f"GamePage skipped because hardware switch disabled tag=machine pose={pose}")
             self.d_status.setText(f"提示: 机器随机出 {self._machine_gesture}，机械手未启用")
 
         self._gesture_history.clear()
@@ -1034,6 +1048,14 @@ class GamePage(QFrame):
 
     def _emit_pose_once(self, pose, tag):
         safe_pose = [int(max(0, min(255, value))) for value in pose]
+        if safe_pose == SCISSORS_POSE:
+            self._emit_scissors_sequence(tag)
+            return
+
+        self._scissors_sequence_token = getattr(self, "_scissors_sequence_token", 0) + 1
+        self._emit_pose_direct(safe_pose, tag)
+
+    def _emit_pose_direct(self, safe_pose, tag):
         try:
             if tag == "machine":
                 rps_log(f"sending machine pose once: {safe_pose}")
@@ -1049,11 +1071,56 @@ class GamePage(QFrame):
             self.d_status.setText(f"提示: 下发失败 {exc}")
             rps_log(f"emit {tag} pose failed: {exc}")
 
+    def _emit_scissors_sequence(self, tag):
+        self._scissors_sequence_token = getattr(self, "_scissors_sequence_token", 0) + 1
+        token = self._scissors_sequence_token
+        stages = [
+            ("thumb_swing_only", list(SCISSORS_THUMB_SWING_POSE)),
+            ("scissors_final", list(SCISSORS_POSE)),
+        ]
+        command_trace(
+            f"GamePage scissors sequence start tag={tag} token={token} "
+            f"delays={SCISSORS_STAGE_DELAYS_MS} stages={stages}"
+        )
+        self.d_status.setText("提示: 剪刀分段下发中")
+
+        for delay_ms, (stage_name, stage_pose) in zip(SCISSORS_STAGE_DELAYS_MS, stages):
+            if delay_ms <= 0:
+                self._emit_scissors_stage(token, tag, stage_name, stage_pose)
+                continue
+            QTimer.singleShot(
+                delay_ms,
+                lambda seq=token, source_tag=tag, stage=stage_name, pose=stage_pose: self._emit_scissors_stage(
+                    seq,
+                    source_tag,
+                    stage,
+                    pose,
+                ),
+            )
+
+    def _emit_scissors_stage(self, token, tag, stage_name, pose):
+        if token != getattr(self, "_scissors_sequence_token", None):
+            command_trace(
+                f"GamePage skipped stale scissors stage token={token} "
+                f"active={getattr(self, '_scissors_sequence_token', None)} stage={stage_name}"
+            )
+            return
+        if not self._hw_enabled:
+            command_trace(
+                f"GamePage skipped scissors stage because hardware switch disabled "
+                f"tag={tag} stage={stage_name} pose={pose}"
+            )
+            rps_log(f"hardware disabled, scissors {stage_name} pose not sent")
+            return
+        command_trace(f"GamePage scissors stage tag={tag} stage={stage_name} pose={pose}")
+        self._emit_pose_direct(pose, f"{tag}:{stage_name}")
+
     def _send_manual_pose(self, gesture):
         if gesture not in RPS_POSES:
             return
         if not self._hw_enabled:
             rps_log(f"hardware disabled, test {gesture} pose not sent")
+            command_trace(f"GamePage skipped because hardware switch disabled tag=test_{gesture} pose={RPS_POSES[gesture]}")
             self.d_status.setText(f"提示: 机械手未启用，测试{gesture}未下发")
             return
         self._emit_pose_once(RPS_POSES[gesture], f"test_{gesture}")
@@ -1061,6 +1128,7 @@ class GamePage(QFrame):
     def _emit_home(self):
         if not self._hw_enabled:
             rps_log("hardware disabled, home pose not sent")
+            command_trace(f"GamePage skipped because hardware switch disabled tag=home pose={HOME_POSE}")
             self.d_status.setText("提示: 机械手未启用，复位未下发")
             return
         self._emit_pose_once(HOME_POSE, "home")
