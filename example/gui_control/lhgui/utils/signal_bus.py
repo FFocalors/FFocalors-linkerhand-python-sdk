@@ -94,6 +94,15 @@ class SignalBus(QObject):
     # —— 演示模式 ——
     demo_mode_toggled = pyqtSignal(bool)        # True=进入演示, False=回到开发
 
+    # —— 自适应抓取相关 ——
+    grasp_state_changed = pyqtSignal(object)            # 当前总状态 (GraspState)
+    grasp_joint_state_changed = pyqtSignal(int, object)  # 关节索引, 关节状态 (GraspJointState)
+    grasp_contact_detected = pyqtSignal(int, object)     # 关节索引, 接触评分 (float)
+    grasp_completed = pyqtSignal(object)                # 抓取结果
+    grasp_failed = pyqtSignal(str)                      # 失败原因
+    grasp_aborted = pyqtSignal(str)                     # 中止原因
+    grasp_curve_event = pyqtSignal(object)              # 曲线事件对象 (dict)
+
 
 # 单例
 signal_bus = SignalBus()

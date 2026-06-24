@@ -18,14 +18,16 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QMatrix4x4, QVector3D
 import pyqtgraph.opengl as gl
 
-# 高雅白模素模配色 (Clay Style, 无粗描边线，纯靠 shaded 光影表现圆滑体积感)
-C_PALM_FACE = (0.92, 0.93, 0.95, 1.0)       # 极其干净的白模浅灰
-C_FINGER_FACE_DEFAULT = (0.92, 0.93, 0.95, 1.0)
-C_JOINT_DEFAULT = (0.83, 0.85, 0.88, 1.0)       # 稍深一点的白模灰色
+# 真实质感暗灰金属与白胶软垫配色 (向真实实体机械手靠拢)
+C_PALM_DARK = (0.18, 0.19, 0.21, 1.0)          # 暗黑色手掌装甲 (近黑色)
+C_FINGER_FRAME = (0.13, 0.14, 0.15, 1.0)       # 哑光碳黑色指骨主骨架
+C_JOINT_DARK = (0.24, 0.25, 0.27, 1.0)         # 稍亮一点的深灰色销轴
+C_PAD_LIGHT = (0.94, 0.95, 0.97, 1.0)          # 指腹与指尖的洁白软垫
+C_PALM_PAD_LIGHT = (0.88, 0.89, 0.91, 1.0)     # 掌心白色能量核心/防滑垫片
 
 # 活动高亮配色 (高保真强调蓝)
-C_FINGER_FACE_ACTIVE = (0.86, 0.92, 1.0, 1.0)   # #dbeafe 激活浅蓝
-C_JOINT_ACTIVE = (0.31, 0.55, 0.97, 1.0)        # #3b82f6 激活蓝
+C_PAD_ACTIVE = (0.75, 0.88, 1.0, 1.0)          # 软垫激活冰蓝
+C_JOINT_ACTIVE = (0.31, 0.55, 0.97, 1.0)        # 关节激活蓝
 
 # 关节索引
 IDX_THUMB_BEND = 0; IDX_THUMB_SWING = 1
@@ -127,6 +129,56 @@ def make_palm_mesh():
 
     return vertexes, np.array(faces, dtype=np.uint32)
 
+def make_palm_pad_mesh():
+    """生成手掌正面的白色防滑防撞保护垫片网格。
+    轻量化的 12 顶点，12 三角面单面结构，向 Y+ 方向偏移并稍微收缩边缘以呈现完美的拼装边缘与立体厚度感。
+    """
+    vertexes = np.array([
+        # Layer 1: Z=8 (底部)
+        [  9.0,  4.5,  8.0],  # 0
+        [  3.0,  5.8,  8.0],  # 1
+        [ -3.0,  5.8,  8.0],  # 2
+        [ -9.0,  4.5,  8.0],  # 3
+        
+        # Layer 2: Z=24 (中部)
+        [ 14.0,  5.8, 24.0],  # 4
+        [  4.0,  8.3, 24.0],  # 5
+        [ -4.0,  8.3, 24.0],  # 6
+        [-12.0,  4.8, 24.0],  # 7
+        
+        # Layer 3: Z=45 (顶部)
+        [ 14.0,  5.3, 45.0],  # 8
+        [  4.5,  6.3, 45.0],  # 9
+        [ -4.5,  6.3, 45.0],  # 10
+        [-14.0,  5.3, 45.0],  # 11
+    ], dtype=np.float32)
+    
+    # 向 Y+ 方向稍微推出（手心前侧），比原手掌正面稍微更厚更有层叠立体感
+    vertexes[:, 1] += 0.35
+    
+    faces = []
+    # 下层 3 个四边形 = 6 个三角面
+    faces.append([0, 1, 5])
+    faces.append([0, 5, 4])
+    
+    faces.append([1, 2, 6])
+    faces.append([1, 6, 5])
+    
+    faces.append([2, 3, 7])
+    faces.append([2, 7, 6])
+    
+    # 上层 3 个四边形 = 6 个三角面
+    faces.append([4, 5, 9])
+    faces.append([4, 9, 8])
+    
+    faces.append([5, 6, 10])
+    faces.append([5, 10, 9])
+    
+    faces.append([6, 7, 11])
+    faces.append([6, 11, 10])
+    
+    return vertexes, np.array(faces, dtype=np.uint32)
+
 class _MechanicalFinger3D:
     def __init__(self, parent_item, base_x, base_y, base_z, lengths, width, thickness, init_y_rot=0.0):
         self.lengths = lengths
@@ -136,10 +188,13 @@ class _MechanicalFinger3D:
         self.init_y_rot = init_y_rot
         self.width = width
         self.thickness = thickness
-        self.items = []
-        self.joints = []
         
-        # 逐节构建圆柱指节和销轴，每一节均挂在上一节的顶端
+        self.items = []     # 存放指骨根部或主骨架 (最后一节为白色，前几节为黑色)
+        self.joints = []    # 存放销轴球体
+        self.caps = []      # 存放两侧销轴端盖
+        self.pads = []      # 存放指腹白色软垫
+        self.tips = []      # 存放指尖白色圆头球
+        
         w = width
         t = thickness
         for i, L in enumerate(lengths):
@@ -148,13 +203,16 @@ class _MechanicalFinger3D:
             ti = t * scale
             ri = wi / 2.0
             
-            # 1. 圆柱指节
+            is_tip_segment = (i == len(lengths) - 1)
+            
+            # 1. 指节主圆柱 (最后一节为白色，前几节为碳黑色骨架)
             cyl_md = gl.MeshData.cylinder(rows=6, cols=12, radius=[ri, ri], length=L)
+            seg_color = C_PAD_LIGHT if is_tip_segment else C_FINGER_FRAME
             seg = gl.GLMeshItem(
                 meshdata=cyl_md,
                 drawFaces=True, drawEdges=False,
                 shader='shaded',
-                color=C_FINGER_FACE_DEFAULT
+                color=seg_color
             )
             
             if i == 0:
@@ -170,21 +228,91 @@ class _MechanicalFinger3D:
                 meshdata=sph_md,
                 drawFaces=True, drawEdges=False,
                 shader='shaded',
-                color=C_JOINT_DEFAULT
+                color=C_JOINT_DARK
             )
             joint.setParentItem(seg)
             self.joints.append(joint)
+            
+            # 3. 左右两侧的金属销轴端盖 (绕 Y 轴旋转 90 度呈横置，还原第二张图细节)
+            cap_r = joint_r * 0.8
+            cap_l = joint_r * 0.35
+            cap_md = gl.MeshData.cylinder(rows=4, cols=8, radius=[cap_r, cap_r], length=cap_l)
+            
+            # 左侧端盖
+            cap_left = gl.GLMeshItem(meshdata=cap_md, drawFaces=True, drawEdges=False, shader='shaded', color=C_JOINT_DARK)
+            cap_left_tr = QMatrix4x4()
+            cap_left_tr.translate(-joint_r * 0.75, 0, 0)
+            cap_left_tr.rotate(90.0, 0, 1, 0)
+            cap_left.setTransform(cap_left_tr)
+            cap_left.setParentItem(joint)
+            self.caps.append(cap_left)
+            
+            # 右侧端盖
+            cap_right = gl.GLMeshItem(meshdata=cap_md, drawFaces=True, drawEdges=False, shader='shaded', color=C_JOINT_DARK)
+            cap_right_tr = QMatrix4x4()
+            cap_right_tr.translate(joint_r * 0.35, 0, 0)
+            cap_right_tr.rotate(90.0, 0, 1, 0)
+            cap_right.setTransform(cap_right_tr)
+            cap_right.setParentItem(joint)
+            self.caps.append(cap_right)
+            
+            # 4. 前两节装配指腹白色软垫，最后一节装配指尖圆头球
+            if not is_tip_segment:
+                pad_w = ri * 0.85
+                pad_l = L * 0.75
+                pad_md = gl.MeshData.cylinder(rows=4, cols=8, radius=[pad_w, pad_w], length=pad_l)
+                pad = gl.GLMeshItem(
+                    meshdata=pad_md,
+                    drawFaces=True, drawEdges=False,
+                    shader='shaded',
+                    color=C_PAD_LIGHT
+                )
+                pad_tr = QMatrix4x4()
+                # 偏移到指骨正前侧 (+Y)，并在 Z 轴方向稍微上抬，避免完全重合与 Z-fighting
+                pad_tr.translate(0.0, ri * 0.5, L * 0.125)
+                pad.setTransform(pad_tr)
+                pad.setParentItem(seg)
+                self.pads.append(pad)
+            else:
+                # 5. 指尖节末端覆盖白色半球 (圆头指套)
+                tip_r = ri * 1.02
+                tip_md = gl.MeshData.sphere(rows=8, cols=8, radius=tip_r)
+                tip = gl.GLMeshItem(
+                    meshdata=tip_md,
+                    drawFaces=True, drawEdges=False,
+                    shader='shaded',
+                    color=C_PAD_LIGHT
+                )
+                tip_tr = QMatrix4x4()
+                tip_tr.translate(0, 0, L) # 置于指节顶部 Z=L 处
+                tip.setTransform(tip_tr)
+                tip.setParentItem(seg)
+                self.tips.append(tip)
 
     def set_active(self, active: bool):
-        face_c = C_FINGER_FACE_ACTIVE if active else C_FINGER_FACE_DEFAULT
-        joint_c = C_JOINT_ACTIVE if active else C_JOINT_DEFAULT
+        pad_c = C_PAD_ACTIVE if active else C_PAD_LIGHT
+        joint_c = C_JOINT_ACTIVE if active else C_JOINT_DARK
         
-        for item in self.items:
-            item.opts['color'] = face_c
-            item.update()
+        # 指腹软垫与指尖圆头球变色
+        for pad in self.pads:
+            pad.opts['color'] = pad_c
+            pad.update()
+        for tip in self.tips:
+            tip.opts['color'] = pad_c
+            tip.update()
+            
+        # 销轴球体与端盖变色
         for j in self.joints:
             j.opts['color'] = joint_c
             j.update()
+        for cap in self.caps:
+            cap.opts['color'] = joint_c
+            cap.update()
+            
+        # 最后一节圆柱本身变色
+        if self.items:
+            self.items[-1].opts['color'] = pad_c
+            self.items[-1].update()
 
     def reset_color(self):
         self.set_active(False)
@@ -245,9 +373,20 @@ class HandPoseView(gl.GLViewWidget):
             meshdata=palm_md,
             drawFaces=True, drawEdges=False,
             shader='shaded',
-            color=C_PALM_FACE
+            color=C_PALM_DARK
         )
         self.addItem(self.palm_item)
+        
+        # 1.1 构建手掌前侧白色防滑垫片
+        palm_pad_v, palm_pad_f = make_palm_pad_mesh()
+        palm_pad_md = gl.MeshData(vertexes=palm_pad_v, faces=palm_pad_f)
+        self.palm_pad_item = gl.GLMeshItem(
+            meshdata=palm_pad_md,
+            drawFaces=True, drawEdges=False,
+            shader='shaded',
+            color=C_PALM_PAD_LIGHT
+        )
+        self.palm_pad_item.setParentItem(self.palm_item)
         
         # 2. 构建大拇指过渡基座 - 左手镜像：位于右下侧 X=16.0, Y=8.5, Z=12.0
         # 大拇指基座也使用圆柱体以实现形态圆滑
@@ -256,7 +395,7 @@ class HandPoseView(gl.GLViewWidget):
             meshdata=tb_md,
             drawFaces=True, drawEdges=False,
             shader='shaded',
-            color=C_PALM_FACE
+            color=C_PALM_DARK
         )
         self.thumb_base_item.setParentItem(self.palm_item)
         
@@ -381,8 +520,8 @@ class HandPoseView(gl.GLViewWidget):
             
             # 动态更新大拇指基座 (虎口部分) 旋转，随横摆进行大角度向掌心的合拢内扣
             # spread=0 (内扣): base_rot_z=-10.0, base_rot_x=-25.0
-            # spread=1 (外展): base_rot_z=35.0, base_rot_x=15.0
-            base_rot_z = -10.0 + spread * 45.0
+            # spread=1 (外展): base_rot_z=70.0, base_rot_x=15.0
+            base_rot_z = -10.0 + spread * 80.0
             base_rot_x = -25.0 + spread * 40.0
             
             tr_base = QMatrix4x4()
@@ -393,8 +532,8 @@ class HandPoseView(gl.GLViewWidget):
             
             # 动态更新大拇指第一节旋转 (随横摆进一步向掌心内扣)
             # spread=0 (内扣): swing_z=-20.0, swing_x=-15.0
-            # spread=1 (外展): swing_z=20.0, swing_x=10.0
-            swing_z = -20.0 + spread * 40.0
+            # spread=1 (外展): swing_z=35.0, swing_x=10.0
+            swing_z = -20.0 + spread * 55.0
             swing_x = -15.0 + spread * 25.0
             
             # 弯曲时大拇指第一节折角增加至 40°，第二节指尖折角增加至 80°，使其在握拳状态下扣在四指外侧

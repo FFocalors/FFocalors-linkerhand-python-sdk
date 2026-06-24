@@ -73,10 +73,18 @@ class WaveformPanel(QWidget):
         self.joint_names_short = [SHORT_NAMES.get(n, n[:2]) for n in self.joint_names]
 
         self._buf_joints = [deque(maxlen=self.MAX_POINTS) for _ in range(self.joint_count)]
+        self._latest_targets = list(self.config.init_pos) if self.config else [250] * self.joint_count
+        if len(self._latest_targets) < self.joint_count:
+            self._latest_targets.extend([250] * (self.joint_count - len(self._latest_targets)))
+        self._buf_targets = [deque(maxlen=self.MAX_POINTS) for _ in range(self.joint_count)]
+        self._curve_markers = []
         self._show = [True] * self.joint_count
 
         self._build()
         signal_bus.waveform_updated.connect(self._on_data)
+        signal_bus.finger_move_requested.connect(self._on_finger_move_requested)
+        signal_bus.grasp_curve_event.connect(self._on_grasp_curve_event)
+        signal_bus.grasp_state_changed.connect(self._on_grasp_state_changed)
         from lhgui.styles.theme_manager import get_theme_manager
         manager = get_theme_manager()
         if manager is not None:
@@ -169,11 +177,15 @@ class WaveformPanel(QWidget):
         self.ax.spines['bottom'].set_color("#DCE3EC")
 
         self.lines = []
+        self.target_lines = []
         for i in range(self.joint_count):
             color = self.COLORS[i % len(self.COLORS)]
             name = self.joint_names_short[i]
             line, = self.ax.plot([], [], color=color, label=name, linewidth=1.6, alpha=0.85)
+            # 加绘目标同色虚线
+            t_line, = self.ax.plot([], [], color=color, linestyle="--", linewidth=1.2, alpha=0.6)
             self.lines.append(line)
+            self.target_lines.append(t_line)
 
         layout.addWidget(self.canvas, stretch=1)
 
@@ -220,6 +232,8 @@ class WaveformPanel(QWidget):
             self._style_toggle(button, index)
         for index, line in enumerate(self.lines):
             line.set_color(palette[index % len(palette)][0])
+        for index, line in enumerate(self.target_lines):
+            line.set_color(palette[index % len(palette)][0])
 
         face = "#182230" if dark else "#FAFBFD"
         text = "#98A8BC" if dark else "#94A3B8"
@@ -238,6 +252,7 @@ class WaveformPanel(QWidget):
         if idx < len(self._show):
             self._show[idx] = on
             self.lines[idx].set_visible(on)
+            self.target_lines[idx].set_visible(on)
             if not self._collapsed:
                 self.canvas.draw_idle()
 
@@ -261,14 +276,66 @@ class WaveformPanel(QWidget):
         for i in range(self.joint_count):
             self._buf_joints[i].append(float(state[i]))
             self.lines[i].set_data(range(len(self._buf_joints[i])), list(self._buf_joints[i]))
+            
+            # 目标虚线数据更新
+            t_val = self._latest_targets[i] if i < len(self._latest_targets) else 250
+            self._buf_targets[i].append(float(t_val))
+            self.target_lines[i].set_data(range(len(self._buf_targets[i])), list(self._buf_targets[i]))
 
         max_len = max(len(buf) for buf in self._buf_joints) if self._buf_joints else 0
         self.ax.set_xlim(0, max(self.MAX_POINTS, max_len))
+
+        # 绘制并更新自适应事件标记 Scatter
+        active_markers = []
+        for m in self._curve_markers:
+            m["x"] -= 1
+            if m["x"] < 0:
+                if m["plot_obj"]:
+                    try:
+                        m["plot_obj"].remove()
+                    except Exception:
+                        pass
+                continue
+
+            j_idx = m["joint_index"]
+            visible = self._show[j_idx]
+            
+            if not visible:
+                if m["plot_obj"]:
+                    m["plot_obj"].set_visible(False)
+                active_markers.append(m)
+                continue
+
+            e_type = m["event_type"]
+            if e_type == "contact_candidate":
+                color, marker, size = "#EAB308", "^", 8
+            elif e_type == "contact_confirmed":
+                color, marker, size = "#10B981", "*", 11
+            elif e_type == "limit_reached":
+                color, marker, size = "#F97316", "s", 7
+            else:  # aborted
+                color, marker, size = "#EF4444", "x", 8
+
+            if m["plot_obj"] is None:
+                # 绘制 scatter 并加入 ax
+                plot_obj, = self.ax.plot(
+                    [m["x"]], [m["y"]], color=color, marker=marker,
+                    markersize=size, linestyle="None", markeredgewidth=1.5, zorder=5
+                )
+                m["plot_obj"] = plot_obj
+            else:
+                m["plot_obj"].set_visible(True)
+                m["plot_obj"].set_data([m["x"]], [m["y"]])
+
+            active_markers.append(m)
+
+        self._curve_markers = active_markers
 
         all_vals = []
         for i in range(self.joint_count):
             if self._show[i]:
                 all_vals.extend(list(self._buf_joints[i]))
+                all_vals.extend(list(self._buf_targets[i]))
 
         if all_vals:
             ymin = min(all_vals)
@@ -280,6 +347,54 @@ class WaveformPanel(QWidget):
 
         if not self._collapsed:
             self.canvas.draw_idle()
+
+    def _on_finger_move_requested(self, targets: list):
+        if targets:
+            self._latest_targets = list(targets)
+
+    def _on_grasp_state_changed(self, state):
+        from lhgui.core.grasp_state import GraspState
+        if state == GraspState.IDLE:
+            self._clear_markers()
+
+    def _clear_markers(self):
+        for m in self._curve_markers:
+            if m["plot_obj"]:
+                try:
+                    m["plot_obj"].remove()
+                except Exception:
+                    pass
+        self._curve_markers.clear()
+
+    def _on_grasp_curve_event(self, event: dict):
+        if self._collapsed:
+            return
+        
+        joint_idx = event.get("joint_index", 0)
+        if joint_idx >= self.joint_count or not self._show[joint_idx]:
+            return
+        
+        # X 轴坐标位置，代表当前缓冲折线的最新右边缘
+        x_pos = len(self._buf_joints[joint_idx]) - 1
+        if x_pos < 0:
+            x_pos = 0
+
+        val = event.get("value", 0.0)
+        e_type = event.get("event_type", "contact_confirmed")
+
+        # 过滤同一关节过于密集的候选标记
+        if e_type == "contact_candidate":
+            recent = [m for m in self._curve_markers if m["joint_index"] == joint_idx and m["event_type"] == e_type]
+            if recent and (x_pos - recent[-1]["x"]) < 5:
+                return
+
+        self._curve_markers.append({
+            "x": x_pos,
+            "y": float(val),
+            "joint_index": joint_idx,
+            "event_type": e_type,
+            "plot_obj": None
+        })
 
     def set_collapsed(self, collapsed: bool):
         if collapsed != self._collapsed:

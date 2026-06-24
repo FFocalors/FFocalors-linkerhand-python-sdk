@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
 
         # 核心层
         self.api_manager = ApiManager()
-        self.data_source = DataSource(self.api_manager)
+        self.data_source = DataSource(self.api_manager, state_hz=20)
         self.recorder = Recorder()
         self.action_executor = ActionExecutor()
 
