@@ -316,19 +316,12 @@ pub fn normalized_to_raw(values: &[f64], expected: usize) -> Result<Vec<u8>, Str
             values.len()
         ));
     }
-    if values
-        .iter()
-        .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
-    {
-        return Err("normalized position must be finite and between 0 and 1".into());
+    if values.iter().any(|v| !v.is_finite()) {
+        return Err("normalized position must be finite".into());
     }
     Ok(values
         .iter()
-        .map(|v| {
-            (v * f64::from(RAW_MAX))
-                .round()
-                .clamp(f64::from(RAW_MIN), f64::from(RAW_MAX)) as u8
-        })
+        .map(|v| v.clamp(0.0, 1.0).mul_add(f64::from(RAW_MAX), 0.0).round() as u8)
         .collect())
 }
 
@@ -361,7 +354,8 @@ mod tests {
             vec![0, 128, 255]
         );
         assert_eq!(raw_to_normalized(&[0, 255]), vec![0., 1.]);
-        assert!(normalized_to_raw(&[1.1], 1).is_err());
+        assert_eq!(normalized_to_raw(&[-1.1, 1.1], 2).unwrap(), vec![0, 255]);
+        assert!(normalized_to_raw(&[f64::NAN], 1).is_err());
         assert!(normalized_to_raw(&[0.], 2).is_err());
     }
     #[test]
