@@ -63,7 +63,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
     <div className="page-heading"><div><p className="eyebrow">共享视觉 / 视觉模仿</p><h1>视觉模仿</h1><p>默认只预览；完成校准并明确允许后，才会生成 O6 动作建议。</p></div><Badge tone={canSyncModel ? 'green' : 'amber'}>{canSyncModel ? 'O6 可申请同步' : '仅预览 · 当前型号不支持同步'}</Badge></div>
     <div className="grid grid-2">
       <Card className="camera-placeholder">
-        <video ref={videoRef} muted playsInline aria-label="视觉摄像头预览" style={{ width: '100%', maxHeight: 250, objectFit: 'contain', background: '#111827', borderRadius: 10 }} />
+        <video ref={videoRef} muted playsInline aria-label="视觉摄像头预览" style={{ width: '100%', maxHeight: 250, objectFit: 'contain', background: 'var(--camera-bg)', borderRadius: 10 }} />
         {!runtime && <p className="permission-note">视觉运行时尚未注入：当前页面仅显示配置状态，不会自行创建摄像头或 Worker。</p>}
         {runtime && <><div className="card-header" style={{ width: '100%', marginTop: 14 }}><div><h2>摄像头预览</h2><span className="muted">{feature ? runtimeLabel(feature.runtime) : '准备中'}</span></div><span className="muted">FPS {feature?.runtime.fps === null || feature?.runtime.fps === undefined ? '—' : feature.runtime.fps.toFixed(1)} · 丢帧 {feature?.runtime.droppedFrames ?? 0}</span></div><button className="button button-primary" disabled={!canStart} onClick={() => void startOrStop()}>{feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended' ? '停止预览' : feature?.runtime.state === 'error' || feature?.runtime.state === 'device-lost' || feature?.runtime.state === 'permission-denied' ? '重新连接摄像头' : '开始预览'}</button></>}
         {feature?.runtime.lastError && <p role="alert" className="permission-note">{feature.runtime.lastError.message}</p>}
