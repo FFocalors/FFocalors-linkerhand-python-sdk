@@ -1736,7 +1736,10 @@ mod tests {
     fn actor_broadcasts_continuous_frames_and_stop_unlocks() {
         let handle = spawn_runtime(
             DeviceConfig::new("sim-1", "演示机械手 O6"),
-            ProcessConfig::fake("../sidecar/linkerhand-bridge/main.py"),
+            ProcessConfig::fake(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../sidecar/linkerhand-bridge/main.py"),
+            ),
             true,
             None,
         );
@@ -1815,7 +1818,10 @@ mod tests {
     fn atomic_shutdown_signal_survives_a_full_command_queue() {
         let handle = spawn_runtime(
             DeviceConfig::new("sim-1", "演示机械手 O6"),
-            ProcessConfig::fake("../sidecar/linkerhand-bridge/main.py"),
+            ProcessConfig::fake(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../sidecar/linkerhand-bridge/main.py"),
+            ),
             true,
             None,
         );
