@@ -590,4 +590,26 @@ mod tests {
         runtime.unlock();
         assert!(!runtime.motion.is_locked());
     }
+
+    #[test]
+    fn action_recording_is_kept_in_memory_and_can_be_cancelled() {
+        let mut runtime = AppRuntime::new(DeviceConfig::new("sim", "sim"), Profile::O6);
+        runtime.action_start_recording("custom:1".into(), "演示动作".into(), 0);
+        runtime
+            .action_record_command(command(CommandSource::Manual), 0)
+            .unwrap();
+        let recording = runtime.action_finish_recording().unwrap();
+        assert!(runtime
+            .action_list()
+            .iter()
+            .any(|item| item.id == recording.id));
+        runtime.action_play(&recording.id, 1.0, Some(1), 0).unwrap();
+        runtime.action_stop();
+        assert!(!runtime.motion.has_pending());
+        runtime.action_delete(&recording.id).unwrap();
+        assert!(!runtime
+            .action_list()
+            .iter()
+            .any(|item| item.id == recording.id));
+    }
 }
