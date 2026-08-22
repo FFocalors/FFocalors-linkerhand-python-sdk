@@ -1,0 +1,8 @@
+# Runtime dependencies imported by the legacy LinkerHand SDK and the bridge.
+# Keep this list separate from the repository's GUI/science requirements.
+PyInstaller==6.15.0
+PyYAML==6.0.2
+numpy==1.26.4
+python-can==4.6.1
+pymodbus==3.5.1
+pyserial==3.5

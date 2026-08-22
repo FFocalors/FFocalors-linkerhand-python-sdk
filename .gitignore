@@ -4,3 +4,13 @@ __pycache__/
 *.pyc
 *.pyo
 *.log
+
+# Console V2 local build outputs (never commit release binaries)
+apps/console-v2/node_modules/
+apps/console-v2/dist/
+apps/console-v2/artifacts/
+apps/console-v2/sidecar/linkerhand-bridge/build/
+apps/console-v2/sidecar/linkerhand-bridge/dist/
+apps/console-v2/src-tauri/binaries/
+apps/console-v2/src-tauri/target/
+apps/console-v2/src-tauri/gen/

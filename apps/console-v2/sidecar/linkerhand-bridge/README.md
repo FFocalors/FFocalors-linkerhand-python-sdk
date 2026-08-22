@@ -26,7 +26,27 @@ operation is rejected until `unlock`; neither operation claims physical power
 removal. Raw capability lengths are snapshotted in
 `../../docs/contracts/raw-capabilities.json`.
 
-The Rust client should launch `main.py` with an explicit `--sdk-root` pointing
-to the directory containing `LinkerHand/` for real hardware. A bundled
-PyInstaller build should preserve `LinkerHand`, `resource`, and the YAML files;
-`linkerhand_bridge.spec` is a boundary skeleton, not a release artifact.
+The Rust client should launch the packaged `linkerhand-sidecar` executable in a
+release bundle. Development may launch `main.py` with `--sdk-root` pointing to
+the directory containing `LinkerHand/`. `--fake` is intentionally explicit and
+is only for tests/simulation; real SDK mode is the release default.
+
+## Windows x64 build
+
+From `apps/console-v2`, install the pinned runtime requirements into the build
+Python and run:
+
+```powershell
+python -m pip install -r sidecar/linkerhand-bridge/requirements-windows-x64.txt
+$env:LINKERHAND_SDK_ROOT = (Resolve-Path ../..).Path
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1
+python scripts/smoke-sidecar.py --executable src-tauri/binaries/linkerhand-sidecar-x86_64-pc-windows-msvc.exe
+```
+
+The script resolves every path before invoking PyInstaller, so a checkout with
+Chinese characters or spaces is supported. The stable output name is
+`linkerhand-sidecar-x86_64-pc-windows-msvc.exe`; generated `build/`, `dist/`,
+and `src-tauri/binaries/` content is ignored by Git. The spec includes only the
+bridge, the LinkerHand package/YAML settings, and the SDK's CAN/RS485 runtime
+dependencies. SDK/library output is redirected to stderr; stdout remains pure
+NDJSON.

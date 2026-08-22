@@ -1,1 +1,40 @@
-{"$schema":"https://schema.tauri.app/config/2","productName":"LinkerHand Console","version":"0.1.0","identifier":"com.linkerhand.console","build":{"frontendDist":"."},"app":{"windows":[{"title":"LinkerHand Console","width":1200,"height":800}],"security":{"csp":null}},"bundle":{"active":false,"icon":[]}}
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LinkerHand Console",
+  "version": "2.0.0-rc.1",
+  "identifier": "com.linkerhand.console",
+  "build": {
+    "beforeDevCommand": "pnpm dev --host 127.0.0.1",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-build.ps1",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LinkerHand Console",
+        "width": 1366,
+        "height": 768,
+        "minWidth": 1366,
+        "minHeight": 768,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost tauri://localhost; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.png"],
+    "externalBin": ["binaries/linkerhand-sidecar"],
+    "resources": ["../artifacts/bundle-inventory.json"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

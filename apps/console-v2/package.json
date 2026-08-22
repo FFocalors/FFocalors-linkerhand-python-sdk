@@ -1,11 +1,13 @@
 {
   "name": "linkerhand-console-v2",
   "private": true,
-  "version": "0.1.0",
+  "version": "2.0.0-rc.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "pnpm check:vision-assets && tsc -b && vite build",
+    "build:windows": "pnpm tauri build --target x86_64-pc-windows-msvc",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
     "lint": "eslint .",
     "test": "vitest run",
     "test:boundaries": "node scripts/check-boundaries-fixture.mjs",
@@ -14,7 +16,9 @@
     "check:contracts": "node scripts/check-contracts.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:vision-assets": "node scripts/check-vision-assets.mjs",
-    "vision:download": "node scripts/download-vision-assets.mjs"
+    "vision:download": "node scripts/download-vision-assets.mjs",
+    "test:sidecar:smoke": "python scripts/smoke-sidecar.py",
+    "bundle:inventory": "node scripts/create-bundle-inventory.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
@@ -38,6 +42,7 @@
     "eslint-plugin-import": "latest",
     "eslint-plugin-react-hooks": "latest",
     "jsdom": "latest",
-    "vitest": "latest"
+    "vitest": "latest",
+    "@tauri-apps/cli": "^2.8.4"
   }
 }
