@@ -1,1 +1,8 @@
 /target/
+node_modules/
+dist/
+coverage/
+.vite/
+*.tsbuildinfo
+vite.config.*.timestamp-*
+*.log
