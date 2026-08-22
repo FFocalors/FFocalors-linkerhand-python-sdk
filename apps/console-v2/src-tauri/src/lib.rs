@@ -10,6 +10,7 @@ use sidecar_client::{
     process::{ProcessConfig, SidecarProcessManager},
     SidecarDeviceAdapter,
 };
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -220,8 +221,16 @@ pub struct RuntimeHandle {
     control_state: Arc<std::sync::atomic::AtomicU8>,
     shutdown_requested: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
+    sidecar: Arc<SidecarRuntimeInfo>,
 }
 pub struct RuntimeState(pub RuntimeHandle);
+
+#[derive(Clone, Debug)]
+struct SidecarRuntimeInfo {
+    process: ProcessConfig,
+    simulator: bool,
+    selected_path: Option<PathBuf>,
+}
 
 impl RuntimeHandle {
     fn enqueue(&self, request: ActorRequest) -> Result<(), AppError> {
@@ -241,6 +250,10 @@ impl RuntimeHandle {
         while !self.stopped.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
             thread::sleep(std::time::Duration::from_millis(10));
         }
+    }
+
+    fn sidecar_info(&self) -> SidecarRuntimeInfo {
+        (*self.sidecar).clone()
     }
 }
 
@@ -726,14 +739,113 @@ impl RuntimeActor {
     }
 }
 
-fn spawn_runtime() -> RuntimeHandle {
-    let config = DeviceConfig::new("sim-1", "演示机械手 O6");
-    let mut runtime = AppRuntime::new(config.clone(), adaptive_grasp::Profile::O6);
-    let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../sidecar/linkerhand-bridge/main.py");
+fn simulator_enabled() -> bool {
+    matches!(
+        std::env::var("LINKERHAND_CONSOLE_SIMULATOR")
+            .ok()
+            .as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes")
+    )
+}
+
+fn safe_default_config() -> DeviceConfig {
+    let mut config = DeviceConfig::new("linkerhand-o6", "LinkerHand O6");
+    config.transport = console_contracts::Transport::Can {
+        channel: "PCAN_USBBUS1".into(),
+    };
+    config.auto_reconnect = false;
+    config
+}
+
+fn profile_for_model(model: &console_contracts::DeviceModel) -> adaptive_grasp::Profile {
+    match model {
+        console_contracts::DeviceModel::O6 => adaptive_grasp::Profile::O6,
+        console_contracts::DeviceModel::L6 => adaptive_grasp::Profile::L6,
+        console_contracts::DeviceModel::L7 => adaptive_grasp::Profile::L7,
+        console_contracts::DeviceModel::L10 => adaptive_grasp::Profile::L10,
+        console_contracts::DeviceModel::L20 => adaptive_grasp::Profile::L20,
+        console_contracts::DeviceModel::G20 => adaptive_grasp::Profile::G20,
+        console_contracts::DeviceModel::L21 => adaptive_grasp::Profile::L21,
+        console_contracts::DeviceModel::L25 => adaptive_grasp::Profile::L25,
+    }
+}
+
+fn normalize_config(mut config: DeviceConfig, simulator: bool) -> DeviceConfig {
+    if simulator {
+        config.transport = console_contracts::Transport::Can {
+            channel: "fake".into(),
+        };
+    } else if matches!(
+        config.transport,
+        console_contracts::Transport::Can { ref channel } if channel.eq_ignore_ascii_case("fake")
+    ) {
+        config.transport = console_contracts::Transport::Can {
+            channel: "PCAN_USBBUS1".into(),
+        };
+    }
+    config
+}
+
+fn sidecar_candidates(explicit: Option<&Path>, roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut values = Vec::new();
+    if let Some(path) = explicit {
+        values.push(path.to_path_buf());
+    }
+    for root in roots {
+        values.extend([
+            root.join("linkerhand-sidecar.exe"),
+            root.join("linkerhand-sidecar-x86_64-pc-windows-msvc.exe"),
+            root.join("binaries/linkerhand-sidecar.exe"),
+            root.join("binaries/linkerhand-sidecar-x86_64-pc-windows-msvc.exe"),
+            root.join("sidecar/linkerhand-sidecar.exe"),
+        ]);
+    }
+    values
+}
+
+fn resolve_sidecar_path(explicit: Option<PathBuf>, roots: Vec<PathBuf>) -> Option<PathBuf> {
+    sidecar_candidates(explicit.as_deref(), &roots)
+        .into_iter()
+        .find(|path| path.is_file())
+}
+
+fn sidecar_process(explicit: Option<PathBuf>, simulator: bool) -> (ProcessConfig, Option<PathBuf>) {
+    if simulator {
+        let script =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/linkerhand-bridge/main.py");
+        return (ProcessConfig::fake(script), None);
+    }
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(Path::to_path_buf));
+    let mut roots = Vec::new();
+    if let Some(dir) = exe_dir.clone() {
+        roots.push(dir);
+    }
+    if let Ok(dir) = std::env::current_dir() {
+        roots.push(dir);
+    }
+    let selected = resolve_sidecar_path(explicit, roots.clone());
+    // Keep a deterministic, explainable missing path so a later explicit
+    // connect reports a sidecar error rather than silently falling back to
+    // Python from PATH.
+    let program = selected
+        .clone()
+        .or_else(|| sidecar_candidates(None, &roots).into_iter().next())
+        .unwrap_or_else(|| PathBuf::from("linkerhand-sidecar.exe"));
+    (ProcessConfig::executable(program), selected)
+}
+
+fn spawn_runtime(
+    config: DeviceConfig,
+    process: ProcessConfig,
+    simulator: bool,
+    selected_path: Option<PathBuf>,
+) -> RuntimeHandle {
+    let mut runtime = AppRuntime::new(config.clone(), profile_for_model(&config.model));
     runtime.install_adapter(Box::new(SidecarDeviceAdapter::new(
         config,
-        SidecarProcessManager::new(ProcessConfig::fake(script)),
+        SidecarProcessManager::new(process.clone()),
     )));
     let (tx, rx) = mpsc::sync_channel(128);
     let control_state = Arc::new(std::sync::atomic::AtomicU8::new(0));
@@ -767,6 +879,11 @@ fn spawn_runtime() -> RuntimeHandle {
         control_state,
         shutdown_requested,
         stopped,
+        sidecar: Arc::new(SidecarRuntimeInfo {
+            process,
+            simulator,
+            selected_path,
+        }),
     }
 }
 
@@ -796,7 +913,7 @@ mod commands {
         })
         .await
     }
-    fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, AppError> {
+    pub(super) fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, AppError> {
         app.path()
             .app_config_dir()
             .map(|dir| dir.join("console-v2-settings.json"))
@@ -806,6 +923,14 @@ mod commands {
         std::fs::read(path)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<DeviceConfig>(&bytes).ok())
+            .unwrap_or(fallback)
+    }
+
+    pub(super) fn load_startup_config(app: &tauri::AppHandle, simulator: bool) -> DeviceConfig {
+        let fallback = normalize_config(safe_default_config(), simulator);
+        settings_path(app)
+            .ok()
+            .map(|path| normalize_config(read_settings(&path, fallback.clone()), simulator))
             .unwrap_or(fallback)
     }
     pub(super) fn persist_settings(
@@ -850,18 +975,44 @@ mod commands {
     pub async fn sidecar_self_check(
         state: tauri::State<'_, RuntimeState>,
     ) -> Result<SidecarCheck, AppError> {
-        let capabilities = dispatch(state.0.clone(), |reply| ActorRequest::Capabilities {
-            reply,
-        })
-        .await?;
-        Ok(SidecarCheck {
-            ok: capabilities.joint_count > 0,
-            message: "设备运行时已装配".into(),
-            detail: Some(format!(
-                "{:?} · {} 个关节；未连接硬件，未启动独立 sidecar 进程",
-                capabilities.model, capabilities.joint_count
-            )),
-        })
+        let info = state.0.sidecar_info();
+        match SidecarProcessManager::new(info.process.clone()).probe() {
+            Ok(()) => Ok(SidecarCheck {
+                ok: true,
+                message: if info.simulator {
+                    "模拟 sidecar 已就绪"
+                } else {
+                    "sidecar 可执行文件与协议管道正常"
+                }
+                .into(),
+                detail: Some(format!(
+                    "{}；仅完成启动/关闭自检，硬件仍未连接且未完成 O6 实机验收",
+                    info.selected_path
+                        .as_deref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "未解析到安装包 sidecar".into())
+                )),
+            }),
+            Err(error) => Ok(SidecarCheck {
+                ok: false,
+                message: if info.simulator {
+                    "模拟 sidecar 不可用"
+                } else {
+                    "sidecar 不可用"
+                }
+                .into(),
+                detail: Some(format!(
+                    "{}；点击连接时将返回可解释错误。{}候选路径：{}",
+                    error,
+                    if info.simulator {
+                        "显式开发模拟模式。"
+                    } else {
+                        ""
+                    },
+                    info.process.program.display()
+                )),
+            }),
+        }
     }
     #[tauri::command]
     pub async fn connection(
@@ -1230,10 +1381,20 @@ fn now_ms() -> u64 {
 }
 
 pub fn run() {
-    let handle = spawn_runtime();
-    let shutdown_handle = handle.clone();
+    let shutdown_slot: Arc<std::sync::Mutex<Option<RuntimeHandle>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let shutdown_event = Arc::clone(&shutdown_slot);
     tauri::Builder::default()
-        .manage(RuntimeState(handle))
+        .setup(move |app| {
+            let simulator = simulator_enabled();
+            let config = commands::load_startup_config(app.handle(), simulator);
+            let explicit = std::env::var_os("LINKERHAND_SIDECAR_PATH").map(PathBuf::from);
+            let (process, selected_path) = sidecar_process(explicit, simulator);
+            let handle = spawn_runtime(config, process, simulator, selected_path);
+            app.manage(RuntimeState(handle.clone()));
+            *shutdown_slot.lock().expect("shutdown slot poisoned") = Some(handle);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::config,
             commands::capabilities,
@@ -1286,7 +1447,13 @@ pub fn run() {
         .expect("error while building LinkerHand Console")
         .run(move |_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
-                shutdown_handle.shutdown();
+                if let Some(handle) = shutdown_event
+                    .lock()
+                    .expect("shutdown slot poisoned")
+                    .take()
+                {
+                    handle.shutdown();
+                }
             }
         });
 }
@@ -1298,6 +1465,68 @@ mod tests {
     use device_adapter_api::DeviceAdapter;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    #[test]
+    fn release_defaults_never_select_fake_transport_or_python() {
+        let config = normalize_config(safe_default_config(), false);
+        assert!(matches!(
+            config.transport,
+            console_contracts::Transport::Can { ref channel }
+                if channel.eq_ignore_ascii_case("PCAN_USBBUS1")
+        ));
+        let (process, selected) = sidecar_process(
+            Some(PathBuf::from("C:/missing/linkerhand-sidecar.exe")),
+            false,
+        );
+        assert!(selected.is_none());
+        assert_ne!(process.program, PathBuf::from("python"));
+        assert!(!process.args.iter().any(|arg| arg == "--fake"));
+    }
+
+    #[test]
+    fn simulator_is_explicit_and_forces_fake_transport() {
+        let config = normalize_config(safe_default_config(), true);
+        assert!(matches!(
+            config.transport,
+            console_contracts::Transport::Can { ref channel }
+                if channel.eq_ignore_ascii_case("fake")
+        ));
+        let (process, selected) = sidecar_process(None, true);
+        assert!(selected.is_none());
+        assert_eq!(process.program, PathBuf::from("python"));
+        assert!(process.args.iter().any(|arg| arg == "--fake"));
+    }
+
+    #[test]
+    fn explicit_sidecar_path_has_priority_over_install_layout() {
+        let root = std::env::temp_dir().join(format!(
+            "linkerhand-console-v2-sidecar-candidates-{}",
+            std::process::id()
+        ));
+        let explicit = root.join("injected-sidecar.exe");
+        let portable = root.join("sidecar");
+        std::fs::create_dir_all(&portable).unwrap();
+        std::fs::write(&explicit, b"test").unwrap();
+        std::fs::write(portable.join("linkerhand-sidecar.exe"), b"test").unwrap();
+        let selected = resolve_sidecar_path(Some(explicit.clone()), vec![root.clone()]);
+        assert_eq!(selected, Some(explicit));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_release_sidecar_is_deferred_until_connect() {
+        let (process, selected) = sidecar_process(
+            Some(std::env::temp_dir().join(format!(
+                "linkerhand-console-v2-missing-{}.exe",
+                std::process::id()
+            ))),
+            false,
+        );
+        assert!(selected.is_none());
+        let manager = SidecarProcessManager::new(process);
+        let error = manager.probe().expect_err("missing sidecar must fail only when probed/connect");
+        assert!(error.to_string().contains("sidecar process failed"));
+    }
 
     #[test]
     fn settings_replace_existing_file_and_recover_from_corruption() {
@@ -1408,6 +1637,11 @@ mod tests {
                 control_state,
                 shutdown_requested,
                 stopped,
+                sidecar: Arc::new(SidecarRuntimeInfo {
+                    process: ProcessConfig::fake("unused.py"),
+                    simulator: true,
+                    selected_path: None,
+                }),
             },
             writes,
         )
@@ -1498,7 +1732,12 @@ mod tests {
 
     #[test]
     fn actor_broadcasts_continuous_frames_and_stop_unlocks() {
-        let handle = spawn_runtime();
+        let handle = spawn_runtime(
+            DeviceConfig::new("sim-1", "演示机械手 O6"),
+            ProcessConfig::fake("../sidecar/linkerhand-bridge/main.py"),
+            true,
+            None,
+        );
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1572,7 +1811,12 @@ mod tests {
 
     #[test]
     fn atomic_shutdown_signal_survives_a_full_command_queue() {
-        let handle = spawn_runtime();
+        let handle = spawn_runtime(
+            DeviceConfig::new("sim-1", "演示机械手 O6"),
+            ProcessConfig::fake("../sidecar/linkerhand-bridge/main.py"),
+            true,
+            None,
+        );
         let mut filled = 0;
         for _ in 0..256 {
             let (reply, _receiver) = tokio::sync::oneshot::channel();

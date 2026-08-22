@@ -31,6 +31,9 @@
     "externalBin": ["binaries/linkerhand-sidecar"],
     "resources": ["../artifacts/bundle-inventory.json"],
     "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      },
       "nsis": {
         "installMode": "currentUser",
         "displayLanguageSelector": false

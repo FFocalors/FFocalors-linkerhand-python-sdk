@@ -248,6 +248,25 @@ pub mod process {
             config.args.push("--fake".into());
             config
         }
+
+        /// Build a release sidecar command.  Unlike `python`/`fake`, this
+        /// always executes the packaged bridge and never consults PATH for a
+        /// Python interpreter.
+        pub fn executable(program: impl Into<PathBuf>) -> Self {
+            Self {
+                program: program.into(),
+                args: Vec::new(),
+                working_dir: None,
+                request_timeout: Duration::from_secs(10),
+                shutdown_timeout: Duration::from_millis(1500),
+                max_pending: 64,
+            }
+        }
+
+        pub fn with_working_dir(mut self, working_dir: impl Into<PathBuf>) -> Self {
+            self.working_dir = Some(working_dir.into());
+            self
+        }
     }
 
     struct Pending {
@@ -299,6 +318,19 @@ pub mod process {
         }
         pub fn shutdown_timeout(&self) -> Duration {
             self.config.shutdown_timeout
+        }
+
+        /// Start and close the bridge without sending a connect command. This
+        /// verifies executable startup and pipe ownership while guaranteeing
+        /// that no CAN/RS485 operation is attempted.
+        pub fn probe(&self) -> Result<(), ProcessError> {
+            self.start()?;
+            self.close_bounded(self.config.shutdown_timeout);
+            Ok(())
+        }
+
+        pub fn program(&self) -> &std::path::Path {
+            &self.config.program
         }
         pub fn start(&self) -> Result<(), ProcessError> {
             {
