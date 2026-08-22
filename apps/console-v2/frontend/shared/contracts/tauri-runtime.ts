@@ -29,6 +29,7 @@ export const tauriRuntimeExtras = {
     subscribeConnection: (listener: (value: Awaited<ReturnType<ConsolePorts['device']['getConnection']>>) => void) => subscribeChannel('connection_subscribe', 'connection_unsubscribe', listener),
     subscribeOperation: (listener: (value: OperationSnapshot) => void) => subscribeChannel('operation_subscribe', 'operation_unsubscribe', listener),
   },
+  motionCancelSource: (source: 'vision' | 'rockPaperScissors' | 'loop' | 'playback' | 'grasp', _reason?: string) => invoke<void>('motion_cancel_source', { source }),
   actions: {
     startRecording: (name: string) => invoke<void>('action_start_recording', { name }), pauseRecording: () => invoke<void>('action_pause_recording'), resumeRecording: () => invoke<void>('action_resume_recording'), finishRecording: () => invoke<void>('action_finish_recording'), cancelRecording: () => invoke<void>('action_cancel_recording'),
     play: (id: string, options: { speed: number; loopCount: number | null }) => invoke<void>('action_play', { id, speed: options.speed, loopEnabled: options.loopCount !== 0, loopCount: options.loopCount }), pause: () => invoke<void>('action_pause'), resume: () => invoke<void>('action_resume'), stop: () => invoke<void>('action_stop'),

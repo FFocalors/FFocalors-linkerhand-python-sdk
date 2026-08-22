@@ -5,12 +5,24 @@ import type { ConnectionSnapshot, ConsolePorts, JointTargetCommand, OperationSna
 import { isTauriRuntime, tauriRuntime } from '../shared/contracts';
 import { tauriRuntimeExtras } from '../shared/contracts/tauri-runtime';
 import { mockRuntime } from '../shared/contracts/mock-runtime';
+import { VisionRuntime } from '../shared/vision-runtime';
+import { createRpsActionController, createVisionProposalController } from './controllers';
+import { createSettingsController, createThemePort } from './settings';
+import type { SettingsController, ThemePort } from '../features/settings';
+import type { VisionProposalController, VisionRuntimeLike } from '../features/vision';
+import type { RpsActionController } from '../features/rock-paper-scissors/types';
 
 export type ConsoleComposition = ConsolePorts & {
   deviceController: DeviceControlController;
   actionController: ActionController;
   graspController: GraspController;
   simulator: boolean;
+  visionRuntime: VisionRuntimeLike;
+  visionProposalController: VisionProposalController;
+  rpsActionController: RpsActionController;
+  createRpsActionController: (capabilities: import('../shared/contracts').DeviceCapabilities) => RpsActionController;
+  settingsController: SettingsController;
+  themePort: ThemePort;
 };
 
 const simulatorConnection = (runtime: ConsolePorts, deviceId: string): ConnectionSnapshot => ({ schemaVersion: 1, deviceId, state: 'connected', attempt: 1, lastError: null });
@@ -96,5 +108,13 @@ export function createComposition(): ConsoleComposition {
       },
     }
     : tauriRuntime;
-  return { ...runtime, simulator, deviceController: createDeviceController(runtime, simulator, simulator ? undefined : tauriRuntimeExtras.device), actionController: actionController(runtime, simulator), graspController: graspController(runtime, simulator) };
+  const visionRuntime = new VisionRuntime();
+  const visionProposalController = createVisionProposalController(runtime, simulator);
+  // In Tauri capabilities are loaded asynchronously by Shell. The app uses
+  // O6 for the simulator and creates the RPS sink lazily with the authoritative
+  // capability snapshot in Shell; this default sink remains disabled in a real
+  // runtime until that snapshot is available.
+  const createRps = (nextCapabilities: import('../shared/contracts').DeviceCapabilities) => createRpsActionController(runtime, nextCapabilities, simulator);
+  const fallbackCapabilities = { schemaVersion: 1, deviceId: 'pending', model: 'O6' as const, hand: 'right' as const, transport: { type: 'can' as const, channel: 'pending' }, jointCount: 6, position: { length: 6, available: true, range: { min: 0, max: 255 } }, speed: { length: 6, available: true, range: { min: 0, max: 255 } }, current: { length: 6, available: true, range: { min: 0, max: 255 } }, torque: { length: 6, available: true, range: { min: 0, max: 255 } }, touch: { length: 0, available: false, range: { min: 0, max: 255 } }, speedCommandLength: 6, currentCommandLength: null, torqueCommandLength: 6, supportedOperations: ['setPosition' as const] };
+  return { ...runtime, simulator, visionRuntime, visionProposalController, rpsActionController: createRps(fallbackCapabilities), createRpsActionController: createRps, settingsController: createSettingsController(runtime, simulator), themePort: createThemePort(), deviceController: createDeviceController(runtime, simulator, simulator ? undefined : tauriRuntimeExtras.device), actionController: actionController(runtime, simulator), graspController: graspController(runtime, simulator) };
 }

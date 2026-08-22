@@ -6,8 +6,9 @@ export const MIN_PROPOSAL_CONFIDENCE = 0.7;
 export const VISION_RUNTIME_STOP_TIMEOUT_MS = 1000;
 
 export interface VisionRuntimeLike {
-  start(video: HTMLVideoElement, source: 'vision'): Promise<void>;
+  start(video: HTMLVideoElement, source: 'vision' | 'rps', deviceId?: string): Promise<void>;
   stop(): Promise<void>;
+  dispose?(): Promise<void>;
   snapshot(): VisionRuntimeSnapshot;
   subscribe(listener: (snapshot: VisionRuntimeSnapshot) => void): () => void;
   onResult(listener: (result: VisionLandmarkResult) => void): () => void;
