@@ -85,10 +85,11 @@ class SidecarService:
 
     def _write(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         adapter = self._connected()
-        fields = {"setPosition": ("positions", adapter.spec.position_length, adapter.set_position), "setSpeed": ("speeds", adapter.spec.speed_length, adapter.set_speed), "setCurrent": ("currents", adapter.spec.current_length, adapter.set_current), "setTorque": ("torques", adapter.spec.current_length, adapter.set_torque)}
+        fields = {"setPosition": ("positions", adapter.spec.position_length, adapter.set_position), "setSpeed": ("speeds", adapter.spec.speed_command_length, adapter.set_speed), "setCurrent": ("currents", adapter.spec.current_command_length, adapter.set_current), "setTorque": ("torques", adapter.spec.torque_command_length, adapter.set_torque)}
         field, size, method = fields[operation]
         self._strict(payload, {field}, operation)
         if operation not in adapter.spec.write_capabilities: raise ProtocolError("UNSUPPORTED_CAPABILITY", f"{operation} is not supported by {adapter.model}")
+        if size is None: raise ProtocolError("UNSUPPORTED_CAPABILITY", f"{operation} is not supported by {adapter.model}")
         values = validate_vector(payload.get(field), size, field)
         self._run(lambda: method(values))
         return {"accepted": True, field: values}

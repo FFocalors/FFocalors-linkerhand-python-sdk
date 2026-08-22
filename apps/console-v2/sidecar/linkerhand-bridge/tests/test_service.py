@@ -43,6 +43,19 @@ def test_unsupported_transport_and_capability():
     service.shutdown()
 
 
+def test_sdk_command_lengths_and_unsupported_l20_torque():
+    service = connected("L20")
+    assert service.execute("setSpeed", {"speeds": [1] * 5})["accepted"]
+    assert service.execute("setCurrent", {"currents": [1] * 5})["accepted"]
+    with pytest.raises(ProtocolError) as exc:
+        service.execute("setSpeed", {"speeds": [1] * 20})
+    assert exc.value.code == "INVALID_ARGUMENT"
+    with pytest.raises(ProtocolError) as exc:
+        service.execute("setTorque", {"torques": [1] * 5})
+    assert exc.value.code == "UNSUPPORTED_CAPABILITY"
+    service.shutdown()
+
+
 def test_shutdown_closes_worker_and_rejects_commands():
     service = connected()
     service.shutdown()

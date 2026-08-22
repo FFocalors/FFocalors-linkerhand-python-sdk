@@ -24,19 +24,22 @@ class ModelSpec:
     position_length: int
     speed_length: int
     current_length: int
+    speed_command_length: int
+    current_command_length: int | None
+    torque_command_length: int | None
     transports: tuple[str, ...]
     write_capabilities: tuple[str, ...]
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
-    "O6": ModelSpec("O6", 6, 6, 6, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
-    "L6": ModelSpec("L6", 6, 6, 6, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
-    "L7": ModelSpec("L7", 7, 7, 7, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
-    "L10": ModelSpec("L10", 10, 10, 10, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
-    "L20": ModelSpec("L20", 20, 20, 20, ("can",), ("setPosition", "setSpeed", "setCurrent", "setTorque")),
-    "G20": ModelSpec("G20", 20, 20, 20, ("can",), ("setPosition", "setSpeed", "setTorque")),
-    "L21": ModelSpec("L21", 25, 25, 25, ("can",), ("setPosition", "setSpeed", "setTorque")),
-    "L25": ModelSpec("L25", 25, 25, 25, ("can",), ("setPosition", "setSpeed", "setTorque")),
+    "O6": ModelSpec("O6", 6, 6, 6, 6, None, 6, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
+    "L6": ModelSpec("L6", 6, 6, 6, 6, None, 6, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
+    "L7": ModelSpec("L7", 7, 7, 7, 7, None, 7, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
+    "L10": ModelSpec("L10", 10, 10, 10, 10, None, 10, ("can", "rs485"), ("setPosition", "setSpeed", "setTorque")),
+    "L20": ModelSpec("L20", 20, 20, 5, 5, 5, None, ("can",), ("setPosition", "setSpeed", "setCurrent")),
+    "G20": ModelSpec("G20", 20, 20, 20, 5, None, 5, ("can",), ("setPosition", "setSpeed", "setTorque")),
+    "L21": ModelSpec("L21", 25, 25, 21, 25, None, 5, ("can",), ("setPosition", "setSpeed", "setTorque")),
+    "L25": ModelSpec("L25", 25, 25, 21, 25, None, 5, ("can",), ("setPosition", "setSpeed", "setTorque")),
 }
 
 
@@ -68,6 +71,9 @@ class BaseAdapter:
             "positionLength": self.spec.position_length,
             "speedLength": self.spec.speed_length,
             "currentLength": self.spec.current_length,
+            "speedCommandLength": self.spec.speed_command_length,
+            "currentCommandLength": self.spec.current_command_length,
+            "torqueCommandLength": self.spec.torque_command_length,
             "positionRange": {"min": 0, "max": 255},
             "speedRange": {"min": 0, "max": 255},
             "currentRange": {"min": 0, "max": 255},
@@ -177,7 +183,7 @@ class RealSdkAdapter(BaseAdapter):
 
     def get_position(self): return self._invoke("get_state")
     def get_current(self): return self._invoke("get_current")
-    def get_speed(self): return self._invoke("get_speed")
+    def get_speed(self): return self._invoke("get_joint_speed")
     def get_touch(self): return self._invoke("get_touch")
     def set_position(self, values): self.last_position = list(values); self._invoke("finger_move", values)
     def set_speed(self, values): self._invoke("set_speed", values)
