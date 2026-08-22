@@ -1,7 +1,7 @@
 # Sidecar handoff
 
 - Branch: `codex/v2-m1-sidecar`
-- Commit: `a3aee4134649b73ff930488545017fff1db7cb68`
+- Code commit: `7e60db9c12e20d00c94c92d4d92a108341a8ed09` (handoff metadata follows in the next docs commit)
 - Scope: `apps/console-v2/sidecar/linkerhand-bridge/`, protocol contract, ADR, and this handoff
 - Public interface: new sidecar NDJSON interface only; legacy `LinkerHand` SDK unchanged
 - Tests: `uv run --with pytest --python 3.12 python -m pytest apps/console-v2/sidecar/linkerhand-bridge/tests` (26 passed); default Python 3.9 had no pytest
