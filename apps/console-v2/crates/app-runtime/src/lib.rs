@@ -251,10 +251,15 @@ impl AppRuntime {
         loop_count: Option<u32>,
         now_ms: u64,
     ) -> Result<(), AppRuntimeError> {
+        let lookup_id = if id == "safe-position" {
+            "builtin:neutral"
+        } else {
+            id
+        };
         let recording = self
             .action_list()
             .into_iter()
-            .find(|item| item.id == id)
+            .find(|item| item.id == lookup_id)
             .ok_or_else(|| AppRuntimeError::Unsupported(format!("action {id} not found")))?;
         self.actions.set_loop(loop_count.is_some(), loop_count);
         self.actions
