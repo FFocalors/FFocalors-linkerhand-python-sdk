@@ -1,0 +1,1 @@
+export function createFrameCoalescer<T>(commit: (value: T) => void) { let frame = 0; let latest: T; return { push(value: T) { latest = value; if (!frame) frame = requestAnimationFrame(() => { frame = 0; commit(latest); }); }, flush() { if (frame) cancelAnimationFrame(frame); frame = 0; commit(latest); } }; }
