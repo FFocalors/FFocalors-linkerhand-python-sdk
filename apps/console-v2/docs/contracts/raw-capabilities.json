@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "rawRange": { "min": 0, "max": 255 },
+  "models": {
+    "O6": { "positionLength": 6, "speedLength": 6, "currentLength": 6, "touchLength": 6, "speedCommandLength": 6, "currentCommandLength": null, "torqueCommandLength": 6, "transports": ["can", "rs485"] },
+    "L6": { "positionLength": 6, "speedLength": 6, "currentLength": 6, "touchLength": 6, "speedCommandLength": 6, "currentCommandLength": null, "torqueCommandLength": 6, "transports": ["can", "rs485"] },
+    "L7": { "positionLength": 7, "speedLength": 7, "currentLength": 7, "touchLength": 7, "speedCommandLength": 7, "currentCommandLength": null, "torqueCommandLength": 7, "transports": ["can", "rs485"] },
+    "L10": { "positionLength": 10, "speedLength": 10, "currentLength": 10, "touchLength": 10, "speedCommandLength": 10, "currentCommandLength": null, "torqueCommandLength": 10, "transports": ["can", "rs485"] },
+    "L20": { "positionLength": 20, "speedLength": 20, "currentLength": 5, "touchLength": 20, "speedCommandLength": 5, "currentCommandLength": 5, "torqueCommandLength": null, "transports": ["can"] },
+    "G20": { "positionLength": 20, "speedLength": 20, "currentLength": 20, "touchLength": 20, "speedCommandLength": 5, "currentCommandLength": null, "torqueCommandLength": 5, "transports": ["can"] },
+    "L21": { "positionLength": 25, "speedLength": 25, "currentLength": 21, "touchLength": 25, "speedCommandLength": 25, "currentCommandLength": null, "torqueCommandLength": 5, "transports": ["can"] },
+    "L25": { "positionLength": 25, "speedLength": 25, "currentLength": 21, "touchLength": 25, "speedCommandLength": 25, "currentCommandLength": null, "torqueCommandLength": 5, "transports": ["can"] }
+  }
+}

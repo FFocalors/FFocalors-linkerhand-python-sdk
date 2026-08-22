@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc -b --pretty false"
+    ,"generate:contracts": "node scripts/generate-contracts.mjs"
+    ,"check:contracts": "node scripts/check-contracts.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
