@@ -2,8 +2,8 @@
 
 - Branch: `codex/v2-m1-contract-freeze`
 - Base: `1fea3fe` (`docs(console-v2): record M1 integration verification`)
-- Final commit: `b2986c6` (`feat(console-v2): add raw vector adapter seam`)
-- Contract commits, in order: `9e8334e` (canonical contract and generator), `6a768e6` (runtime/sidecar/UI seams), `22c9137` (normalized raw clamp), `b2986c6` (raw vector mapper).
+- Final implementation commit: `3fed195` (`fix(console-v2): normalize generated contract output`)
+- Contract commits, in order: `9e8334e` (canonical contract and generator), `6a768e6` (runtime/sidecar/UI seams), `22c9137` (normalized raw clamp), `b2986c6` (raw vector mapper), `2e7897a` (Rust metadata generator), `3fed195` (generated output normalization).
 - Worktree is clean at handoff.
 
 ## Responsibility
