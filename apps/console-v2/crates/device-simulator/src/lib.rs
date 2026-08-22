@@ -25,8 +25,8 @@ fn model_lengths(
         DeviceModel::O6 | DeviceModel::L6 => (6, 6, 6, 6, 6, None, Some(6)),
         DeviceModel::L7 => (7, 7, 7, 7, 7, None, Some(7)),
         DeviceModel::L10 => (10, 10, 10, 10, 10, None, Some(10)),
-        DeviceModel::L20 => (20, 20, 5, 20, 5, Some(5), None),
-        DeviceModel::G20 => (20, 20, 20, 20, 5, None, Some(5)),
+        DeviceModel::L20 => (20, 20, 5, 20, 20, Some(5), None),
+        DeviceModel::G20 => (20, 20, 20, 20, 20, None, Some(5)),
         DeviceModel::L21 | DeviceModel::L25 => (25, 25, 21, 25, 25, None, Some(5)),
     }
 }

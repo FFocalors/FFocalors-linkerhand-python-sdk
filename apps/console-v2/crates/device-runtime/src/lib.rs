@@ -5,6 +5,72 @@ use console_contracts::{
 };
 use device_adapter_api::{AdapterError, DeviceAdapter};
 use thiserror::Error;
+
+fn vector(length: usize, available: bool) -> console_contracts::VectorCapability {
+    console_contracts::VectorCapability {
+        length: length as u16,
+        available,
+        range: console_contracts::RawRange {
+            min: console_contracts::RAW_MIN,
+            max: console_contracts::RAW_MAX,
+        },
+    }
+}
+
+/// Return the model's offline capability declaration without touching the
+/// adapter.  This keeps the workspace readable before an operator explicitly
+/// connects a device; a successful connect replaces it with the adapter's
+/// authoritative capabilities.
+pub fn offline_capabilities(config: &DeviceConfig) -> DeviceCapabilities {
+    use console_contracts::{DeviceModel, SidecarOperation};
+    let (joints, position, speed, current, touch, speed_command, current_command, torque_command) =
+        match config.model {
+            DeviceModel::O6 | DeviceModel::L6 => (6, 6, 6, 6, 6, 6, None, Some(6)),
+            DeviceModel::L7 => (7, 7, 7, 7, 7, 7, None, Some(7)),
+            DeviceModel::L10 => (10, 10, 10, 10, 10, 10, None, Some(10)),
+            DeviceModel::L20 => (20, 20, 20, 5, 20, 5, Some(5), None),
+            DeviceModel::G20 => (20, 20, 20, 20, 20, 5, None, Some(5)),
+            DeviceModel::L21 | DeviceModel::L25 => (25, 25, 25, 21, 25, 25, None, Some(5)),
+        };
+    let mut supported_operations = vec![
+        SidecarOperation::Connect,
+        SidecarOperation::Disconnect,
+        SidecarOperation::Capabilities,
+        SidecarOperation::GetTelemetry,
+        SidecarOperation::GetPosition,
+        SidecarOperation::GetCurrent,
+        SidecarOperation::GetSpeed,
+        SidecarOperation::GetTouch,
+        SidecarOperation::SetPosition,
+        SidecarOperation::SetSpeed,
+        SidecarOperation::Stop,
+        SidecarOperation::Unlock,
+        SidecarOperation::Close,
+    ];
+    if current_command.is_some() {
+        supported_operations.push(SidecarOperation::SetCurrent);
+    }
+    if torque_command.is_some() {
+        supported_operations.push(SidecarOperation::SetTorque);
+    }
+    DeviceCapabilities {
+        schema_version: console_contracts::CURRENT_SCHEMA_VERSION,
+        device_id: config.device_id.clone(),
+        model: config.model.clone(),
+        hand: config.hand.clone(),
+        transport: config.transport.clone(),
+        joint_count: joints,
+        position: vector(position, true),
+        speed: vector(speed, true),
+        current: vector(current, true),
+        torque: vector(torque_command.unwrap_or(0), torque_command.is_some()),
+        touch: vector(touch, true),
+        speed_command_length: speed_command,
+        current_command_length: current_command,
+        torque_command_length: torque_command.map(|value| value as u16),
+        supported_operations,
+    }
+}
 #[derive(Debug, Error)]
 pub enum RuntimeError {
     #[error("adapter: {0}")]
@@ -22,12 +88,13 @@ pub struct DeviceRuntime {
 }
 impl DeviceRuntime {
     pub fn new(config: DeviceConfig) -> Self {
+        let capabilities = offline_capabilities(&config);
         Self {
             config,
             state: ConnectionState::Disconnected,
             attempt: 0,
             last_error: None,
-            capabilities: None,
+            capabilities: Some(capabilities),
             adapter: None,
         }
     }
@@ -57,7 +124,11 @@ impl DeviceRuntime {
     pub fn connect(&mut self) -> Result<(), RuntimeError> {
         self.state = ConnectionState::Connecting;
         self.attempt += 1;
-        let a = self.adapter.as_mut().ok_or(RuntimeError::NoAdapter)?;
+        let Some(a) = self.adapter.as_mut() else {
+            self.state = ConnectionState::Error;
+            self.last_error = Some(RuntimeError::NoAdapter.to_string());
+            return Err(RuntimeError::NoAdapter);
+        };
         match a.connect() {
             Ok(c) => {
                 self.capabilities = Some(c);
@@ -81,7 +152,6 @@ impl DeviceRuntime {
             a.disconnect()?;
         }
         self.state = ConnectionState::Disconnected;
-        self.capabilities = None;
         Ok(())
     }
     pub fn capabilities(&self) -> Option<&DeviceCapabilities> {
@@ -152,5 +222,51 @@ mod tests {
         assert_eq!(*r.state(), ConnectionState::Disconnected);
         r.reconnect().unwrap();
         assert_eq!(*r.state(), ConnectionState::Connected);
+    }
+
+    #[test]
+    fn offline_capabilities_do_not_connect_or_require_an_adapter() {
+        let runtime = DeviceRuntime::new(DeviceConfig::new("offline", "offline"));
+        assert_eq!(*runtime.state(), ConnectionState::Disconnected);
+        assert_eq!(runtime.capabilities().unwrap().joint_count, 6);
+    }
+
+    #[test]
+    fn explicit_connect_is_the_only_operation_that_requires_hardware() {
+        let mut runtime = DeviceRuntime::new(DeviceConfig::new("offline", "offline"));
+        assert!(matches!(runtime.connect(), Err(RuntimeError::NoAdapter)));
+        assert_eq!(*runtime.state(), ConnectionState::Error);
+    }
+
+    #[test]
+    fn offline_matrix_matches_raw_capability_snapshot_for_every_model() {
+        use console_contracts::DeviceModel;
+        let expected = [
+            (DeviceModel::O6, 6, 6, 6, 6, 6, None, Some(6)),
+            (DeviceModel::L6, 6, 6, 6, 6, 6, None, Some(6)),
+            (DeviceModel::L7, 7, 7, 7, 7, 7, None, Some(7)),
+            (DeviceModel::L10, 10, 10, 10, 10, 10, None, Some(10)),
+            (DeviceModel::L20, 20, 20, 5, 20, 5, Some(5), None),
+            (DeviceModel::G20, 20, 20, 20, 20, 5, None, Some(5)),
+            (DeviceModel::L21, 25, 25, 21, 25, 25, None, Some(5)),
+            (DeviceModel::L25, 25, 25, 21, 25, 25, None, Some(5)),
+        ];
+        for (model, position, speed, current, touch, speed_command, current_command, torque) in
+            expected
+        {
+            let mut config = DeviceConfig::new("offline", "offline");
+            config.model = model;
+            let actual = offline_capabilities(&config);
+            assert_eq!(actual.position.length as usize, position);
+            assert_eq!(actual.speed.length as usize, speed);
+            assert_eq!(actual.current.length as usize, current);
+            assert_eq!(actual.touch.length as usize, touch);
+            assert_eq!(actual.speed_command_length as usize, speed_command);
+            assert_eq!(
+                actual.current_command_length.map(usize::from),
+                current_command
+            );
+            assert_eq!(actual.torque_command_length.map(usize::from), torque);
+        }
     }
 }

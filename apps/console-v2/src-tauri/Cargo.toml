@@ -15,3 +15,6 @@ sidecar-client = { path = "../crates/sidecar-client" }
 adaptive-grasp = { path = "../crates/adaptive-grasp" }
 action-engine = { path = "../crates/action-engine" }
 tokio = { version = "1", features = ["sync"] }
+[dev-dependencies]
+device-adapter-api = { path = "../crates/device-adapter-api" }
+device-simulator = { path = "../crates/device-simulator" }

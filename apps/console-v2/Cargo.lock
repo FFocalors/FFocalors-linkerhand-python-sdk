@@ -1815,6 +1815,8 @@ dependencies = [
  "adaptive-grasp",
  "app-runtime",
  "console-contracts",
+ "device-adapter-api",
+ "device-simulator",
  "serde",
  "serde_json",
  "sidecar-client",

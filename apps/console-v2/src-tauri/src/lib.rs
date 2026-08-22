@@ -291,28 +291,17 @@ impl RuntimeActor {
                 let _ = reply.send(Ok(app_runtime::ui::DevicePort::get_config(&self.runtime)));
             }
             ActorRequest::Capabilities { reply } => {
-                let result = if let Some(capabilities) =
-                    app_runtime::ui::DevicePort::get_capabilities(&self.runtime)
-                {
-                    Ok(capabilities)
-                } else {
-                    self.runtime
-                        .connect()
-                        .map(|_| app_runtime::ui::DevicePort::get_capabilities(&self.runtime))
-                        .map_err(map_error)
-                        .and_then(|value| {
-                            value.ok_or_else(|| {
-                                app_error(
-                                    "NOT_CONNECTED",
-                                    "capabilities unavailable after connect",
-                                    true,
-                                )
-                            })
-                        })
-                };
-                if result.is_ok() {
-                    self.broadcast_connection(self.runtime.device.snapshot());
-                }
+                // Capabilities are a read-only model declaration until the
+                // operator connects.  DeviceRuntime replaces it with the
+                // adapter response after a successful explicit connect.
+                let result = app_runtime::ui::DevicePort::get_capabilities(&self.runtime)
+                    .ok_or_else(|| {
+                        app_error(
+                            "CAPABILITIES_UNAVAILABLE",
+                            "capabilities are not available for this device configuration",
+                            true,
+                        )
+                    });
                 let _ = reply.send(result);
             }
             ActorRequest::Connection { reply } => {
@@ -1208,7 +1197,99 @@ pub fn run() {
 mod tests {
     use super::*;
     use console_contracts::{CommandSource, CURRENT_SCHEMA_VERSION};
+    use device_adapter_api::DeviceAdapter;
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    struct CapturingAdapter {
+        inner: device_simulator::DeviceSimulator,
+        writes: Arc<Mutex<Vec<JointTargetCommand>>>,
+    }
+    impl DeviceAdapter for CapturingAdapter {
+        fn id(&self) -> &str {
+            self.inner.id()
+        }
+        fn connect(&mut self) -> device_adapter_api::AdapterResult<DeviceCapabilities> {
+            self.inner.connect()
+        }
+        fn disconnect(&mut self) -> device_adapter_api::AdapterResult<()> {
+            self.inner.disconnect()
+        }
+        fn is_connected(&self) -> bool {
+            self.inner.is_connected()
+        }
+        fn capabilities(&self) -> Option<&DeviceCapabilities> {
+            self.inner.capabilities()
+        }
+        fn send_joint_target(
+            &mut self,
+            command: &JointTargetCommand,
+        ) -> device_adapter_api::AdapterResult<()> {
+            self.writes.lock().unwrap().push(command.clone());
+            self.inner.send_joint_target(command)
+        }
+        fn read_telemetry(
+            &mut self,
+            now: u64,
+        ) -> device_adapter_api::AdapterResult<TelemetrySnapshot> {
+            self.inner.read_telemetry(now)
+        }
+        fn stop(&mut self) -> device_adapter_api::AdapterResult<()> {
+            self.inner.stop()
+        }
+        fn unlock(&mut self) -> device_adapter_api::AdapterResult<()> {
+            self.inner.unlock()
+        }
+        fn shutdown(&mut self) -> device_adapter_api::AdapterResult<()> {
+            self.inner.shutdown()
+        }
+    }
+
+    fn spawn_capturing_runtime() -> (RuntimeHandle, Arc<Mutex<Vec<JointTargetCommand>>>) {
+        let config = DeviceConfig::new("capture", "capture O6");
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let mut runtime = AppRuntime::new(config, adaptive_grasp::Profile::O6);
+        runtime.install_adapter(Box::new(CapturingAdapter {
+            inner: device_simulator::DeviceSimulator::new("capture", 6),
+            writes: writes.clone(),
+        }));
+        let (tx, rx) = mpsc::sync_channel(128);
+        let control_state = Arc::new(std::sync::atomic::AtomicU8::new(0));
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicBool::new(false));
+        let actor_control = control_state.clone();
+        let actor_shutdown = shutdown_requested.clone();
+        let actor_stopped = stopped.clone();
+        thread::Builder::new()
+            .name("capture-runtime-actor".into())
+            .spawn(move || {
+                RuntimeActor {
+                    runtime,
+                    rx,
+                    telemetry_channels: Vec::new(),
+                    connection_channels: Vec::new(),
+                    operation_channels: Vec::new(),
+                    action_channels: Vec::new(),
+                    grasp_channels: Vec::new(),
+                    latest: None,
+                    control_state: actor_control,
+                    shutdown_requested: actor_shutdown,
+                    applied_control: 0,
+                    stopped: actor_stopped,
+                }
+                .run()
+            })
+            .unwrap();
+        (
+            RuntimeHandle {
+                tx,
+                control_state,
+                shutdown_requested,
+                stopped,
+            },
+            writes,
+        )
+    }
 
     fn command(id: &str, value: f64, final_command: bool) -> JointTargetCommand {
         JointTargetCommand {
@@ -1328,7 +1409,7 @@ mod tests {
 
     #[test]
     fn actor_records_and_replays_through_motion_engine() {
-        let handle = spawn_runtime();
+        let (handle, writes) = spawn_capturing_runtime();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1370,6 +1451,7 @@ mod tests {
                 reply,
             }))
             .unwrap();
+        writes.lock().unwrap().clear();
         runtime
             .block_on(dispatch(handle.clone(), |reply| {
                 ActorRequest::ActionFinishRecording { reply }
@@ -1394,18 +1476,25 @@ mod tests {
             }))
             .unwrap();
         std::thread::sleep(Duration::from_millis(120));
+        let replay = writes.lock().unwrap().clone();
+        assert!(replay.iter().any(|item| {
+            item.source == CommandSource::Playback
+                && item.positions == vec![0.77; 6]
+                && item.final_command
+        }));
         let latest = runtime
             .block_on(dispatch(handle.clone(), |reply| {
                 ActorRequest::ReadTelemetry { reply }
             }))
             .unwrap();
-        assert_eq!(latest.positions, vec![196.0 / 255.0; 6]);
+        assert_eq!(latest.positions, vec![0.77; 6]);
+        assert_eq!(latest.raw_position, vec![196; 6]);
         handle.shutdown();
     }
 
     #[test]
     fn actor_grasp_uses_telemetry_and_stop_clears_controllers() {
-        let handle = spawn_runtime();
+        let (handle, writes) = spawn_capturing_runtime();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -1458,8 +1547,18 @@ mod tests {
             state.phase.as_str(),
             "calibrating" | "ready" | "approach" | "grasping"
         ));
+        std::thread::sleep(Duration::from_millis(120));
+        let grasp_writes = writes.lock().unwrap().clone();
+        assert!(grasp_writes.iter().any(|item| {
+            item.source == CommandSource::Grasp
+                && item.positions.len() == 6
+                && item.positions.iter().all(|value| value.is_finite())
+        }));
         handle.control_state.store(1, Ordering::Release);
         std::thread::sleep(Duration::from_millis(80));
+        let writes_after_stop = writes.lock().unwrap().len();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(writes.lock().unwrap().len(), writes_after_stop);
         assert!(runtime
             .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
                 command: command("after-stop", 0.2, false),
