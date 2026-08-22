@@ -14,8 +14,9 @@ SCHEMA_VERSION = 1
 OPERATIONS = frozenset({
     "connect", "disconnect", "capabilities", "getTelemetry", "getPosition",
     "getCurrent", "getSpeed", "getTouch", "setPosition", "setSpeed",
-    "setCurrent", "setTorque", "stop", "close",
+    "setCurrent", "setTorque", "stop", "unlock", "close",
 })
+MESSAGE_TYPES = frozenset({"request", "command", "response", "event", "error"})
 REQUEST_FIELDS = frozenset({"schemaVersion", "messageType", "requestId", "sequence", "monotonicTimeMs", "operation", "payload"})
 
 
@@ -60,8 +61,10 @@ def validate_request(request: Any) -> dict[str, Any]:
         raise ProtocolError("UNKNOWN_OPERATION", f"unsupported operation: {operation}")
     payload = obj.get("payload", {})
     _expect_object(payload, "payload")
-    if "messageType" in obj and obj["messageType"] not in ("command", "request"):
-        raise ProtocolError("INVALID_REQUEST", "messageType must be command or request")
+    if obj["messageType"] not in MESSAGE_TYPES:
+        raise ProtocolError("INVALID_REQUEST", "messageType is not supported")
+    if obj["messageType"] not in ("command", "request"):
+        raise ProtocolError("INVALID_REQUEST", "incoming messageType must be command or request")
     if "sequence" in obj and (isinstance(obj["sequence"], bool) or not isinstance(obj["sequence"], int) or obj["sequence"] < 0):
         raise ProtocolError("INVALID_REQUEST", "sequence must be a non-negative integer")
     if "monotonicTimeMs" in obj and (isinstance(obj["monotonicTimeMs"], bool) or not isinstance(obj["monotonicTimeMs"], (int, float))):

@@ -52,7 +52,7 @@ impl LogStore {
         for e in self
             .entries
             .iter()
-            .filter(|e| cursor.is_none_or(|c| e.sequence > c))
+            .filter(|e| cursor.is_none_or(|c| e.monotonic_time_ms > c))
             .filter(|e| {
                 filter.is_none_or(|f| {
                     f.min_level.as_ref().is_none_or(|l| &e.level >= l)
@@ -63,7 +63,7 @@ impl LogStore {
         {
             out.push(e.clone());
         }
-        let next = out.last().map(|e| e.sequence);
+        let next = out.last().map(|e| e.monotonic_time_ms);
         LogPage {
             entries: out,
             next_cursor: next,
@@ -81,8 +81,8 @@ mod tests {
     fn e(i: u64) -> StructuredLogEntry {
         StructuredLogEntry {
             schema_version: 1,
-            sequence: i,
-            monotonic_ms: i,
+            id: i.to_string(),
+            monotonic_time_ms: i,
             level: LogLevel::Info,
             event: "x".into(),
             message: i.to_string(),

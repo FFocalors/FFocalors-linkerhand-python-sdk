@@ -1,7 +1,7 @@
 //! Connection state machine and adapter lifecycle management.
 use console_contracts::{
-    ConnectionSnapshot, ConnectionState, DeviceCapabilities, DeviceConfig, JointTargetCommand,
-    TelemetrySnapshot,
+    AppError, ConnectionSnapshot, ConnectionState, DeviceCapabilities, DeviceConfig,
+    JointTargetCommand, TelemetrySnapshot,
 };
 use device_adapter_api::{AdapterError, DeviceAdapter};
 use thiserror::Error;
@@ -37,13 +37,21 @@ impl DeviceRuntime {
     pub fn state(&self) -> &ConnectionState {
         &self.state
     }
+    pub fn config(&self) -> &DeviceConfig {
+        &self.config
+    }
     pub fn snapshot(&self) -> ConnectionSnapshot {
         ConnectionSnapshot {
             schema_version: 1,
             device_id: self.config.device_id.clone(),
             state: self.state.clone(),
             attempt: self.attempt,
-            last_error: self.last_error.clone(),
+            last_error: self.last_error.as_ref().map(|message| AppError {
+                code: "DEVICE_ERROR".into(),
+                message: message.clone(),
+                retryable: true,
+                details: None,
+            }),
         }
     }
     pub fn connect(&mut self) -> Result<(), RuntimeError> {
@@ -58,7 +66,7 @@ impl DeviceRuntime {
                 Ok(())
             }
             Err(e) => {
-                self.state = ConnectionState::Faulted;
+                self.state = ConnectionState::Error;
                 self.last_error = Some(e.to_string());
                 Err(e.into())
             }

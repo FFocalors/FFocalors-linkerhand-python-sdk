@@ -49,9 +49,12 @@ impl ActionEngine {
     pub fn start_recording(&mut self, id: impl Into<String>, name: impl Into<String>) {
         self.recording = Some(ActionRecording {
             schema_version: 1,
-            action_id: id.into(),
+            id: id.into(),
             name: name.into(),
             frames: vec![],
+            duration_ms: 0,
+            steps: 0,
+            updated_at: String::new(),
         });
     }
     pub fn record(&mut self, frame: JointTargetCommand) -> Result<(), ActionError> {
@@ -112,6 +115,9 @@ impl ActionEngine {
     pub fn loop_count(&self) -> u32 {
         self.loops_done
     }
+    pub fn list(&self) -> Vec<ActionRecording> {
+        self.recording.clone().into_iter().collect()
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -121,7 +127,7 @@ mod tests {
             schema_version: 1,
             command_id: i.to_string(),
             source: console_contracts::CommandSource::Playback,
-            joints: vec![i as f64],
+            positions: vec![i as f64],
             duration_ms: None,
             final_command: false,
         }

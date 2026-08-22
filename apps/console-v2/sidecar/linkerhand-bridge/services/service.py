@@ -9,7 +9,7 @@ from protocol.schema import ProtocolError, validate_vector
 from .worker import CommandWorker
 
 
-_CONNECT_FIELDS = {"model", "hand", "transport", "mode", "sdkRoot"}
+_CONNECT_FIELDS = {"deviceId", "model", "hand", "transport", "mode", "sdkRoot"}
 _TRANSPORT_FIELDS = {"can": {"type", "channel"}, "rs485": {"type", "port", "baudrate"}}
 
 
@@ -22,6 +22,7 @@ class SidecarService:
         self.adapter: BaseAdapter | None = None
         self.config: dict[str, Any] | None = None
         self.closing = False
+        self.write_locked = False
 
     def _strict(self, payload: dict[str, Any], allowed: set[str], name: str) -> None:
         unknown = sorted(set(payload) - allowed)
@@ -47,6 +48,8 @@ class SidecarService:
 
     def _connect(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._strict(payload, _CONNECT_FIELDS, "connect")
+        device_id = payload.get("deviceId")
+        if not isinstance(device_id, str) or not device_id: raise ProtocolError("INVALID_ARGUMENT", "deviceId is required")
         model = payload.get("model")
         if not isinstance(model, str) or model.upper() not in MODEL_SPECS: raise ProtocolError("INVALID_ARGUMENT", "unsupported model")
         model = model.upper()
@@ -71,7 +74,7 @@ class SidecarService:
         if self.adapter is not None:
             self._run(lambda: self.adapter.close())
         self.adapter = self.adapter_factory(model, hand, transport, mode=mode, sdk_root=sdk_root, output=self.output)
-        self.config = {"model": model, "hand": hand, "transport": transport, "mode": mode}
+        self.config = {"deviceId": device_id, "model": model, "hand": hand, "transport": transport, "mode": mode}
         return self._run(lambda: self.adapter.connect())
 
     def _read(self, operation: str) -> Any:
@@ -85,6 +88,8 @@ class SidecarService:
 
     def _write(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         adapter = self._connected()
+        if self.write_locked:
+            raise ProtocolError("STOPPED", "device writes are locked after stop; unlock is required")
         fields = {"setPosition": ("positions", adapter.spec.position_length, adapter.set_position), "setSpeed": ("speeds", adapter.spec.speed_command_length, adapter.set_speed), "setCurrent": ("currents", adapter.spec.current_command_length, adapter.set_current), "setTorque": ("torques", adapter.spec.torque_command_length, adapter.set_torque)}
         field, size, method = fields[operation]
         self._strict(payload, {field}, operation)
@@ -99,7 +104,13 @@ class SidecarService:
         if operation == "capabilities":
             self._strict(payload, set(), operation)
             if self.adapter is None: raise ProtocolError("NOT_CONNECTED", "connect before querying capabilities", retryable=True)
-            return self.adapter.capabilities()
+            result = dict(self.adapter.capabilities())
+            result["deviceId"] = (self.config or {}).get("deviceId", "sidecar-device")
+            result["supportedOperations"] = sorted({*result.get("writeCapabilities", []), "connect", "disconnect", "capabilities", "getTelemetry", "getPosition", "getCurrent", "getSpeed", "getTouch", "stop", "unlock", "close"})
+            for key, length, available in (("position", result["positionLength"], True), ("speed", result["speedLength"], True), ("current", result["currentLength"], True), ("touch", result["positionLength"], True), ("torque", result["torqueCommandLength"] or 0, result["torqueCommandLength"] is not None)):
+                result[key] = {"length": length, "available": available, "range": {"min": 0, "max": 255}}
+            result["transport"] = self.config["transport"]
+            return result
         if operation in {"getPosition", "getCurrent", "getSpeed", "getTouch"}: return self._read(operation)
         if operation == "getTelemetry":
             self._strict(payload, set(), operation); return self._telemetry()
@@ -110,7 +121,13 @@ class SidecarService:
             return {"disconnected": True}
         if operation == "stop":
             self._strict(payload, set(), operation)
-            return {"stopped": True}
+            self._run(lambda: None)  # queue barrier: all prior SDK work is complete
+            self.write_locked = True
+            return {"stopped": True, "softwareLocked": True}
+        if operation == "unlock":
+            self._strict(payload, set(), operation)
+            self.write_locked = False
+            return {"unlocked": True, "softwareLocked": False}
         if operation == "close":
             self._strict(payload, set(), operation)
             if self.adapter is not None: self._run(self.adapter.close)

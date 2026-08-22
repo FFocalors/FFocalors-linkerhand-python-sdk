@@ -41,7 +41,7 @@ def test_writer_sequence_and_monotonic_time():
 
 def test_cli_fake_telemetry_and_protocol_purity():
     incoming = "\n".join([
-        json.dumps(envelope("c", "connect", {"model": "L7", "hand": "right", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"}, 1)),
+        json.dumps(envelope("c", "connect", {"deviceId": "test", "model": "L7", "hand": "right", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"}, 1)),
         json.dumps(envelope("p", "setPosition", {"positions": list(range(7))}, 2)),
         json.dumps(envelope("t", "getTelemetry", {}, 3)),
         json.dumps(envelope("z", "close", {}, 4)),
@@ -77,7 +77,7 @@ def test_cli_subprocess_bad_json_continues_and_close_exits():
     main_path = Path(__file__).resolve().parents[1] / "main.py"
     rows = [
         "not-json",
-        json.dumps(envelope("c", "connect", {"model": "O6", "hand": "left", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"}, 1)),
+        json.dumps(envelope("c", "connect", {"deviceId": "test", "model": "O6", "hand": "left", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"}, 1)),
         json.dumps(envelope("t", "getTelemetry", {}, 2)),
         json.dumps(envelope("z", "close", {}, 3)),
         json.dumps(envelope("after", "capabilities", {}, 4)),

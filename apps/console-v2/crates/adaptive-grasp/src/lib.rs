@@ -8,6 +8,9 @@ pub enum Profile {
     L7,
     L10,
     L20,
+    G20,
+    L21,
+    L25,
 }
 impl Profile {
     pub fn joint_count(&self) -> usize {
@@ -17,6 +20,8 @@ impl Profile {
             Self::L7 => 7,
             Self::L10 => 10,
             Self::L20 => 20,
+            Self::G20 => 20,
+            Self::L21 | Self::L25 => 25,
         }
     }
 }
@@ -117,6 +122,9 @@ mod tests {
             Profile::L7,
             Profile::L10,
             Profile::L20,
+            Profile::G20,
+            Profile::L21,
+            Profile::L25,
         ] {
             let n = p.joint_count();
             let mut g = GraspMachine::new(p);

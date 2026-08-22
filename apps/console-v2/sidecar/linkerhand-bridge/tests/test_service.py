@@ -7,7 +7,7 @@ from services.service import SidecarService
 
 def connected(model="L10"):
     service = SidecarService()
-    service.execute("connect", {"model": model, "hand": "left", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"})
+    service.execute("connect", {"deviceId": "test", "model": model, "hand": "left", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"})
     return service
 
 
@@ -34,7 +34,7 @@ def test_exact_length_and_range_are_errors():
 def test_unsupported_transport_and_capability():
     service = SidecarService()
     with pytest.raises(ProtocolError) as exc:
-        service.execute("connect", {"model": "L20", "hand": "left", "transport": {"type": "rs485", "port": "COM3"}, "mode": "fake"})
+        service.execute("connect", {"deviceId": "test", "model": "L20", "hand": "left", "transport": {"type": "rs485", "port": "COM3"}, "mode": "fake"})
     assert exc.value.code == "UNSUPPORTED_TRANSPORT"
     service = connected("L10")
     with pytest.raises(ProtocolError) as exc:
@@ -70,4 +70,15 @@ def test_disconnect_is_recoverable_boundary():
     with pytest.raises(ProtocolError) as exc:
         service.execute("getPosition", {})
     assert exc.value.code == "NOT_CONNECTED"
+    service.shutdown()
+
+
+def test_stop_is_a_write_barrier_until_explicit_unlock():
+    service = connected("L10")
+    assert service.execute("stop", {}) == {"stopped": True, "softwareLocked": True}
+    with pytest.raises(ProtocolError) as exc:
+        service.execute("setPosition", {"positions": [1] * 10})
+    assert exc.value.code == "STOPPED"
+    assert service.execute("unlock", {}) == {"unlocked": True, "softwareLocked": False}
+    assert service.execute("setPosition", {"positions": [1] * 10})["accepted"]
     service.shutdown()

@@ -79,6 +79,9 @@ impl TelemetryStore {
     pub fn frames(&self) -> &RingBuffer<TelemetrySnapshot> {
         &self.frames
     }
+    pub fn latest(&self) -> Option<&TelemetrySnapshot> {
+        self.status.iter().last()
+    }
     pub fn sample_frames(&self, every_n: usize) -> Vec<&TelemetrySnapshot> {
         let n = every_n.max(1);
         self.frames
@@ -102,9 +105,12 @@ mod tests {
             schema_version: 1,
             device_id: "d".into(),
             sequence: i,
-            monotonic_ms: i,
-            joints: vec![],
-            forces: vec![],
+            monotonic_time_ms: i,
+            positions: vec![],
+            raw_position: vec![],
+            raw_current: vec![],
+            raw_speed: vec![],
+            raw_touch: vec![],
             connected: true,
         }
     }

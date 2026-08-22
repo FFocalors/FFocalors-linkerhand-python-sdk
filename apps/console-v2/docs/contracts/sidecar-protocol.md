@@ -13,7 +13,7 @@ echoed. Errors use `messageType: "error"` and
 `INVALID_JSON`, `INVALID_REQUEST`, `UNKNOWN_FIELD`, `SCHEMA_UNSUPPORTED`,
 `UNKNOWN_OPERATION`, `INVALID_ARGUMENT`, `UNSUPPORTED_TRANSPORT`,
 `UNSUPPORTED_CAPABILITY`, `NOT_CONNECTED`, `SDK_UNAVAILABLE`, `SDK_ERROR`, and
-`TIMEOUT`.
+`TIMEOUT`, and `STOPPED` (writes rejected until unlock).
 
 Requests must contain the complete envelope fields `schemaVersion`,
 `messageType` (`command` or `request`), `requestId`, non-negative integer
@@ -21,13 +21,14 @@ Requests must contain the complete envelope fields `schemaVersion`,
 unknown fields are rejected.
 Supported operations are `connect`, `disconnect`, `capabilities`,
 `getTelemetry`, `getPosition`, `getCurrent`, `getSpeed`, `getTouch`,
-`setPosition`, `setSpeed`, `setCurrent`, `setTorque`, `stop`, and `close`.
+`setPosition`, `setSpeed`, `setCurrent`, `setTorque`, `stop`, `unlock`, and
+`close`.
 Unknown fields are rejected.
 
-`connect` payload:
+`connect` payload (deviceId is required and echoed in capabilities):
 
 ```json
-{"model":"L10","hand":"left","transport":{"type":"can","channel":"PCAN_USBBUS1"},"mode":"real","sdkRoot":"D:/sdk"}
+{"deviceId":"demo","model":"L10","hand":"left","transport":{"type":"can","channel":"PCAN_USBBUS1"},"mode":"real","sdkRoot":"D:/sdk"}
 ```
 
 CAN accepts only `type` and `channel`; RS485 accepts only `type`, `port`, and
@@ -43,7 +44,8 @@ payload names are `positions`, `speeds`, `currents`, and `torques` respectively.
 
 `getTelemetry` returns all four keys (`position`, `current`, `speed`, `touch`).
 `stop` is the sidecar runtime stop-path confirmation/barrier: subsequent
-commands are ordered after the stop acknowledgement. It does not represent
+commands are ordered after the stop acknowledgement and all `set*` writes are
+rejected until an explicit `unlock`. It does not represent
 physical power removal or a hardware emergency-stop primitive that the legacy
 SDK does not expose. `disconnect` is
 recoverable; `close` shuts down the process after its response.

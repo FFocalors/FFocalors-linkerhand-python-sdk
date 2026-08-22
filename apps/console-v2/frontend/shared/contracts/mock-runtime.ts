@@ -1,17 +1,23 @@
-import type { ConsolePorts, DeviceCapabilities, DeviceConfig, TelemetrySnapshot, StructuredLogEntry } from './index';
+import type { ConsolePorts, DeviceCapabilities, DeviceConfig, StructuredLogEntry, TelemetrySnapshot } from './index';
 
-const config: DeviceConfig = { id: 'lh-o6-001', name: '演示机械手 O6', model: 'O6', address: '192.168.1.42' };
-const capabilities: DeviceCapabilities = { model: 'O6', jointCount: 6, visionSync: true, tactile: true };
-const logs: StructuredLogEntry[] = [{ id: '1', time: '刚刚', level: 'info', message: '已连接到演示机械手', source: 'runtime' }, { id: '2', time: '1 分钟前', level: 'info', message: '工作区已准备就绪', source: 'workspace' }];
+const config: DeviceConfig = { schemaVersion: 1, deviceId: 'lh-o6-001', name: '演示机械手 O6', model: 'O6', hand: 'left', transport: { type: 'can', channel: 'fake' }, autoReconnect: true };
+const lengths = (n: number) => ({ length: n, available: true, range: { min: 0, max: 255 } });
+const capabilities: DeviceCapabilities = { schemaVersion: 1, deviceId: config.deviceId, model: config.model, hand: config.hand, transport: config.transport, jointCount: 6, position: lengths(6), speed: lengths(6), current: lengths(6), torque: lengths(6), touch: lengths(6), speedCommandLength: 6, currentCommandLength: null, torqueCommandLength: 6, supportedOperations: ['connect', 'disconnect', 'capabilities', 'getTelemetry', 'getPosition', 'getCurrent', 'getSpeed', 'getTouch', 'setPosition', 'setSpeed', 'setTorque', 'stop', 'unlock', 'close'] };
+const logs: StructuredLogEntry[] = [{ schemaVersion: 1, id: '1', monotonicTimeMs: 1, level: 'info', event: 'connected', message: '已连接到演示机械手', fields: { source: 'runtime' } }];
 let locked = false;
-const telemetry: TelemetrySnapshot = { timestamp: Date.now(), joints: { J1: 12, J2: -8, J3: 34, J4: 5, J5: 18, J6: 0 }, currentMa: 620, temperatureC: 31.4 };
+const telemetry: TelemetrySnapshot = { schemaVersion: 1, deviceId: config.deviceId, sequence: 0, monotonicTimeMs: 0, positions: [.55, .47, .63, .52, .58, .5], rawPosition: [140, 120, 161, 133, 148, 128], rawCurrent: [62, 62, 62, 62, 62, 62], rawSpeed: [100, 100, 100, 100, 100, 100], rawTouch: [0, 0, 0, 0, 0, 0], connected: true };
+const snapshot = (): TelemetrySnapshot => { telemetry.sequence += 1; telemetry.monotonicTimeMs = Date.now(); return { ...telemetry, positions: [...telemetry.positions], rawPosition: [...telemetry.rawPosition], rawCurrent: [...telemetry.rawCurrent], rawSpeed: [...telemetry.rawSpeed], rawTouch: [...telemetry.rawTouch] }; };
 
 export const mockRuntime: ConsolePorts = {
-  device: { async getConfig() { return config; }, async getCapabilities() { return capabilities; }, async getConnection() { return { state: 'connected', latencyMs: 12, lastSeen: '刚刚' }; }, async setJointTarget(command) { telemetry.joints[command.joint] = command.value; logs.unshift({ id: String(Date.now()), time: '刚刚', level: 'info', message: `${command.joint} 已更新为 ${command.value}°`, source: 'device' }); }, async stopAll() { locked = true; logs.unshift({ id: String(Date.now()), time: '刚刚', level: 'warn', message: '全部动作已停止，控制已锁定', source: 'safety' }); }, async unlock() { locked = false; logs.unshift({ id: String(Date.now()), time: '刚刚', level: 'info', message: '控制已恢复', source: 'safety' }); } },
-  motion: { async getOperation() { return { state: locked ? 'locked' : 'idle', label: locked ? '等待恢复' : '就绪', progress: 0 }; }, async runAction() {}, async pause() {} },
-  telemetry: { async read() { return { ...telemetry, timestamp: Date.now(), joints: { ...telemetry.joints } }; }, subscribe(listener) { const id = window.setInterval(() => void this.read().then(listener), 1800); return () => window.clearInterval(id); } },
-  actions: { async list() { return [{ id: 'home', name: '回到安全位', durationMs: 3500, steps: 6, updatedAt: '今天 14:20' }, { id: 'wave', name: '挥手示意', durationMs: 4200, steps: 9, updatedAt: '昨天 09:12' }, { id: 'pick', name: '轻拿轻放', durationMs: 6800, steps: 14, updatedAt: '周一 16:40' }]; }, async delete() {} },
+  device: {
+    async getConfig() { return config; }, async getCapabilities() { return capabilities; }, async getConnection() { return { schemaVersion: 1, deviceId: config.deviceId, state: 'connected', attempt: 1, lastError: null }; },
+    async setJointTarget(command) { if (locked) return; telemetry.positions = [...command.positions]; telemetry.rawPosition = command.positions.map(v => Math.round(v * 255)); logs.unshift({ schemaVersion: 1, id: String(Date.now()), monotonicTimeMs: Date.now(), level: 'info', event: 'position.updated', message: '关节目标已更新', fields: { source: command.source } }); },
+    async stopAll() { locked = true; logs.unshift({ schemaVersion: 1, id: String(Date.now()), monotonicTimeMs: Date.now(), level: 'warn', event: 'motion.stopped', message: '全部动作已停止，控制已锁定', fields: {} }); }, async unlock() { locked = false; logs.unshift({ schemaVersion: 1, id: String(Date.now()), monotonicTimeMs: Date.now(), level: 'info', event: 'motion.unlocked', message: '控制已恢复', fields: {} }); }
+  },
+  motion: { async getOperation() { return { schemaVersion: 1, operationId: 'motion', kind: 'motion', state: locked ? 'locked' : 'idle', progress: 0, detail: null }; }, async runAction() {}, async pause() {} },
+  telemetry: { async read() { return snapshot(); }, subscribe(listener) { const id = window.setInterval(() => listener(snapshot()), 1800); return () => window.clearInterval(id); } },
+  actions: { async list() { return []; }, async delete() {} },
   grasp: { async listPresets() { return [{ id: 'soft', name: '柔软物体', description: '低力度包络抓取' }, { id: 'cube', name: '方形物体', description: '稳定的平行夹持' }, { id: 'precision', name: '精细拾取', description: '指尖精确定位' }]; }, async runPreset() {} },
-  vision: { async propose() { return [{ id: 'pose-1', label: '拿起蓝色杯子', confidence: .94, joints: { J1: 16, J2: -14, J3: 42 } }, { id: 'pose-2', label: '向前伸手', confidence: .81, joints: { J1: 3, J2: -4, J3: 20 } }]; }, async sync() {} },
+  vision: { async propose() { return [{ schemaVersion: 1, id: 'pose-1', label: '拿起蓝色杯子', confidence: .94, positions: [.56, .45, .66, .5, .58, .5] }, { schemaVersion: 1, id: 'pose-2', label: '向前伸手', confidence: .81, positions: [.51, .48, .58, .52, .5, .5] }]; }, async sync() {} },
   logs: { async list(limit = 20) { return logs.slice(0, limit); } }
 };

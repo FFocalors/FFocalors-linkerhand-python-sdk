@@ -9,7 +9,7 @@ Run without hardware:
 
 ```powershell
 @'
-{"schemaVersion":1,"messageType":"command","requestId":"1","sequence":1,"monotonicTimeMs":1,"operation":"connect","payload":{"model":"L10","hand":"left","transport":{"type":"can","channel":"fake"},"mode":"fake"}}
+{"schemaVersion":1,"messageType":"command","requestId":"1","sequence":1,"monotonicTimeMs":1,"operation":"connect","payload":{"deviceId":"demo","model":"L10","hand":"left","transport":{"type":"can","channel":"fake"},"mode":"fake"}}
 {"schemaVersion":1,"messageType":"command","requestId":"2","sequence":2,"monotonicTimeMs":1,"operation":"getTelemetry","payload":{}}
 {"schemaVersion":1,"messageType":"command","requestId":"3","sequence":3,"monotonicTimeMs":1,"operation":"close","payload":{}}
 '@ | python main.py --fake
@@ -20,6 +20,11 @@ or `L25`), `hand` (`left`/`right`) and a strict transport object. CAN is
 `{"type":"can","channel":"PCAN_USBBUS1"}`; RS485 is
 `{"type":"rs485","port":"COM3","baudrate":115200}`. RS485 is available
 only for O6/L6/L7/L10.
+
+`stop` is a queue barrier and enables a software write lock. Every `set*`
+operation is rejected until `unlock`; neither operation claims physical power
+removal. Raw capability lengths are snapshotted in
+`../../docs/contracts/raw-capabilities.json`.
 
 The Rust client should launch `main.py` with an explicit `--sdk-root` pointing
 to the directory containing `LinkerHand/` for real hardware. A bundled

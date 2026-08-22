@@ -76,7 +76,7 @@ impl MotionEngine {
         if self.locked {
             return Err(MotionError::Locked);
         }
-        if command.joints.is_empty() {
+        if command.positions.is_empty() {
             return Err(MotionError::EmptyCommand);
         }
         if let Some(active) = &self.active_source {
@@ -217,7 +217,7 @@ mod tests {
             schema_version: 1,
             command_id: id.into(),
             source,
-            joints: vec![1.],
+            positions: vec![1.],
             duration_ms: None,
             final_command,
         }
