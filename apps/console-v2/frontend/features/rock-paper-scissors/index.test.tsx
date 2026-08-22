@@ -1,4 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { RockPaperScissors } from './index';
 import type { DeviceCapabilities } from '../../shared/contracts';
 import type { RpsVisionRuntime } from './types';
@@ -26,5 +28,21 @@ describe('RPS action gates', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '开启摄像头' })).toBeInTheDocument());
     expect(screen.queryByRole('button', { name: '停止摄像头' })).not.toBeInTheDocument();
     expect(screen.getAllByText(/视觉输入当前由 vision 占用/).length).toBeGreaterThan(0);
+  });
+
+  it('shows camera startup failures under StrictMode without an unhandled rejection', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const snapshot: VisionRuntimeSnapshot = { state: 'idle', owner: null, cameraDeviceId: null, model: 'unloaded', frameSequence: 0, fps: null, droppedFrames: 0, inflight: 0, lastError: null };
+      const runtime: RpsVisionRuntime = { start: vi.fn(async () => { throw new Error('摄像头权限被拒绝'); }), stop: vi.fn(async () => undefined), subscribe: listener => { listener(snapshot); return () => undefined; }, onResult: () => () => undefined, snapshot: () => snapshot };
+      render(<StrictMode><RockPaperScissors capabilities={capabilities('O6')} locked={false} runtime={runtime} /></StrictMode>);
+      await userEvent.setup().click(await screen.findByRole('button', { name: '开启摄像头' }));
+      await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('摄像头权限被拒绝'));
+      expect(unhandled).toHaveLength(0);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
   });
 });

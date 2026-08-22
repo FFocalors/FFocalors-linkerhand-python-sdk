@@ -87,13 +87,13 @@ export class RpsGameController {
   retry(): void {
     if (this.state.phase !== 'invalid' && this.state.phase !== 'ready') return;
     this.generation += 1; this.clearTimers(); this.stable.reset();
-    const token = this.generation; void this.cancelAction('reset', token, false);
+    const token = this.generation; void this.cancelAction('reset', token, false).catch(() => undefined);
     this.emit({ phase: this.state.cameraState === 'running' ? 'cameraReady' : 'idle', countdown: null, playerMove: null, machineMove: null, outcome: null, invalidReason: null, hardwareAuthorized: false, action: this.hardwareAvailable() ? { status: 'idle', detail: null } : this.state.action });
   }
 
   reset(): void {
     this.generation += 1; this.clearTimers(); this.stable.reset();
-    const token = this.generation; void this.cancelAction('reset', token, false);
+    const token = this.generation; void this.cancelAction('reset', token, false).catch(() => undefined);
     const cameraState = this.state.cameraState;
     const action = this.hardwareAvailable() ? { status: 'idle' as const, detail: null } : this.state.action;
     this.emit({ ...createInitialState(), cameraState, phase: cameraState === 'running' ? 'cameraReady' : 'idle', action });
@@ -103,7 +103,7 @@ export class RpsGameController {
     this.generation += 1; this.clearTimers(); this.stable.reset();
     const token = this.generation; const ownedByRps = this.runtime.snapshot().owner === 'rps';
     this.emit({ hardwareAuthorized: false, phase: ownedByRps ? 'idle' : this.state.cameraState === 'running' ? 'cameraReady' : 'idle', cameraState: ownedByRps ? 'stopping' : this.state.cameraState, countdown: null, playerMove: null, machineMove: null, outcome: null });
-    void this.cancelAction('locked', token).then(async () => { if (ownedByRps && this.runtime.snapshot().owner === 'rps') await this.runtime.stop(); });
+    void this.cancelAction('locked', token).then(async () => { if (ownedByRps && this.runtime.snapshot().owner === 'rps') await this.runtime.stop(); }).catch(() => undefined);
   }
 
   async stop(reason: 'stopped' | 'unmounted' = 'stopped'): Promise<void> {
@@ -134,10 +134,10 @@ export class RpsGameController {
 
   private onRuntime(snapshot: VisionRuntimeSnapshot): void {
     if (this.disposed) return;
-    if (snapshot.state === 'running' && snapshot.owner === 'rps' && this.startGeneration !== null && this.startGeneration !== this.generation) { void this.runtime.stop(); return; }
+    if (snapshot.state === 'running' && snapshot.owner === 'rps' && this.startGeneration !== null && this.startGeneration !== this.generation) { void this.runtime.stop().catch(() => undefined); return; }
     if (snapshot.state === 'running' && snapshot.owner !== 'rps') {
       const wasActive = this.state.cameraState === 'running' || ACTIVE_PHASES.has(this.state.phase) || this.state.hardwareAuthorized;
-      if (wasActive) { this.generation += 1; this.clearTimers(); this.stable.reset(); const token = this.generation; this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` }, countdown: null, hardwareAuthorized: false, playerMove: null, machineMove: null, outcome: null, stableFrames: 0 }); void this.cancelAction('stopped', token); }
+      if (wasActive) { this.generation += 1; this.clearTimers(); this.stable.reset(); const token = this.generation; this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` }, countdown: null, hardwareAuthorized: false, playerMove: null, machineMove: null, outcome: null, stableFrames: 0 }); void this.cancelAction('stopped', token).catch(() => undefined); }
       else this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` } });
       return;
     }
@@ -147,7 +147,7 @@ export class RpsGameController {
       this.generation += 1; this.clearTimers(); this.stable.reset();
       const token = this.generation;
       this.emit({ phase: 'idle', countdown: null, cameraState: snapshot.state, cameraError, playerMove: null, machineMove: null, outcome: null, hardwareAuthorized: false, stableFrames: 0 });
-      void this.cancelAction('stopped', token);
+      void this.cancelAction('stopped', token).catch(() => undefined);
       return;
     }
     const phase = snapshot.state === 'running' && this.state.phase === 'idle' ? 'cameraReady' : this.state.phase;
@@ -167,7 +167,7 @@ export class RpsGameController {
     if (this.state.phase !== 'recognized' && this.state.phase !== 'invalid') return;
     const player = this.state.playerMove; const machine = player ? machineMove(this.random) : null; const outcome = player && machine ? outcomeFor(player, machine) : null; const nextScore = outcome ? scoreFor(this.state.score, outcome) : this.state.score;
     this.emit({ phase: 'reveal', machineMove: machine, outcome });
-    if (machine && outcome && this.hardwareAvailable() && this.state.hardwareAuthorized) void this.dispatch(machine, 'rps-reveal');
+    if (machine && outcome && this.hardwareAvailable() && this.state.hardwareAuthorized) void this.dispatch(machine, 'rps-reveal').catch(() => undefined);
     this.schedule(() => this.emit({ phase: 'score', score: nextScore }), this.revealMs);
     this.schedule(() => this.finishRound(), this.revealMs + this.scoreMs);
   }

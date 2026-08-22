@@ -22,13 +22,29 @@ export type RockPaperScissorsProps = {
 export function RockPaperScissors({ capabilities, locked, runtime, actionController, scheduler, random }: RockPaperScissorsProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [state, setState] = useState<RpsState | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const disposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const controller = useMemo(() => runtime ? new RpsGameController({ runtime, capabilities, actionController, scheduler, random }) : null, [runtime, capabilities, actionController, scheduler, random]);
 
   useEffect(() => {
     if (!controller || !videoRef.current) return undefined;
+    if (disposeTimerRef.current !== null) {
+      clearTimeout(disposeTimerRef.current);
+      disposeTimerRef.current = null;
+    }
     const unsubscribe = controller.subscribe(setState);
-    void controller.attach(videoRef.current);
-    return () => { void controller.dispose(); unsubscribe(); };
+    controller.attach(videoRef.current);
+    return () => {
+      unsubscribe();
+      // Stop the session for both a real page leave and StrictMode's effect
+      // replay, but defer permanent disposal until setup has had a chance to
+      // reattach the same controller instance.
+      void controller.stop('unmounted').catch(() => undefined);
+      disposeTimerRef.current = setTimeout(() => {
+        disposeTimerRef.current = null;
+        void controller.dispose().catch(() => undefined);
+      }, 0);
+    };
   }, [controller]);
   useEffect(() => { if (locked) controller?.lock(); }, [locked, controller]);
 
@@ -37,6 +53,10 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
   const hardwareReady = Boolean(state?.hardwareAuthorized);
   const cameraRunning = state?.cameraState === 'running';
   const canStart = Boolean(controller && cameraRunning && (state?.phase === 'cameraReady' || state?.phase === 'ready') && (!hardwareEligible || hardwareReady));
+  const runAsync = (operation: () => Promise<unknown>) => {
+    setActionError(null);
+    void operation().catch(error => setActionError(error instanceof Error ? error.message : '猜拳操作失败，请重试。'));
+  };
   const status = state?.cameraError ? `摄像头：${state.cameraError.message}` : !runtime ? '等待应用注入共享 VisionRuntime' : state?.phase === 'countdown' ? `倒计时 ${state.countdown ?? ''}` : state?.phase === 'capture' ? '请保持手势稳定' : state?.phase === 'recognized' ? '已识别，准备揭晓' : state?.phase === 'invalid' ? INVALID_LABELS[state.invalidReason ?? 'unknown'] : state?.phase === 'reveal' ? '揭晓结果' : state?.phase === 'score' ? '正在记分' : state?.phase === 'ready' ? '可以开始下一局' : cameraRunning ? '摄像头已就绪' : '请先开启摄像头';
 
   return <div className="stack rps-feature">
@@ -51,15 +71,16 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
           <div className="rps-score"><span>你 <b>{state?.score.player ?? 0}</b></span><span>平局 <b>{state?.score.draws ?? 0}</b></span><span>机械手 <b>{state?.score.machine ?? 0}</b></span></div>
           {state?.outcome && <p className="rps-outcome" aria-live="assertive">{outcomeLabels[state.outcome]}</p>}
           <div className="rps-actions">
-            {!cameraRunning ? <button className="button button-primary" disabled={!controller || locked} onClick={() => void controller?.startCamera()}>开启摄像头</button> : <button className="button button-secondary" disabled={locked || state?.phase === 'countdown' || state?.phase === 'capture'} onClick={() => void controller?.stop()}>停止摄像头</button>}
-            {hardwareEligible && !hardwareReady && <button className="button button-secondary" disabled={!controller || !hardwareConnected || locked || !cameraRunning || state?.phase === 'countdown'} onClick={() => void controller?.authorizeHardware()}>授权本局机械手</button>}
+            {!cameraRunning ? <button className="button button-primary" disabled={!controller || locked} onClick={() => { if (controller) runAsync(() => controller.startCamera()); }}>开启摄像头</button> : <button className="button button-secondary" disabled={locked || state?.phase === 'countdown' || state?.phase === 'capture'} onClick={() => { if (controller) runAsync(() => controller.stop()); }}>停止摄像头</button>}
+            {hardwareEligible && !hardwareReady && <button className="button button-secondary" disabled={!controller || !hardwareConnected || locked || !cameraRunning || state?.phase === 'countdown'} onClick={() => { if (controller) runAsync(() => controller.authorizeHardware()); }}>授权本局机械手</button>}
             <button className="button button-primary" disabled={!canStart || locked} onClick={() => controller?.beginRound()}>开始一局</button>
             {(state?.phase === 'invalid' || state?.phase === 'ready') && <button className="button button-ghost" disabled={locked} onClick={() => controller?.retry()}>重试</button>}
             <button className="button button-ghost" disabled={!controller || locked} onClick={() => controller?.reset()}>重置比分</button>
           </div>
-          {hardwareEligible && hardwareConnected && <div className="rps-test-actions" aria-label="动作测试"><span className="muted">动作测试（不会改变比分）</span>{(['rock', 'paper', 'scissors'] as const).map(move => <button key={move} className="button button-ghost" disabled={!controller || !hardwareReady || locked || !cameraRunning || (state?.phase !== 'cameraReady' && state?.phase !== 'ready')} onClick={() => void controller?.testAction(move)}>测试{MOVE_LABELS[move]}</button>)}</div>}
+          {hardwareEligible && hardwareConnected && <div className="rps-test-actions" aria-label="动作测试"><span className="muted">动作测试（不会改变比分）</span>{(['rock', 'paper', 'scissors'] as const).map(move => <button key={move} className="button button-ghost" disabled={!controller || !hardwareReady || locked || !cameraRunning || (state?.phase !== 'cameraReady' && state?.phase !== 'ready')} onClick={() => { if (controller) runAsync(() => controller.testAction(move)); }}>测试{MOVE_LABELS[move]}</button>)}</div>}
           {hardwareEligible && !hardwareConnected ? <p className="permission-note">O6 已支持动作，但动作控制器未接线；当前只能识别和记分。</p> : hardwareEligible ? <p className="permission-note">O6：点击“授权本局机械手”后，揭晓时才会向动作控制器请求回应；锁定、停止或离开页面会立即撤销。</p> : <p className="permission-note">当前型号仅进行摄像头识别与比分展示，不会下发机械手动作，也不提供动作测试。</p>}
           {!runtime && <p className="permission-note">集成提示：此页需要应用层注入同一个 VisionRuntime（owner 为 rps），页面不会自行创建摄像头或 Worker。</p>}
+          {(state?.cameraError || actionError) && <div role="alert" className="permission-note">{[state?.cameraError?.message, actionError].filter((message, index, messages): message is string => Boolean(message) && messages.indexOf(message) === index).map(message => <p key={message}>{message}</p>)}<span>请检查摄像头权限、动作控制器连接后重试。</span></div>}
         </div>
       </div>
     </Card>

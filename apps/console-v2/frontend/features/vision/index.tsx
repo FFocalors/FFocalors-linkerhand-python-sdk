@@ -28,14 +28,30 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
   const [advanced, setAdvanced] = useState(false);
   const [mapperSettings, setMapperSettings] = useState<MapperSettings>(DEFAULT_MAPPER_SETTINGS);
   const [controllerVersion, setControllerVersion] = useState(0);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const disposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sink = proposalController ?? proposalSink;
   const controller = useMemo(() => runtime ? new VisionFeatureController(runtime, sink) : null, [runtime, sink]);
 
   useEffect(() => {
     if (!controller) return undefined;
+    if (disposeTimerRef.current !== null) {
+      clearTimeout(disposeTimerRef.current);
+      disposeTimerRef.current = null;
+    }
     const unsubscribe = controller.subscribe(() => setControllerVersion(version => version + 1));
     setMapperSettings(controller.mapperSettings());
-    return () => { void controller.dispose(); unsubscribe(); };
+    return () => {
+      unsubscribe();
+      // StrictMode replays effect cleanup/setup immediately. Stop is safe for
+      // both the replay and a real page leave; defer permanent disposal until
+      // the replay window has elapsed so the controller can be reattached.
+      void controller.stop().catch(() => undefined);
+      disposeTimerRef.current = setTimeout(() => {
+        disposeTimerRef.current = null;
+        void controller.dispose().catch(() => undefined);
+      }, 0);
+    };
   }, [controller]);
   useEffect(() => {
     if (!controller) return;
@@ -50,8 +66,20 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
   const canStart = Boolean(controller) && !locked && feature?.runtime.state !== 'loading' && feature?.runtime.state !== 'stopping';
   const startOrStop = async () => {
     if (!controller || !videoRef.current) return;
-    if (feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended') await controller.stop();
-    else await controller.start(videoRef.current);
+    setActionError(null);
+    try {
+      if (feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended') await controller.stop();
+      else await controller.start(videoRef.current);
+    } catch (error) {
+      // The controller records the runtime failure in feature.lastError. Keep
+      // an operation-level message as well for unexpected adapter failures.
+      setActionError(error instanceof Error ? error.message : '视觉输入操作失败，请重试。');
+    }
+  };
+  const runStartOrStop = () => {
+    void startOrStop().catch(error => {
+      setActionError(error instanceof Error ? error.message : '视觉输入操作失败，请重试。');
+    });
   };
   const updateSetting = (key: keyof MapperSettings, value: number) => {
     const next = { ...mapperSettings, [key]: value };
@@ -65,8 +93,8 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
       <Card className="camera-placeholder">
         <video ref={videoRef} muted playsInline aria-label="视觉摄像头预览" style={{ width: '100%', maxHeight: 250, objectFit: 'contain', background: 'var(--camera-bg)', borderRadius: 10 }} />
         {!runtime && <p className="permission-note">视觉运行时尚未注入：当前页面仅显示配置状态，不会自行创建摄像头或 Worker。</p>}
-        {runtime && <><div className="card-header" style={{ width: '100%', marginTop: 14 }}><div><h2>摄像头预览</h2><span className="muted">{feature ? runtimeLabel(feature.runtime) : '准备中'}</span></div><span className="muted">FPS {feature?.runtime.fps === null || feature?.runtime.fps === undefined ? '—' : feature.runtime.fps.toFixed(1)} · 丢帧 {feature?.runtime.droppedFrames ?? 0}</span></div><button className="button button-primary" disabled={!canStart} onClick={() => void startOrStop()}>{feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended' ? '停止预览' : feature?.runtime.state === 'error' || feature?.runtime.state === 'device-lost' || feature?.runtime.state === 'permission-denied' ? '重新连接摄像头' : '开始预览'}</button></>}
-        {feature?.runtime.lastError && <p role="alert" className="permission-note">{feature.runtime.lastError.message}</p>}
+        {runtime && <><div className="card-header" style={{ width: '100%', marginTop: 14 }}><div><h2>摄像头预览</h2><span className="muted">{feature ? runtimeLabel(feature.runtime) : '准备中'}</span></div><span className="muted">FPS {feature?.runtime.fps === null || feature?.runtime.fps === undefined ? '—' : feature.runtime.fps.toFixed(1)} · 丢帧 {feature?.runtime.droppedFrames ?? 0}</span></div><button className="button button-primary" disabled={!canStart} onClick={runStartOrStop}>{feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended' ? '停止预览' : feature?.runtime.state === 'error' || feature?.runtime.state === 'device-lost' || feature?.runtime.state === 'permission-denied' ? '重新连接摄像头' : '开始预览'}</button></>}
+        {(feature?.lastError || feature?.runtime.lastError || actionError) && <div role="alert" className="permission-note">{[feature?.lastError, feature?.runtime.lastError?.message, actionError].filter((message, index, messages): message is string => Boolean(message) && messages.indexOf(message) === index).map(message => <p key={message}>{message}</p>)}<span>请检查摄像头权限和视觉资源后重试。</span></div>}
       </Card>
       {!runtime && <Card><div className="card-header"><h2>动作建议</h2><button className="button button-secondary" disabled>同步动作</button></div><p className="permission-note">当前型号支持预览，但当前能力不允许同步下发动作。请注入共享 VisionRuntime 和 feature-local proposal controller 后再使用。</p></Card>}
       <Card><div className="card-header"><div><h2>张开 / 握拳校准</h2><span className="muted">本次会话有效，离开页面后清除</span></div><Badge tone={feature?.calibration.complete ? 'green' : 'amber'}>{feature?.calibration.complete ? '已完成' : feature?.calibration.phase === 'open' ? '请张开手掌' : feature?.calibration.phase === 'fist' ? '请握拳' : '未开始'}</Badge></div><p className="muted" style={{ lineHeight: 1.7 }}>保持手掌在画面中央，按提示保持姿势约三帧。校准只记录当前会话的手势范围。</p><button className="button button-secondary" disabled={!controller || feature?.runtime.state !== 'running' || locked} onClick={() => controller?.beginCalibration()}>{feature?.calibration.phase === 'idle' || feature?.calibration.phase === 'complete' ? '开始校准' : '重新校准'}</button><p className="muted" aria-live="polite">{feature?.calibration.phase === 'open' ? `张开手掌：${feature.calibration.openSamples}/3` : feature?.calibration.phase === 'fist' ? `握拳：${feature.calibration.fistSamples}/3` : feature?.calibration.complete ? '手势范围已记录，可以申请同步。' : '先开始预览，再开始校准。'}</p></Card>

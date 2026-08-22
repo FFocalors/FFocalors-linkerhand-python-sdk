@@ -29,7 +29,22 @@ class GlobalErrorBoundary extends Component<{ children: ReactNode }, { error: Er
 function Shell({ runtime }: { runtime: ConsoleComposition }) {
   const [page, setPage] = useState<Page>('device'); const [config, setConfig] = useState<DeviceConfig>(); const [capabilities, setCapabilities] = useState<DeviceCapabilities>(); const [initializationError, setInitializationError] = useState<string>(); const [loadAttempt, setLoadAttempt] = useState(0); const [locked, setLocked] = useState(false); const [safetyError, setSafetyError] = useState<string>(); const [sidebarOpen, setSidebarOpen] = useState(false); const { theme, toggle } = useTheme();
   useEffect(() => { let active = true; setInitializationError(undefined); void Promise.all([runtime.device.getConfig(), runtime.device.getCapabilities()]).then(([nextConfig, nextCapabilities]) => { if (!active) return; setConfig(nextConfig); setCapabilities(nextCapabilities); }).catch(error => { if (active) setInitializationError(error instanceof Error ? error.message : '读取工作区配置失败，请重试或检查诊断日志。'); }); return () => { active = false; }; }, [runtime, loadAttempt]);
-  useEffect(() => () => { void runtime.visionRuntime.dispose?.(); }, [runtime]);
+  useEffect(() => {
+    // React StrictMode replays effect cleanup/setup in development. A replay
+    // is not an application shutdown, so cleanup must only stop the current
+    // session and must never permanently dispose the shared runtime. The
+    // browser lifecycle events are the real terminal boundary for disposing
+    // its worker and listeners.
+    const stop = () => { void runtime.visionRuntime.stop().catch(() => undefined); };
+    const dispose = () => { void Promise.resolve(runtime.visionRuntime.dispose?.()).catch(() => undefined); };
+    window.addEventListener('pagehide', dispose);
+    window.addEventListener('beforeunload', dispose);
+    return () => {
+      window.removeEventListener('pagehide', dispose);
+      window.removeEventListener('beforeunload', dispose);
+      stop();
+    };
+  }, [runtime]);
   const rpsActionController = useMemo(() => capabilities ? runtime.createRpsActionController(capabilities) : runtime.rpsActionController, [capabilities, runtime]);
   if (initializationError) return <div className="loading" role="alert"><div className="logo-mark">LH</div><strong>工作区启动失败</strong><span>{initializationError}</span><button className="button button-primary" onClick={() => setLoadAttempt(value => value + 1)}>重试</button></div>;
   if (!config || !capabilities) return <div className="loading"><div className="logo-mark">LH</div><span>正在准备工作区…</span></div>;
