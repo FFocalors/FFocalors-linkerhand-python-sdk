@@ -31,7 +31,7 @@ The app shell should create one `VisionRuntime` and inject the same instance int
 
 ## Resources and verification
 
-Use `pnpm check:vision-assets` to validate the manifest hashes. Use `pnpm vision:download` only when refreshing the pinned local resources; it fails on a model hash change. `pnpm build` performs the check first, so a missing asset is an explicit build failure rather than a network fallback.
+Use `pnpm check:vision-assets` to validate the manifest hashes and required `.gitattributes` binary rules. Use `pnpm vision:download` only when refreshing the pinned local resources; it fails on a model hash change. `pnpm build` performs the check first, so a missing asset is an explicit build failure rather than a network fallback. The model, WASM and loader JS are all `-text` so Windows `core.autocrlf` cannot rewrite bytes.
 
 ## Verification performed
 

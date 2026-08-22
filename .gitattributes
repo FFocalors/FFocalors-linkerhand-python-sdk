@@ -1,0 +1,5 @@
+# Vision assets are content-addressed by SHA-256. Keep their original bytes
+# across Windows core.autocrlf settings and all clean worktrees.
+apps/console-v2/public/vision/hand_landmarker.task -text
+apps/console-v2/public/vision/wasm/*.wasm -text
+apps/console-v2/public/vision/wasm/*.js -text
