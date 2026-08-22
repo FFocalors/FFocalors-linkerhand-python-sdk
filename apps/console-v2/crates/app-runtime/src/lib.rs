@@ -212,60 +212,134 @@ impl AppRuntime {
             as usize;
         let raw = console_contracts::normalized_to_raw(&values, expected)
             .map_err(AppRuntimeError::Unsupported)?;
-        self.device.set_torque(&raw).map_err(AppRuntimeError::Device)
+        self.device
+            .set_torque(&raw)
+            .map_err(AppRuntimeError::Device)
     }
     pub fn action_start_recording(&mut self, id: String, name: String, now_ms: u64) {
         self.actions.start_recording_at(id, name, now_ms);
     }
-    pub fn action_record_command(&mut self, command: JointTargetCommand, now_ms: u64) -> Result<(), AppRuntimeError> {
-        self.actions.record_at(now_ms, command).map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+    pub fn action_record_command(
+        &mut self,
+        command: JointTargetCommand,
+        now_ms: u64,
+    ) -> Result<(), AppRuntimeError> {
+        self.actions
+            .record_at(now_ms, command)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
     pub fn action_finish_recording(&mut self) -> Result<ActionRecording, AppRuntimeError> {
-        let recording = self.actions.finish_recording().map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
+        let recording = self
+            .actions
+            .finish_recording()
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
         self.saved_actions.retain(|item| item.id != recording.id);
         self.saved_actions.push(recording.clone());
         Ok(recording)
     }
     pub fn action_list(&self) -> Vec<ActionRecording> {
-        self.actions.list().into_iter().chain(self.saved_actions.clone()).collect()
+        self.actions
+            .list()
+            .into_iter()
+            .chain(self.saved_actions.clone())
+            .collect()
     }
-    pub fn action_play(&mut self, id: &str, speed: f32, loop_count: Option<u32>, now_ms: u64) -> Result<(), AppRuntimeError> {
-        let recording = self.action_list().into_iter().find(|item| item.id == id)
+    pub fn action_play(
+        &mut self,
+        id: &str,
+        speed: f32,
+        loop_count: Option<u32>,
+        now_ms: u64,
+    ) -> Result<(), AppRuntimeError> {
+        let recording = self
+            .action_list()
+            .into_iter()
+            .find(|item| item.id == id)
             .ok_or_else(|| AppRuntimeError::Unsupported(format!("action {id} not found")))?;
         self.actions.set_loop(loop_count.is_some(), loop_count);
-        self.actions.play_at(recording, now_ms).map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
-        self.actions.set_speed(speed).map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+        self.actions
+            .play_at(recording, now_ms)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
+        self.actions
+            .set_speed(speed)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
     pub fn action_delete(&mut self, id: &str) -> Result<(), AppRuntimeError> {
         let before = self.saved_actions.len();
         self.saved_actions.retain(|item| item.id != id);
-        if self.actions.unregister_preset(id) || before != self.saved_actions.len() { Ok(()) } else { Err(AppRuntimeError::Unsupported(format!("action {id} not found"))) }
+        if self.actions.unregister_preset(id) || before != self.saved_actions.len() {
+            Ok(())
+        } else {
+            Err(AppRuntimeError::Unsupported(format!(
+                "action {id} not found"
+            )))
+        }
     }
-    pub fn action_tick(&mut self, now_ms: u64) -> Option<JointTargetCommand> { self.actions.tick(now_ms) }
+    pub fn action_tick(&mut self, now_ms: u64) -> Option<JointTargetCommand> {
+        self.actions.tick(now_ms)
+    }
     pub fn action_stop(&mut self) {
         self.actions.cancel();
-        self.motion.cancel_source(console_contracts::CommandSource::Playback);
-        self.motion.cancel_source(console_contracts::CommandSource::Loop);
+        self.motion
+            .cancel_source(console_contracts::CommandSource::Playback);
+        self.motion
+            .cancel_source(console_contracts::CommandSource::Loop);
     }
     pub fn grasp_calibrate(&mut self, now_ms: u64) -> Result<(), AppRuntimeError> {
-        self.grasp.start_calibration(now_ms).map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+        self.grasp
+            .start_calibration(now_ms)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
-    pub fn grasp_complete_calibration(&mut self) -> Result<(), AppRuntimeError> { self.grasp.calibration_complete().map_err(|e| AppRuntimeError::Unsupported(e.to_string())) }
+    pub fn grasp_complete_calibration(&mut self) -> Result<(), AppRuntimeError> {
+        self.grasp
+            .calibration_complete()
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+    }
     pub fn grasp_start_approach(&mut self, now_ms: u64) -> Result<(), AppRuntimeError> {
-        let current = self.telemetry.latest().map(|t| t.positions.clone()).unwrap_or_else(|| vec![0.5; self.grasp.profile().joint_count()]);
+        let current = self
+            .telemetry
+            .latest()
+            .map(|t| t.positions.clone())
+            .unwrap_or_else(|| vec![0.5; self.grasp.profile().joint_count()]);
         let target = vec![0.8; self.grasp.profile().joint_count()];
-        self.grasp.start_approach(now_ms, &current, &target).map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+        self.grasp
+            .start_approach(now_ms, &current, &target)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
     pub fn grasp_start(&mut self, degraded: bool, _now_ms: u64) -> Result<(), AppRuntimeError> {
-        let config = adaptive_grasp::GraspConfig { allow_degraded_without_tactile: degraded, ..adaptive_grasp::GraspConfig::default() };
+        let config = adaptive_grasp::GraspConfig {
+            allow_degraded_without_tactile: degraded,
+            ..adaptive_grasp::GraspConfig::default()
+        };
         self.grasp.set_config(config);
-        self.grasp.approach_complete().map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+        self.grasp
+            .approach_complete()
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
-    pub fn grasp_release(&mut self) -> Result<(), AppRuntimeError> { self.grasp.release().map_err(|e| AppRuntimeError::Unsupported(e.to_string())) }
-    pub fn grasp_tick(&mut self, now_ms: u64) -> Result<Option<JointTargetCommand>, AppRuntimeError> {
-        let Some(t) = self.telemetry.latest() else { return Ok(None) };
-        let sample = adaptive_grasp::GraspTelemetry { connected: t.connected, tactile_available: !t.raw_touch.is_empty(), raw_touch: t.raw_touch.clone(), raw_current: t.raw_current.clone(), positions: t.positions.clone() };
-        Ok(self.grasp.tick(now_ms, &sample).map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?.map(|o| o.command))
+    pub fn grasp_release(&mut self) -> Result<(), AppRuntimeError> {
+        self.grasp
+            .release()
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+    }
+    pub fn grasp_tick(
+        &mut self,
+        now_ms: u64,
+    ) -> Result<Option<JointTargetCommand>, AppRuntimeError> {
+        let Some(t) = self.telemetry.latest() else {
+            return Ok(None);
+        };
+        let sample = adaptive_grasp::GraspTelemetry {
+            connected: t.connected,
+            tactile_available: !t.raw_touch.is_empty(),
+            raw_touch: t.raw_touch.clone(),
+            raw_current: t.raw_current.clone(),
+            positions: t.positions.clone(),
+        };
+        Ok(self
+            .grasp
+            .tick(now_ms, &sample)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?
+            .map(|o| o.command))
     }
     pub fn stop_all(&mut self) {
         MotionPort::stop_all(&mut self.motion);
@@ -318,8 +392,12 @@ impl ui::DevicePort for AppRuntime {
     fn unlock(&mut self) {
         AppRuntime::unlock(self);
     }
-    fn set_speed(&mut self, values: Vec<f64>, _now_ms: u64) -> Result<(), AppRuntimeError> { self.set_speed(values) }
-    fn set_torque(&mut self, values: Vec<f64>, _now_ms: u64) -> Result<(), AppRuntimeError> { self.set_torque(values) }
+    fn set_speed(&mut self, values: Vec<f64>, _now_ms: u64) -> Result<(), AppRuntimeError> {
+        self.set_speed(values)
+    }
+    fn set_torque(&mut self, values: Vec<f64>, _now_ms: u64) -> Result<(), AppRuntimeError> {
+        self.set_torque(values)
+    }
 }
 
 impl ui::MotionPort for AppRuntime {
@@ -367,19 +445,39 @@ impl ui::ActionPort for AppRuntime {
     fn list(&self) -> Vec<ActionRecording> {
         self.action_list()
     }
-    fn delete(&mut self, id: &str) -> Result<(), AppRuntimeError> { self.action_delete(id) }
+    fn delete(&mut self, id: &str) -> Result<(), AppRuntimeError> {
+        self.action_delete(id)
+    }
 }
 
 impl ui::GraspPort for AppRuntime {
     fn list_presets(&self) -> Vec<GraspPreset> {
         vec![
-            GraspPreset { id: "soft".into(), name: "柔软物体".into(), description: "低力度包络抓取".into() },
-            GraspPreset { id: "cube".into(), name: "方形物体".into(), description: "稳定的平行夹持".into() },
-            GraspPreset { id: "precision".into(), name: "精细拾取".into(), description: "指尖精确定位".into() },
+            GraspPreset {
+                id: "soft".into(),
+                name: "柔软物体".into(),
+                description: "低力度包络抓取".into(),
+            },
+            GraspPreset {
+                id: "cube".into(),
+                name: "方形物体".into(),
+                description: "稳定的平行夹持".into(),
+            },
+            GraspPreset {
+                id: "precision".into(),
+                name: "精细拾取".into(),
+                description: "指尖精确定位".into(),
+            },
         ]
     }
     fn run_preset(&mut self, _id: &str) -> Result<(), AppRuntimeError> {
-        if self.grasp.is_available() { Ok(()) } else { Err(AppRuntimeError::Unsupported("该型号暂不支持智能自适应抓取。".into())) }
+        if self.grasp.is_available() {
+            Ok(())
+        } else {
+            Err(AppRuntimeError::Unsupported(
+                "该型号暂不支持智能自适应抓取。".into(),
+            ))
+        }
     }
 }
 

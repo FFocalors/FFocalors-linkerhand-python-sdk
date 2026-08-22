@@ -195,7 +195,11 @@ impl MotionEngine {
         if self.active_source.as_ref() == Some(&source) {
             self.active_source = None;
         }
-        if self.pending.as_ref().is_some_and(|command| command.source == source) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|command| command.source == source)
+        {
             self.pending = None;
         }
         if !self.cancelled.contains(&source) {

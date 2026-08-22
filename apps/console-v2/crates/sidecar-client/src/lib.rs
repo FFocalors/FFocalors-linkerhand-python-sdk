@@ -791,7 +791,10 @@ impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
             .map(|c| c.speed_command_length as usize)
             .ok_or(device_adapter_api::AdapterError::NotConnected)?;
         if values.len() != expected {
-            return Err(invalid(format!("speed vector expects {expected}, got {}", values.len())));
+            return Err(invalid(format!(
+                "speed vector expects {expected}, got {}",
+                values.len()
+            )));
         }
         self.command(
             SidecarOperation::SetSpeed,
@@ -810,7 +813,10 @@ impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
             .ok_or_else(|| device_adapter_api::AdapterError::Unsupported("setTorque".into()))?
             as usize;
         if values.len() != expected {
-            return Err(invalid(format!("torque vector expects {expected}, got {}", values.len())));
+            return Err(invalid(format!(
+                "torque vector expects {expected}, got {}",
+                values.len()
+            )));
         }
         self.command(
             SidecarOperation::SetTorque,

@@ -472,12 +472,22 @@ impl ActionEngine {
         &self.state
     }
     pub fn current_action_id(&self) -> Option<&str> {
-        self.playback.as_ref().map(|playback| playback.recording.id.as_str())
-            .or_else(|| self.recording.as_ref().map(|recording| recording.id.as_str()))
+        self.playback
+            .as_ref()
+            .map(|playback| playback.recording.id.as_str())
+            .or_else(|| {
+                self.recording
+                    .as_ref()
+                    .map(|recording| recording.id.as_str())
+            })
     }
     pub fn progress(&self) -> f32 {
         self.playback.as_ref().map_or(0.0, |playback| {
-            if playback.recording.frames.is_empty() { 0.0 } else { (playback.frame as f32 / playback.recording.frames.len() as f32).clamp(0.0, 1.0) }
+            if playback.recording.frames.is_empty() {
+                0.0
+            } else {
+                (playback.frame as f32 / playback.recording.frames.len() as f32).clamp(0.0, 1.0)
+            }
         })
     }
     pub fn loop_count(&self) -> u32 {
