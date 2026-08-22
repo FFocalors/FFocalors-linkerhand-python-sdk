@@ -32,17 +32,32 @@ does not resume old work.
 ## Verification
 
 - `cargo fmt --all -- --check`
+- `cargo check -p linkerhand-console`
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `pnpm typecheck`
 - `pnpm lint`
-- `pnpm test -- --run` (8 files, 36 tests)
+- `pnpm test -- --run` (9 files, 37 tests)
+- `pnpm check:contracts`
+- `pnpm check:vision-assets`
+- `pnpm build`
+- `python -m pytest -q sidecar/linkerhand-bridge` (run separately from workspace root)
+
+The contract check normalizes LF/CRLF before comparison. The integration
+baseline was generated with LF, while a Windows fresh checkout can materialize
+the checked-in projection as CRLF; the previous byte-for-byte check therefore
+reported a false stale projection. The Rust contract contents remain unchanged.
+Offline capabilities are sourced from the raw-capabilities model matrix and are
+available without opening the sidecar; an operator's explicit connect replaces
+that declaration with adapter-reported capabilities. App startup failures now
+show a recoverable retry surface instead of an unbounded spinner.
 
 ## Limits
 
 The fake Python sidecar remains the default Tauri configuration; real CAN/RS485
-SDK deployment is still hardware/package dependent. Infinite action loops are
-translated to the action engine's bounded 1,000-loop safety cap. Software
-stop is a write lock and cancellation barrier, not a physical emergency stop.
+SDK deployment is still hardware/package dependent. Nullable local loop input
+is passed to the action engine as a true run-until-cancel loop; its diagnostic
+counter saturates and is not a safety stop. Software stop is a write lock and
+cancellation barrier, not a physical emergency stop.
 Adaptive grasp telemetry is sampled while a grasp subscriber exists and all
 touch fallback is explicit in the feature controller.
