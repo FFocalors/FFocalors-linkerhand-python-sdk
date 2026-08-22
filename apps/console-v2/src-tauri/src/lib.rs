@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use tauri::ipc::Channel;
+use tauri::Manager;
 
 fn app_error(code: &str, message: impl Into<String>, retryable: bool) -> AppError {
     AppError {
@@ -57,6 +58,13 @@ struct GraspFailure {
     code: String,
     message: String,
 }
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SidecarCheck {
+    ok: bool,
+    message: String,
+    detail: Option<String>,
+}
 enum ActorRequest {
     Config {
         reply: Reply<DeviceConfig>,
@@ -75,6 +83,10 @@ enum ActorRequest {
     },
     Submit {
         command: JointTargetCommand,
+        reply: Reply<()>,
+    },
+    CancelMotionSource {
+        source: console_contracts::CommandSource,
         reply: Reply<()>,
     },
     SetSpeed {
@@ -391,6 +403,10 @@ impl RuntimeActor {
                 )
                 .map_err(map_error);
                 let _ = reply.send(result);
+            }
+            ActorRequest::CancelMotionSource { source, reply } => {
+                self.runtime.cancel_motion_source(source);
+                let _ = reply.send(Ok(()));
             }
             ActorRequest::Operation { reply } => {
                 let _ = reply.send(Ok(app_runtime::ui::MotionPort::get_operation(
@@ -780,6 +796,73 @@ mod commands {
         })
         .await
     }
+    fn settings_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, AppError> {
+        app.path()
+            .app_config_dir()
+            .map(|dir| dir.join("console-v2-settings.json"))
+            .map_err(|error| app_error("CONFIG_PATH", error.to_string(), true))
+    }
+    pub(super) fn read_settings(path: &std::path::Path, fallback: DeviceConfig) -> DeviceConfig {
+        std::fs::read(path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<DeviceConfig>(&bytes).ok())
+            .unwrap_or(fallback)
+    }
+    pub(super) fn persist_settings(
+        path: &std::path::Path,
+        config: &DeviceConfig,
+    ) -> Result<(), AppError> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| app_error("CONFIG_PATH", "invalid app config path", false))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| app_error("CONFIG_WRITE", error.to_string(), true))?;
+        let temporary = path.with_extension("json.tmp");
+        let bytes = serde_json::to_vec_pretty(config)
+            .map_err(|error| app_error("CONFIG_WRITE", error.to_string(), false))?;
+        std::fs::write(&temporary, bytes)
+            .map_err(|error| app_error("CONFIG_WRITE", error.to_string(), true))?;
+        if path.exists() {
+            std::fs::remove_file(path)
+                .map_err(|error| app_error("CONFIG_WRITE", error.to_string(), true))?;
+        }
+        std::fs::rename(&temporary, path)
+            .map_err(|error| app_error("CONFIG_WRITE", error.to_string(), true))
+    }
+    #[tauri::command]
+    pub async fn settings_load(
+        app: tauri::AppHandle,
+        state: tauri::State<'_, RuntimeState>,
+    ) -> Result<DeviceConfig, AppError> {
+        let path = settings_path(&app)?;
+        let fallback = dispatch(state.0.clone(), |reply| ActorRequest::Config { reply }).await?;
+        Ok(read_settings(&path, fallback))
+    }
+    #[tauri::command]
+    pub async fn settings_save(
+        app: tauri::AppHandle,
+        config: DeviceConfig,
+    ) -> Result<(), AppError> {
+        let path = settings_path(&app)?;
+        persist_settings(&path, &config)
+    }
+    #[tauri::command]
+    pub async fn sidecar_self_check(
+        state: tauri::State<'_, RuntimeState>,
+    ) -> Result<SidecarCheck, AppError> {
+        let capabilities = dispatch(state.0.clone(), |reply| ActorRequest::Capabilities {
+            reply,
+        })
+        .await?;
+        Ok(SidecarCheck {
+            ok: capabilities.joint_count > 0,
+            message: "设备运行时已装配".into(),
+            detail: Some(format!(
+                "{:?} · {} 个关节；未连接硬件，未启动独立 sidecar 进程",
+                capabilities.model, capabilities.joint_count
+            )),
+        })
+    }
     #[tauri::command]
     pub async fn connection(
         state: tauri::State<'_, RuntimeState>,
@@ -822,6 +905,17 @@ mod commands {
     ) -> Result<(), AppError> {
         dispatch(state.0.clone(), |reply| ActorRequest::SetSpeed {
             command,
+            reply,
+        })
+        .await
+    }
+    #[tauri::command]
+    pub async fn motion_cancel_source(
+        state: tauri::State<'_, RuntimeState>,
+        source: console_contracts::CommandSource,
+    ) -> Result<(), AppError> {
+        dispatch(state.0.clone(), |reply| ActorRequest::CancelMotionSource {
+            source,
             reply,
         })
         .await
@@ -1143,6 +1237,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::config,
             commands::capabilities,
+            commands::settings_load,
+            commands::settings_save,
+            commands::sidecar_self_check,
             commands::connection,
             commands::connect,
             commands::disconnect,
@@ -1150,6 +1247,7 @@ pub fn run() {
             commands::set_joint_target,
             commands::set_speed,
             commands::set_torque,
+            commands::motion_cancel_source,
             commands::stop_all,
             commands::unlock,
             commands::operation,
@@ -1200,6 +1298,30 @@ mod tests {
     use device_adapter_api::DeviceAdapter;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    #[test]
+    fn settings_replace_existing_file_and_recover_from_corruption() {
+        let directory = std::env::temp_dir().join(format!(
+            "linkerhand-console-v2-settings-{}",
+            std::process::id()
+        ));
+        let path = directory.join("console-v2-settings.json");
+        let first = DeviceConfig::new("settings-1", "settings O6");
+        let mut second = first.clone();
+        second.device_id = "settings-2".into();
+        commands::persist_settings(&path, &first).unwrap();
+        commands::persist_settings(&path, &second).unwrap();
+        assert_eq!(
+            commands::read_settings(&path, first.clone()).device_id,
+            "settings-2"
+        );
+        std::fs::write(&path, b"{not-json").unwrap();
+        assert_eq!(
+            commands::read_settings(&path, first.clone()).device_id,
+            "settings-1"
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
 
     struct CapturingAdapter {
         inner: device_simulator::DeviceSimulator,
@@ -1300,6 +1422,78 @@ mod tests {
             duration_ms: None,
             final_command,
         }
+    }
+
+    fn source_command(
+        source: CommandSource,
+        id: &str,
+        value: f64,
+        final_command: bool,
+    ) -> JointTargetCommand {
+        JointTargetCommand {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            command_id: id.into(),
+            source,
+            positions: vec![value; 6],
+            duration_ms: None,
+            final_command,
+        }
+    }
+
+    #[test]
+    fn actor_keeps_continuous_vision_source_and_sends_latest_at_20hz() {
+        let (handle, writes) = spawn_capturing_runtime();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Connect {
+                reply,
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
+                command: source_command(CommandSource::Vision, "vision-old", 0.1, false),
+                reply,
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
+                command: source_command(CommandSource::Vision, "vision-latest", 0.9, false),
+                reply,
+            }))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(120));
+        let operation = runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Operation {
+                reply,
+            }))
+            .unwrap();
+        assert_eq!(operation.state, console_contracts::OperationState::Running);
+        let writes = writes.lock().unwrap();
+        assert!(writes
+            .iter()
+            .any(|command| command.command_id == "vision-latest"));
+        assert!(
+            writes.len() <= 2,
+            "continuous input must not send every browser frame"
+        );
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::CancelMotionSource {
+                    source: CommandSource::Vision,
+                    reply,
+                }
+            }))
+            .unwrap();
+        let operation = runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Operation {
+                reply,
+            }))
+            .unwrap();
+        assert_eq!(operation.state, console_contracts::OperationState::Idle);
+        handle.shutdown();
     }
 
     #[test]

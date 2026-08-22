@@ -291,6 +291,12 @@ impl AppRuntime {
         self.motion
             .cancel_source(console_contracts::CommandSource::Loop);
     }
+    /// Cancel one feature-owned motion source without changing the global
+    /// safety lock. The app layer uses this when a camera page leaves or an
+    /// authorization is revoked; it must not cancel another feature's source.
+    pub fn cancel_motion_source(&mut self, source: console_contracts::CommandSource) {
+        self.motion.cancel_source(source);
+    }
     pub fn grasp_calibrate(&mut self, now_ms: u64) -> Result<(), AppRuntimeError> {
         self.grasp
             .start_calibration(now_ms)
