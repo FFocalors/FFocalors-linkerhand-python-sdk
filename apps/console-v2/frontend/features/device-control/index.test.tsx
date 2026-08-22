@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
-import { DeviceControl, type DeviceControlController } from './index';
+import { Profiler } from 'react';
+import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, OperationSnapshot, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
+import { DeviceControl, JointSlider, type DeviceControlController } from './index';
 
 const config: DeviceConfig = { schemaVersion: 1, deviceId: 'test-device', name: '测试设备', model: 'L25', hand: 'left', transport: { type: 'can', channel: 'fake' }, autoReconnect: true };
 function capabilities(jointCount: number, speedCommandLength = jointCount, torqueCommandLength: number | null = jointCount): DeviceCapabilities {
@@ -11,14 +12,16 @@ function snapshot(count: number, positions = Array.from({ length: count }, () =>
 function telemetry(count: number, positions?: number[]): TelemetryPort { const value = snapshot(count, positions); return { read: async () => value, subscribe: () => () => undefined }; }
 function connection(): ConnectionSnapshot { return { schemaVersion: 1, deviceId: config.deviceId, state: 'connected', attempt: 1, lastError: null }; }
 function fixture(count = 2) {
+  const operationListeners = new Set<(value: OperationSnapshot) => void>();
   const controller: DeviceControlController = {
     connect: vi.fn(async () => undefined), disconnect: vi.fn(async () => undefined), reconnect: vi.fn(async () => undefined),
     subscribeConnection: vi.fn(listener => { listener(connection()); return () => undefined; }),
+    subscribeOperation: vi.fn(listener => { operationListeners.add(listener); return () => operationListeners.delete(listener); }),
     setJointTarget: vi.fn(async () => undefined), setSpeed: vi.fn(async () => undefined), setTorque: vi.fn(async () => undefined),
     startQuickAction: vi.fn(async () => undefined), stopQuickAction: vi.fn(async () => undefined), startLoop: vi.fn(async () => undefined), stopLoop: vi.fn(async () => undefined),
   };
   const device: DevicePort = { getConfig: async () => config, getCapabilities: async () => capabilities(count), getConnection: async () => connection(), setJointTarget: vi.fn(async () => undefined), stopAll: vi.fn(async () => undefined), unlock: vi.fn(async () => undefined) };
-  return { controller, device };
+  return { controller, device, operationListeners };
 }
 function renderControl(count = 2, fixtureValue = fixture(count)) { render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(count)} config={config} capabilities={capabilities(count)} controller={fixtureValue.controller} />); return fixtureValue; }
 
@@ -32,12 +35,21 @@ describe('device control', () => {
   it('coalesces rapid changes into at most one non-final command per frame', async () => {
     const { controller } = renderControl(2); const slider = await screen.findByRole('slider', { name: 'J1 目标' });
     fireEvent.pointerDown(slider); fireEvent.change(slider, { target: { value: '0.1' } }); fireEvent.change(slider, { target: { value: '0.2' } }); await new Promise(resolve => requestAnimationFrame(resolve));
-    expect(vi.mocked(controller.setJointTarget).mock.calls.length).toBeLessThanOrEqual(1); fireEvent.pointerUp(slider); await waitFor(() => expect(vi.mocked(controller.setJointTarget).mock.calls.at(-1)?.[0].finalCommand).toBe(true));
+    expect(vi.mocked(controller.setJointTarget).mock.calls).toHaveLength(1); expect(vi.mocked(controller.setJointTarget).mock.calls[0][0]).toMatchObject({ positions: [0.2, 0], finalCommand: false }); fireEvent.pointerUp(slider); await waitFor(() => expect(vi.mocked(controller.setJointTarget).mock.calls.at(-1)?.[0].finalCommand).toBe(true));
+  });
+  it('does not render the parent or slider for every input, and final cancels stale RAF', async () => {
+    const fixtureValue = fixture(2); const { controller } = fixtureValue; let parentRenders = 0; let sliderRenders = 0;
+    render(<Profiler id="device" onRender={() => { parentRenders += 1; }}><DeviceControl device={fixtureValue.device} telemetry={telemetry(2)} config={config} capabilities={capabilities(2)} controller={controller} /></Profiler>);
+    const slider = await screen.findByRole('slider', { name: 'J1 目标' }); const stableParentRenders = parentRenders;
+    fireEvent.pointerDown(slider); fireEvent.change(slider, { target: { value: '0.1' } }); fireEvent.change(slider, { target: { value: '0.9' } });
+    expect(parentRenders).toBe(stableParentRenders); expect(sliderRenders).toBe(0); fireEvent.pointerUp(slider); await new Promise(resolve => requestAnimationFrame(resolve));
+    expect(vi.mocked(controller.setJointTarget).mock.calls).toHaveLength(1); expect(vi.mocked(controller.setJointTarget).mock.calls[0][0]).toMatchObject({ positions: [0.9, 0], finalCommand: true });
+    cleanup(); sliderRenders = 0; render(<Profiler id="slider" onRender={() => { sliderRenders += 1; }}><JointSlider index={0} value={0} disabled={false} onBegin={() => undefined} onInput={() => undefined} onFinish={() => undefined} /></Profiler>); const localInitialRenders = sliderRenders; const localSlider = screen.getByRole('slider', { name: 'J1 目标' }); fireEvent.change(localSlider, { target: { value: '0.1' } }); fireEvent.change(localSlider, { target: { value: '0.2' } }); expect(sliderRenders).toBe(localInitialRenders);
   });
   it('does not let telemetry overwrite a joint while it is being dragged', async () => {
     let listener: ((value: TelemetrySnapshot) => void) | undefined; const source: TelemetryPort = { read: async () => snapshot(2, [0.1, 0.2]), subscribe: next => { listener = next; return () => undefined; } }; const { controller, device } = fixture(2);
     render(<DeviceControl device={device} telemetry={source} config={config} capabilities={capabilities(2)} controller={controller} />); const slider = await screen.findByRole('slider', { name: 'J1 目标' });
-    fireEvent.pointerDown(slider); fireEvent.change(slider, { target: { value: '0.8' } }); listener?.(snapshot(2, [0.1, 0.9])); expect(slider).toHaveValue('0.8'); fireEvent.pointerUp(slider);
+    const second = await screen.findByRole('slider', { name: 'J2 目标' }); fireEvent.pointerDown(slider); fireEvent.change(slider, { target: { value: '0.8' } }); listener?.(snapshot(2, [0.1, 0.9])); expect(slider).toHaveValue('0.8'); await waitFor(() => expect(second).toHaveValue('0.9')); fireEvent.pointerUp(slider);
   });
   it('renders all 25 joints and groups them for compact access', async () => { renderControl(25); expect(await screen.findByRole('slider', { name: 'J25 目标' })).toBeInTheDocument(); expect(screen.getAllByRole('slider', { name: /J\d+ 目标/ })).toHaveLength(25); });
   it('covers connection actions and disables the feature without a controller', async () => {
@@ -46,6 +58,21 @@ describe('device control', () => {
   });
   it('locks immediately on stopAll and unlocks only after the shared calls complete', async () => {
     const { controller, device } = renderControl(1); fireEvent.click(await screen.findByRole('button', { name: '设备安全锁' })); await waitFor(() => expect(device.stopAll).toHaveBeenCalled()); expect(screen.getByRole('slider', { name: 'J1 目标' })).toBeDisabled(); fireEvent.click(screen.getByRole('button', { name: '设备安全锁' })); await waitFor(() => expect(device.unlock).toHaveBeenCalled()); expect(controller.setJointTarget).not.toHaveBeenCalled();
+  });
+  it('cancels a pending RAF before it can submit after stopAll', async () => {
+    const { controller, device } = renderControl(1); const slider = await screen.findByRole('slider', { name: 'J1 目标' });
+    fireEvent.pointerDown(slider); fireEvent.change(slider, { target: { value: '0.7' } }); fireEvent.click(screen.getByRole('button', { name: '设备安全锁' })); await new Promise(resolve => requestAnimationFrame(resolve)); await waitFor(() => expect(device.stopAll).toHaveBeenCalled());
+    expect(controller.setJointTarget).not.toHaveBeenCalled();
+  });
+  it('derives quick action and loop mutual exclusion from operation states', async () => {
+    const fixtureValue = fixture(1); render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(1)} config={config} capabilities={capabilities(1)} controller={fixtureValue.controller} loops={[{ id: 'cycle', label: '循环' }]} />);
+    fireEvent.click(await screen.findByRole('button', { name: '回到安全位' })); await waitFor(() => expect(fixtureValue.controller.startQuickAction).toHaveBeenCalled());
+    fixtureValue.operationListeners.forEach(listener => listener({ schemaVersion: 1, operationId: 'quick-1', kind: 'quick-action', state: 'running', progress: 0.2, detail: '执行中' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '循环' })).toBeDisabled());
+    fixtureValue.operationListeners.forEach(listener => listener({ schemaVersion: 1, operationId: 'quick-1', kind: 'quick-action', state: 'completed', progress: 1, detail: '完成' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: '循环' })).not.toBeDisabled());
+    fixtureValue.operationListeners.forEach(listener => listener({ schemaVersion: 1, operationId: 'loop-1', kind: 'loop', state: 'error', progress: 0.2, detail: '失败' }));
+    expect(screen.getByRole('button', { name: '循环' })).not.toBeDisabled();
   });
   it('submits speed and torque only when capabilities provide command lengths', async () => {
     const { controller } = renderControl(2); fireEvent.click(await screen.findByRole('button', { name: '应用速度' })); fireEvent.click(screen.getByRole('button', { name: '应用扭矩' })); await waitFor(() => expect(controller.setSpeed).toHaveBeenCalled()); expect(controller.setTorque).toHaveBeenCalled();
