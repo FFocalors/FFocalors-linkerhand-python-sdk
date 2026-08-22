@@ -8,9 +8,11 @@
     "build": "pnpm check:vision-assets && tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
+    "test:boundaries": "node scripts/check-boundaries-fixture.mjs",
     "typecheck": "tsc -b --pretty false",
     "generate:contracts": "node scripts/generate-contracts.mjs",
     "check:contracts": "node scripts/check-contracts.mjs",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:vision-assets": "node scripts/check-vision-assets.mjs",
     "vision:download": "node scripts/download-vision-assets.mjs"
   },
