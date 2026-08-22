@@ -11,6 +11,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "test:boundaries": "node scripts/check-boundaries-fixture.mjs",
+    "test:lint-boundary": "node scripts/check-lint-boundaries.mjs",
     "typecheck": "tsc -b --pretty false",
     "generate:contracts": "node scripts/generate-contracts.mjs",
     "check:contracts": "node scripts/check-contracts.mjs",

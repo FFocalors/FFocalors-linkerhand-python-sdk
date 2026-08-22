@@ -1,3 +1,4 @@
+import { globalIgnores } from 'eslint/config';
 import parser from '@typescript-eslint/parser';
 
 // Keep these path groups in sync with scripts/check-boundaries.mjs. The script
@@ -7,7 +8,16 @@ const noCrossFeatureImports = { 'no-restricted-imports': ['error', { patterns: [
 const noProductImports = { 'no-restricted-imports': ['error', { patterns: [{ group: ['**/features/**', '**/app/**'], message: 'Shared modules may not depend on product features or app assembly.' }] }] };
 
 export default [
-  { ignores: ['dist/**', 'node_modules/**'] },
+  globalIgnores([
+    'dist/**',
+    'node_modules/**',
+    'artifacts/**',
+    'target/**',
+    'sidecar/linkerhand-bridge/build/**',
+    'sidecar/linkerhand-bridge/dist/**',
+    'src-tauri/binaries/**',
+    'src-tauri/target/**',
+  ]),
   { files: ['frontend/**/*.{ts,tsx}'], languageOptions: { parser, parserOptions: { ecmaFeatures: { jsx: true }, sourceType: 'module' } } },
   { files: ['frontend/features/**/*.{ts,tsx}'], rules: noCrossFeatureImports },
   { files: ['frontend/shared/**/*.{ts,tsx}'], rules: noProductImports },

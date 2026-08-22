@@ -19,6 +19,9 @@
 ## Local proof (Windows x64, 2026-08-23)
 
 - `pnpm install --frozen-lockfile` passed.
+- `pnpm lint` passed after adding global ESLint ignores for all generated
+  frontend/Tauri/sidecar output; `pnpm test:lint-boundary` asserts those roots
+  are not returned by ESLint's file matcher.
 - `pnpm build` passed and verified 5 offline assets; the Vite output was
   271.4 kB before compression.
 - `python -m pytest -q sidecar/linkerhand-bridge/tests`: all tests passed.
