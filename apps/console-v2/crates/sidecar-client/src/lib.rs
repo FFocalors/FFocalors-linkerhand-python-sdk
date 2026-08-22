@@ -443,7 +443,12 @@ impl SidecarDeviceAdapter {
     pub fn manager(&self) -> &process::SidecarProcessManager { &self.manager }
     pub fn stop(&self) -> Result<(), device_adapter_api::AdapterError> { self.command(SidecarOperation::Stop, serde_json::json!({})).map(|_| ()) }
     pub fn unlock(&self) -> Result<(), device_adapter_api::AdapterError> { self.command(SidecarOperation::Unlock, serde_json::json!({})).map(|_| ()) }
-    pub fn close(&self) { self.manager.close(); }
+    pub fn close(&self) {
+        // Ask the bridge to flush/close first; the process manager remains the
+        // bounded fallback if the bridge is already crashed or unresponsive.
+        let _ = self.command(SidecarOperation::Close, serde_json::json!({}));
+        self.manager.close();
+    }
     fn command(&self, operation: SidecarOperation, payload: serde_json::Value) -> Result<WireEnvelope<serde_json::Value>, device_adapter_api::AdapterError> {
         self.manager.request(operation, payload).map_err(map_process_error)
     }
