@@ -42,6 +42,8 @@ Use `pnpm check:vision-assets` to validate the manifest hashes and required `.gi
 
 The baseline App does not yet import `VisionRuntime`; therefore this build validates TypeScript, local resources and the runtime source but does not prove that Vite emitted a worker chunk. The current `dist/assets` output contains only the baseline app CSS/JS. After Feature integration, run `pnpm build` and inspect `dist/assets` for the worker chunk (and verify its URL is local) before claiming browser packaging coverage.
 
+Fresh-checkout reproducibility was verified from detached commit `6dfb66c692fed10ba78cdd82830f8c3242df032a` in a newly-created temporary worktree with Windows `core.autocrlf=true`. `git check-attr` reported `text: unset` for the model, WASM and loader JS; `pnpm install --frozen-lockfile`, `pnpm check:vision-assets` and `pnpm build` all passed. The temporary worktree and its untracked dependency directory were removed afterward.
+
 ## Follow-up entry points
 
 Vision should translate `VisionLandmarkResult` into neutral pose proposals only after confidence/handedness policy is defined. RPS should consume the same result stream and must not instantiate another camera, worker, or model. Hardware mapping and action execution remain outside this runtime.
