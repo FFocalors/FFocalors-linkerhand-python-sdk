@@ -35,6 +35,17 @@ describe('SingleFrameGate', () => {
 });
 
 describe('VisionRuntime ownership and release', () => {
+  it('sends base-safe default asset URLs without a FilesetResolver trailing slash', async () => {
+    const { stream } = fakeStream(); const workerFixture = fakeWorker();
+    const runtime = new VisionRuntime({}, { mediaDevices: { getUserMedia: vi.fn(async () => stream) }, workerFactory: () => workerFixture.worker as never });
+    await runtime.start(fakeVideo().video, 'vision');
+    const init = workerFixture.worker.postMessage.mock.calls.map(([message]) => message).find(message => message.type === 'init') as { modelAssetUrl: string; wasmRootUrl: string };
+    expect(new URL(init.modelAssetUrl).pathname).toMatch(/\/vision\/hand_landmarker\.task$/);
+    expect(new URL(init.wasmRootUrl).pathname).toMatch(/\/vision\/wasm$/);
+    expect(init.wasmRootUrl.endsWith('/')).toBe(false);
+    await runtime.stop();
+  });
+
   it('allows one source and closes camera/worker on stop', async () => {
     const { stream, track } = fakeStream();
     const { worker } = fakeWorker();

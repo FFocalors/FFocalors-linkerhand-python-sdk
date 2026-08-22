@@ -1,4 +1,5 @@
 import { SingleFrameGate } from './backpressure';
+import { normalizeVisionAssetRootUrl, visionAssetUrl } from './asset-paths';
 import { normalizeVisionError, VisionRuntimeError } from './errors';
 import type { VisionErrorCode, VisionLandmarkResult, VisionRuntimeOptions, VisionRuntimeSnapshot, VisionRuntimeState, VisionSource, VisionWorkerRequest, VisionWorkerResponse } from './types';
 
@@ -8,7 +9,7 @@ type VideoWithFrameCallback = HTMLVideoElement & { requestVideoFrameCallback?: (
 type RuntimeListener = (snapshot: VisionRuntimeSnapshot) => void;
 type ResultListener = (result: VisionLandmarkResult) => void;
 
-const defaultOptions: Required<VisionRuntimeOptions> = { modelAssetUrl: '/vision/hand_landmarker.task', wasmRootUrl: '/vision/wasm/', numHands: 2, minHandDetectionConfidence: .5, minHandPresenceConfidence: .5, minTrackingConfidence: .5 };
+const defaultOptions: Required<VisionRuntimeOptions> = { modelAssetUrl: visionAssetUrl('vision/hand_landmarker.task'), wasmRootUrl: normalizeVisionAssetRootUrl(visionAssetUrl('vision/wasm')), numHands: 2, minHandDetectionConfidence: .5, minHandPresenceConfidence: .5, minTrackingConfidence: .5 };
 
 export class VisionRuntime {
   private readonly options: Required<VisionRuntimeOptions>;
@@ -36,7 +37,7 @@ export class VisionRuntime {
   private readonly resultListeners = new Set<ResultListener>();
 
   constructor(options: VisionRuntimeOptions = {}, dependencies: { mediaDevices?: MediaDevicesLike; workerFactory?: () => WorkerLike; now?: () => number } = {}) {
-    this.options = { ...defaultOptions, ...options };
+    this.options = { ...defaultOptions, ...options, wasmRootUrl: normalizeVisionAssetRootUrl(options.wasmRootUrl ?? defaultOptions.wasmRootUrl) };
     this.mediaDevices = dependencies.mediaDevices ?? navigator.mediaDevices;
     this.workerFactory = dependencies.workerFactory ?? (() => new Worker(new URL('../../workers/vision-worker/index.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike);
     this.now = dependencies.now ?? (() => performance.now());

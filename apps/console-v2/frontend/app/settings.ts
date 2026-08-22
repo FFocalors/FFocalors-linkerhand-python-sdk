@@ -3,6 +3,7 @@ import type { DeviceConfig } from '../shared/contracts';
 import type { SettingsController, SettingsDraft, SettingsSnapshot, SettingsSaveResult, SidecarCheckResult, OfflineAssetsCheckResult, CameraDevice, CameraPermission, ThemePort, ThemePreference } from '../features/settings';
 import { draftFromSnapshot, validateSettingsDraft } from '../features/settings';
 import type { ConsolePorts } from '../shared/contracts';
+import { visionAssetUrl } from '../shared/vision-runtime';
 
 const CONFIG_KEY = 'linkerhand-console-v2-config';
 const THEME_KEY = 'linkerhand-console-v2-theme';
@@ -46,7 +47,7 @@ export function createSettingsController(runtime: ConsolePorts, simulator: boole
       try { return await invoke<SidecarCheckResult>('sidecar_self_check'); } catch (error) { return { ok: false, message: 'sidecar 自检失败', detail: error instanceof Error ? error.message : String(error) }; }
     },
     async checkOfflineAssets(): Promise<OfflineAssetsCheckResult> {
-      const resources = ['/vision/hand_landmarker.task', '/vision/wasm/vision_wasm_internal.wasm'];
+      const resources = [visionAssetUrl('vision/hand_landmarker.task'), visionAssetUrl('vision/wasm/vision_wasm_internal.wasm')];
       const results = await Promise.all(resources.map(async resource => { try { const response = await fetch(resource, { method: 'HEAD', cache: 'no-store' }); return response.ok; } catch { return false; } }));
       return results.every(Boolean) ? { ok: true, message: '离线视觉模型与 WASM 资源可用' } : { ok: false, message: '离线视觉资源缺失或不可读', detail: resources.filter((_, index) => !results[index]).join(', ') };
     },
