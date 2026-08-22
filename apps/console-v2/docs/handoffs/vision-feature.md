@@ -11,7 +11,9 @@
 
 The app shell should pass its one shared `VisionRuntime` as `runtime` and a feature-local `VisionProposalController` as `proposalController` to `VisionMimic`. The controller is intentionally a sink/controller boundary: it receives only complete `VisionPoseProposal` values and exposes `revoke(reason)`. The feature never calls a device facade, Tauri, or `VisionPort.sync`.
 
-Runtime ownership is checked before `stop()` during `stop` and unmount. A feature cannot stop an RPS-owned runtime. Once stopped, locked, unauthorized, non-O6, uncalibrated, low-confidence, or non-running, proposals are revoked and no further result can submit.
+Runtime ownership is checked before `stop()` during lock/global-stop, explicit stop, and unmount. A feature can stop the shared runtime only while vision owns it; an RPS-owned runtime is left running, while the vision feature still revokes its authorization and any proposal. Runtime stop is bounded to one second and handled without an unhandled rejection. Once stopped, locked, unauthorized, non-O6, uncalibrated, low-confidence, or non-running, proposals are revoked and no further result can submit. Unlock only clears the lock gate: it never restores authorization or restarts the runtime.
+
+`LatestWinsProposalDispatcher` keeps one submit in flight and one latest pending proposal. Revoke advances the generation and drops pending work; an old submit can settle without reporting a stale error, then immediately releases the slot so a newer generation already waiting in `pending` is pumped in the same completion turn. A proposal whose generation was revoked before its submit microtask runs is skipped entirely.
 
 ## Verification
 
@@ -24,7 +26,7 @@ pnpm test -- --run
 pnpm build
 ```
 
-The feature tests cover all proposal gates, complete O6 vectors and bounded mapping, lock revocation, shared-runtime owner cleanup, fixture recognition, and the session calibration sequence.
+The feature tests cover all proposal gates, complete O6 vectors and bounded mapping, lock/global-stop revocation, vision-vs-RPS shared-runtime ownership, bounded stop timeout and rejection handling, stale resolve/reject dispatcher races, immediate low-confidence/no-hand revocation, unlock-without-auto-restore, fixture recognition, and the session calibration sequence.
 
 The first build attempt on this branch was blocked by Windows checkout line-ending conversion of the tracked vision JavaScript asset. The upstream `6dfb66c` / `8fddbad` fixes were cherry-picked, the two JS assets were refreshed from the clean Git blobs, and `pnpm check:vision-assets` now passes (`Verified 5 offline vision assets`). A fresh checkout must honor the root `.gitattributes` `-text` rules for these files.
 

@@ -3,6 +3,7 @@ import type { HandLandmark, VisionLandmarkResult, VisionRuntimeSnapshot, VisionR
 import { classifyGesture, GestureStabilizer, MIN_STABLE_GESTURE_CONFIDENCE, PoseMapper, SessionCalibration, type Gesture, type MapperSettings } from './model';
 
 export const MIN_PROPOSAL_CONFIDENCE = 0.7;
+export const VISION_RUNTIME_STOP_TIMEOUT_MS = 1000;
 
 export interface VisionRuntimeLike {
   start(video: HTMLVideoElement, source: 'vision'): Promise<void>;
@@ -54,18 +55,32 @@ export class LatestWinsProposalDispatcher {
     this.pending = null;
     this.inFlight = true;
     Promise.resolve()
-      .then(() => this.sink.submit(proposal))
-      .catch(error => this.onError(error, 'submit'))
+      .then(() => {
+        // A revoke can happen before this microtask starts. In that case the
+        // proposal belongs to a dead generation and must never reach the sink.
+        if (this.disposed || generation !== this.generation) return;
+        return this.sink.submit(proposal);
+      })
+      .catch(error => {
+        // An old in-flight operation may settle after a revoke/new submit. Its
+        // error is stale and must not overwrite the current operation state.
+        if (!this.disposed && generation === this.generation) this.onError(error, 'submit');
+      })
       .finally(() => {
         this.inFlight = false;
-        if (!this.disposed && generation === this.generation) this.pump();
+        // Settling an old generation still releases the single slot. A newer
+        // generation may already have a pending latest proposal waiting.
+        if (!this.disposed) this.pump();
       });
   }
 
   private invokeRevoke(reason: string): void {
+    const generation = this.generation;
     Promise.resolve()
       .then(() => this.sink.revoke(reason))
-      .catch(error => this.onError(error, 'revoke'));
+      .catch(error => {
+        if (!this.disposed && generation === this.generation) this.onError(error, 'revoke');
+      });
   }
 }
 
@@ -191,6 +206,13 @@ export class VisionFeatureController {
     if (locked) {
       this.authorized = false;
       this.revoke('控制已锁定');
+      // The global stop path updates the lock prop after stopping the device.
+      // Stop the shared camera/model only when vision owns it; an RPS session
+      // must keep its runtime while still losing visual authorization.
+      void this.stop().catch(error => {
+        this.lastError = error instanceof Error ? error.message : '视觉输入停止失败';
+        this.emit();
+      });
     }
     this.emit();
   }
@@ -238,7 +260,7 @@ export class VisionFeatureController {
     this.stopped = true;
     this.authorized = false;
     this.revoke('视觉输入已停止');
-    if (this.runtime.snapshot().owner === 'vision') await this.runtime.stop();
+    await this.stopOwnedRuntime();
     this.runtimeSnapshot = this.runtime.snapshot();
     this.emit();
   }
@@ -250,8 +272,25 @@ export class VisionFeatureController {
     this.dispatcher.dispose('视觉页面已离开');
     this.unsubscribeResult();
     this.unsubscribeRuntime();
-    if (this.runtime.snapshot().owner === 'vision') await this.runtime.stop();
+    await this.stopOwnedRuntime();
     this.listeners.clear();
+  }
+
+  private async stopOwnedRuntime(): Promise<void> {
+    if (this.runtime.snapshot().owner !== 'vision') return;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const stopPromise = Promise.resolve()
+      .then(() => this.runtime.stop())
+      .catch(error => {
+        this.lastError = error instanceof Error ? error.message : '视觉输入停止失败';
+      });
+    await Promise.race([
+      stopPromise,
+      new Promise<void>(resolve => {
+        timeoutHandle = setTimeout(resolve, VISION_RUNTIME_STOP_TIMEOUT_MS);
+      }),
+    ]);
+    if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
   }
 
   private handleResult(result: VisionLandmarkResult): void {
@@ -270,7 +309,7 @@ export class VisionFeatureController {
     this.gesture = stable.gesture;
     this.confidence = stable.confidence;
     if (stable.gesture === 'unknown' || stable.gesture !== observation.gesture || stable.confidence < MIN_STABLE_GESTURE_CONFIDENCE) {
-      this.revoke(observation.gesture === 'unknown' ? '手势置信度不足' : '手势过渡中');
+      this.revoke(observation.gesture === 'unknown' || observation.confidence < MIN_STABLE_GESTURE_CONFIDENCE ? '手势置信度不足' : '手势过渡中');
       this.emit();
       return;
     }
