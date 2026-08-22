@@ -17,3 +17,4 @@ export interface VisionPort { propose(source: 'vision' | 'rps'): Promise<VisionP
 export interface LogPort { list(limit?: number): Promise<StructuredLogEntry[]> }
 export type ConsoleError = AppError;
 export interface ConsolePorts { device: DevicePort; motion: MotionPort; telemetry: TelemetryPort; actions: ActionPort; grasp: GraspPort; vision: VisionPort; logs: LogPort }
+export { isTauriRuntime, tauriRuntime } from './tauri-runtime';

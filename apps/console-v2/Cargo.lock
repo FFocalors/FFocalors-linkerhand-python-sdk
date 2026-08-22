@@ -1810,8 +1810,10 @@ dependencies = [
 name = "linkerhand-console"
 version = "0.1.0"
 dependencies = [
+ "adaptive-grasp",
  "app-runtime",
  "console-contracts",
+ "device-simulator",
  "serde",
  "serde_json",
  "tauri",
