@@ -1,0 +1,8 @@
+[package]
+name = "structured-logging"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+console-contracts = { path = "../console-contracts" }
+serde.workspace = true
+serde_json.workspace = true

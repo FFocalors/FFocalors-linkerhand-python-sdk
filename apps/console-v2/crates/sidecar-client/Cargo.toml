@@ -1,0 +1,9 @@
+[package]
+name = "sidecar-client"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+console-contracts = { path = "../console-contracts" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

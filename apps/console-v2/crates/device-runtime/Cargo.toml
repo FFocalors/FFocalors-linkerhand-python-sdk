@@ -1,0 +1,10 @@
+[package]
+name = "device-runtime"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+console-contracts = { path = "../console-contracts" }
+device-adapter-api = { path = "../device-adapter-api" }
+thiserror.workspace = true
+[dev-dependencies]
+device-simulator = { path = "../device-simulator" }

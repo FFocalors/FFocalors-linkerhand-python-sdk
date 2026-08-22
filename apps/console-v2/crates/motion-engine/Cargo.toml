@@ -1,0 +1,7 @@
+[package]
+name = "motion-engine"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+console-contracts = { path = "../console-contracts" }
+thiserror.workspace = true

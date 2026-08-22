@@ -1,0 +1,7 @@
+[package]
+name = "device-simulator"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+console-contracts = { path = "../console-contracts" }
+device-adapter-api = { path = "../device-adapter-api" }

@@ -1,0 +1,13 @@
+[package]
+name = "app-runtime"
+version.workspace = true
+edition.workspace = true
+[dependencies]
+console-contracts = { path = "../console-contracts" }
+device-adapter-api = { path = "../device-adapter-api" }
+device-runtime = { path = "../device-runtime" }
+motion-engine = { path = "../motion-engine" }
+telemetry = { path = "../telemetry" }
+action-engine = { path = "../action-engine" }
+adaptive-grasp = { path = "../adaptive-grasp" }
+thiserror.workspace = true

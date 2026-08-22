@@ -1,0 +1,7 @@
+# Console V2 Rust modules
+
+`console-contracts` owns all public camelCase DTOs and the `WireEnvelope` (`schemaVersion`, `messageType`, `requestId`, `sequence`, `monotonicTimeMs`, `operation`, `payload`). `device-adapter-api` is the only hardware boundary; `device-simulator` implements it deterministically.
+
+`device-runtime` owns adapter lifecycle and connection snapshots. `motion-engine` arbitrates one command source at a time and commits latest-wins commands at 20 Hz. `telemetry` keeps bounded normal-status and high-rate frame buffers separate. `action-engine` and `adaptive-grasp` are pure state machines. `structured-logging` is bounded and pageable. `sidecar-client` only handles NDJSON/process protocol boundaries. `app-runtime` coordinates these through typed fields/ports and owns no global event bus.
+
+Only `src-tauri` depends on Tauri. Its command/channel layer is an assembly shell and must not acquire business logic. Frontend and Python sidecar implementations are intentionally outside this workspace.

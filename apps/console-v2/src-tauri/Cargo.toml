@@ -1,0 +1,13 @@
+[package]
+name = "linkerhand-console"
+version.workspace = true
+edition.workspace = true
+[lib]
+name = "linkerhand_console_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+[dependencies]
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+console-contracts = { path = "../crates/console-contracts" }
+app-runtime = { path = "../crates/app-runtime" }
