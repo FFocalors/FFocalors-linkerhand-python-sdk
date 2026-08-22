@@ -35,7 +35,7 @@ struct VectorCommand {
     #[allow(dead_code)]
     final_command: bool,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ActionStateEvent {
     state: String,
@@ -43,7 +43,7 @@ struct ActionStateEvent {
     progress: f32,
     detail: Option<String>,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GraspStateEvent {
     phase: String,
@@ -52,7 +52,7 @@ struct GraspStateEvent {
     raw_touch: Option<Vec<u8>>,
     degraded: bool,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct GraspFailure {
     code: String,
     message: String,
@@ -130,6 +130,7 @@ enum ActorRequest {
     ActionPlay {
         id: String,
         speed: f32,
+        loop_enabled: bool,
         loop_count: Option<u32>,
         reply: Reply<()>,
     },
@@ -506,13 +507,31 @@ impl RuntimeActor {
             ActorRequest::ActionPlay {
                 id,
                 speed,
+                loop_enabled,
                 loop_count,
                 reply,
             } => {
-                let result = self
-                    .runtime
-                    .action_play(&id, speed, loop_count, now_ms())
-                    .map_err(map_error);
+                let result = if let Some(active) = self.runtime.motion.active_source() {
+                    if !matches!(
+                        active,
+                        console_contracts::CommandSource::Playback
+                            | console_contracts::CommandSource::Loop
+                    ) {
+                        Err(app_error(
+                            "SOURCE_BUSY",
+                            format!("motion source {active:?} is active"),
+                            true,
+                        ))
+                    } else {
+                        self.runtime
+                            .action_play(&id, speed, loop_enabled, loop_count, now_ms())
+                            .map_err(map_error)
+                    }
+                } else {
+                    self.runtime
+                        .action_play(&id, speed, loop_enabled, loop_count, now_ms())
+                        .map_err(map_error)
+                };
                 let _ = reply.send(result);
             }
             ActorRequest::ActionPause { reply } => {
@@ -985,11 +1004,13 @@ mod commands {
         state: tauri::State<'_, RuntimeState>,
         id: String,
         speed: f32,
+        loop_enabled: bool,
         loop_count: Option<u32>,
     ) -> Result<(), AppError> {
         dispatch(state.0.clone(), |reply| ActorRequest::ActionPlay {
             id,
             speed,
+            loop_enabled,
             loop_count,
             reply,
         })
@@ -1303,5 +1324,148 @@ mod tests {
         handle.shutdown();
         assert!(started.elapsed() < Duration::from_secs(2));
         assert!(handle.stopped.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn actor_records_and_replays_through_motion_engine() {
+        let handle = spawn_runtime();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Connect {
+                reply,
+            }))
+            .unwrap();
+        let (frames_tx, frames_rx) = mpsc::channel();
+        let telemetry_channel = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                if let Ok(value) = serde_json::from_str::<TelemetrySnapshot>(&json) {
+                    let _ = frames_tx.send(value);
+                }
+            }
+            Ok(())
+        });
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::SubscribeTelemetry {
+                    channel: telemetry_channel,
+                    reply,
+                }
+            }))
+            .unwrap();
+        let _ = frames_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::ActionStartRecording {
+                    name: "actor action".into(),
+                    reply,
+                }
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
+                command: command("recorded", 0.77, true),
+                reply,
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::ActionFinishRecording { reply }
+            }))
+            .unwrap();
+        let actions = runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::ActionList {
+                reply,
+            }))
+            .unwrap();
+        let recorded = actions
+            .iter()
+            .find(|item| item.name == "actor action")
+            .expect("recorded action is retained in session");
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::ActionPlay {
+                id: recorded.id.clone(),
+                speed: 1.0,
+                loop_enabled: false,
+                loop_count: None,
+                reply,
+            }))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(120));
+        let latest = runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::ReadTelemetry { reply }
+            }))
+            .unwrap();
+        assert_eq!(latest.positions, vec![196.0 / 255.0; 6]);
+        handle.shutdown();
+    }
+
+    #[test]
+    fn actor_grasp_uses_telemetry_and_stop_clears_controllers() {
+        let handle = spawn_runtime();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Connect {
+                reply,
+            }))
+            .unwrap();
+        let (events_tx, events_rx) = mpsc::channel();
+        let grasp_channel = Channel::new(move |body| {
+            if let tauri::ipc::InvokeResponseBody::Json(json) = body {
+                if let Ok(value) = serde_json::from_str::<GraspStateEvent>(&json) {
+                    let _ = events_tx.send(value);
+                }
+            }
+            Ok(())
+        });
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::SubscribeGrasp {
+                    channel: grasp_channel,
+                    reply,
+                }
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::GraspCalibrate { reply }
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::GraspCompleteCalibration { reply }
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::GraspApproach { reply }
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::GraspStart {
+                degraded: true,
+                reply,
+            }))
+            .unwrap();
+        let state = events_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            state.phase.as_str(),
+            "calibrating" | "ready" | "approach" | "grasping"
+        ));
+        handle.control_state.store(1, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
+                command: command("after-stop", 0.2, false),
+                reply,
+            }))
+            .is_err());
+        handle.shutdown();
     }
 }

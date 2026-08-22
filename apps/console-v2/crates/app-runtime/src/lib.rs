@@ -248,6 +248,7 @@ impl AppRuntime {
         &mut self,
         id: &str,
         speed: f32,
+        loop_enabled: bool,
         loop_count: Option<u32>,
         now_ms: u64,
     ) -> Result<(), AppRuntimeError> {
@@ -261,7 +262,7 @@ impl AppRuntime {
             .into_iter()
             .find(|item| item.id == lookup_id)
             .ok_or_else(|| AppRuntimeError::Unsupported(format!("action {id} not found")))?;
-        self.actions.set_loop(loop_count.is_some(), loop_count);
+        self.actions.set_loop(loop_enabled, loop_count);
         self.actions
             .play_at(recording, now_ms)
             .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
@@ -424,7 +425,7 @@ impl ui::MotionPort for AppRuntime {
         }
     }
     fn run_action(&mut self, _id: &str) -> Result<(), AppRuntimeError> {
-        self.action_play(_id, 1.0, None, 0)
+        self.action_play(_id, 1.0, false, None, 0)
     }
     fn pause(&mut self) -> Result<(), AppRuntimeError> {
         Err(AppRuntimeError::Unsupported(
@@ -603,7 +604,9 @@ mod tests {
             .action_list()
             .iter()
             .any(|item| item.id == recording.id));
-        runtime.action_play(&recording.id, 1.0, Some(1), 0).unwrap();
+        runtime
+            .action_play(&recording.id, 1.0, true, Some(1), 0)
+            .unwrap();
         runtime.action_stop();
         assert!(!runtime.motion.has_pending());
         runtime.action_delete(&recording.id).unwrap();

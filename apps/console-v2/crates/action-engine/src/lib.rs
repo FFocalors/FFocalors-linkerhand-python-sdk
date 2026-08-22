@@ -9,7 +9,6 @@ use thiserror::Error;
 
 pub const MAX_RECORDING_FRAMES: usize = 4096;
 pub const DEFAULT_SAMPLE_INTERVAL_MS: u64 = 50;
-pub const MAX_INFINITE_LOOPS: u32 = 1000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preset {
@@ -418,14 +417,16 @@ impl ActionEngine {
             return None;
         }
         if playback.frame >= playback.recording.frames.len() {
+            // `None` means continue until the controller explicitly cancels.
+            // The counter is diagnostic only and saturates, so it cannot turn
+            // an infinite loop into an accidental finite loop or overflow.
             let can_loop = playback.loop_enabled
                 && playback
                     .loop_count
-                    .is_none_or(|count| playback.loops_done < count)
-                && playback.loops_done < MAX_INFINITE_LOOPS;
+                    .is_none_or(|count| playback.loops_done < count);
             if can_loop {
                 playback.frame = 0;
-                playback.loops_done += 1;
+                playback.loops_done = playback.loops_done.saturating_add(1);
                 self.loops_done = playback.loops_done;
             } else {
                 self.state = PlaybackState::Completed;
@@ -616,6 +617,24 @@ mod tests {
         assert!(a.tick(150).is_none());
     }
     #[test]
+    fn zero_loop_request_is_a_single_playback() {
+        let mut engine = ActionEngine::new();
+        let recording = ActionRecording {
+            schema_version: 1,
+            id: "single".into(),
+            name: "Single".into(),
+            frames: vec![f(1)],
+            duration_ms: 50,
+            steps: 1,
+            updated_at: String::new(),
+        };
+        engine.play_at(recording, 0).unwrap();
+        engine.set_loop(false, None);
+        assert!(engine.tick(0).unwrap().final_command);
+        assert!(engine.tick(50).is_none());
+        assert_eq!(*engine.state(), PlaybackState::Completed);
+    }
+    #[test]
     fn speed_scales_fake_clock_intervals() {
         let mut engine = ActionEngine::new();
         let mut first = f(1);
@@ -652,7 +671,7 @@ mod tests {
         assert!(engine.tick(25).is_some());
     }
     #[test]
-    fn infinite_loop_has_software_cap_and_frame_limit_is_bounded() {
+    fn infinite_loop_runs_until_cancel_and_frame_limit_is_bounded() {
         let mut engine = ActionEngine::new();
         let recording = ActionRecording {
             schema_version: 1,
@@ -665,11 +684,13 @@ mod tests {
         };
         engine.play(recording).unwrap();
         engine.set_loop(true, None);
-        for _ in 0..=MAX_INFINITE_LOOPS {
+        for _ in 0..10_000 {
             assert!(engine.next().is_some());
         }
-        assert!(engine.next().is_none());
-        assert_eq!(engine.loop_count(), MAX_INFINITE_LOOPS);
+        assert_eq!(engine.loop_count(), 9_999);
+        assert_eq!(*engine.state(), PlaybackState::Playing);
+        engine.cancel();
+        assert_eq!(*engine.state(), PlaybackState::Cancelled);
         let mut bounded = ActionEngine::new();
         bounded.start_recording("bounded", "Bounded");
         for _ in 0..MAX_RECORDING_FRAMES {
