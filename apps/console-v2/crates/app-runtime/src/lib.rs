@@ -207,6 +207,9 @@ impl AppRuntime {
             s.unlock();
         }
     }
+    pub fn shutdown(&mut self) {
+        let _ = self.device.shutdown();
+    }
 }
 
 impl ui::DevicePort for AppRuntime {

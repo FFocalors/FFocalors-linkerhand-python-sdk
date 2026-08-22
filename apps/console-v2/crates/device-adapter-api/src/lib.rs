@@ -30,4 +30,5 @@ pub trait DeviceAdapter: Send {
     /// override this; simulators keep the no-op default.
     fn stop(&mut self) -> AdapterResult<()> { Ok(()) }
     fn unlock(&mut self) -> AdapterResult<()> { Ok(()) }
+    fn shutdown(&mut self) -> AdapterResult<()> { self.disconnect() }
 }

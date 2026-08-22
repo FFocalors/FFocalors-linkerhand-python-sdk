@@ -239,7 +239,7 @@ pub mod process {
                 args: vec![script.into().to_string_lossy().into_owned()],
                 working_dir: None,
                 request_timeout: Duration::from_secs(10),
-                shutdown_timeout: Duration::from_secs(2),
+                shutdown_timeout: Duration::from_millis(1500),
                 max_pending: 64,
             }
         }
@@ -297,6 +297,7 @@ pub mod process {
         pub fn state(&self) -> SidecarState {
             self.inner.lock().unwrap().state.clone()
         }
+        pub fn shutdown_timeout(&self) -> Duration { self.config.shutdown_timeout }
         pub fn start(&self) -> Result<(), ProcessError> {
             {
                 let mut inner = self.inner.lock().unwrap();
@@ -384,6 +385,9 @@ pub mod process {
             }
         }
         pub fn request(&self, operation: SidecarOperation, payload: serde_json::Value) -> Result<WireEnvelope<serde_json::Value>, ProcessError> {
+            self.request_timed(operation, payload, self.config.request_timeout)
+        }
+        pub fn request_timed(&self, operation: SidecarOperation, payload: serde_json::Value, timeout: Duration) -> Result<WireEnvelope<serde_json::Value>, ProcessError> {
             if !matches!(self.state(), SidecarState::Running) { return Err(ProcessError::NotRunning); }
             let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed) + 1;
             let request_id = format!("rust-{}", self.next_request.fetch_add(1, Ordering::Relaxed) + 1);
@@ -398,7 +402,7 @@ pub mod process {
                 return Err(error);
             }
             drop(guard);
-            match receiver.recv_timeout(self.config.request_timeout) {
+            match receiver.recv_timeout(timeout) {
                 Ok(result) => result,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     let mut guard = self.inner.lock().unwrap();
@@ -423,6 +427,13 @@ pub mod process {
             guard.stdin = None;
             guard.state = SidecarState::Stopped;
             guard.reject_all(ProcessError::Crashed("sidecar closed".into()));
+        }
+        /// Send the protocol close on a short deadline, then terminate the
+        /// child regardless of whether the bridge or SDK is stuck.
+        pub fn close_bounded(&self, timeout: Duration) {
+            let protocol_deadline = timeout.min(Duration::from_millis(1500));
+            let _ = self.request_timed(SidecarOperation::Close, serde_json::json!({}), protocol_deadline);
+            self.close();
         }
     }
     impl Drop for SidecarProcessManager { fn drop(&mut self) { self.close(); } }
@@ -459,13 +470,18 @@ impl SidecarDeviceAdapter {
         Self { config, manager, capabilities: None, connected: false, telemetry_sequence: 0 }
     }
     pub fn manager(&self) -> &process::SidecarProcessManager { &self.manager }
-    pub fn stop(&self) -> Result<(), device_adapter_api::AdapterError> { self.command(SidecarOperation::Stop, serde_json::json!({})).map(|_| ()) }
-    pub fn unlock(&self) -> Result<(), device_adapter_api::AdapterError> { self.command(SidecarOperation::Unlock, serde_json::json!({})).map(|_| ()) }
+    pub fn stop(&self) -> Result<(), device_adapter_api::AdapterError> { self.manager.request_timed(SidecarOperation::Stop, serde_json::json!({}), Duration::from_millis(500)).map(|_| ()).map_err(map_process_error) }
+    pub fn unlock(&self) -> Result<(), device_adapter_api::AdapterError> { self.manager.request_timed(SidecarOperation::Unlock, serde_json::json!({}), Duration::from_millis(500)).map(|_| ()).map_err(map_process_error) }
     pub fn close(&self) {
         // Ask the bridge to flush/close first; the process manager remains the
         // bounded fallback if the bridge is already crashed or unresponsive.
         let _ = self.command(SidecarOperation::Close, serde_json::json!({}));
         self.manager.close();
+    }
+    pub fn shutdown_bounded(&mut self, timeout: Duration) {
+        self.manager.close_bounded(timeout.min(self.manager.shutdown_timeout()));
+        self.connected = false;
+        self.capabilities = None;
     }
     fn command(&self, operation: SidecarOperation, payload: serde_json::Value) -> Result<WireEnvelope<serde_json::Value>, device_adapter_api::AdapterError> {
         self.manager.request(operation, payload).map_err(map_process_error)
@@ -521,9 +537,10 @@ impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
     }
     fn stop(&mut self) -> device_adapter_api::AdapterResult<()> { SidecarDeviceAdapter::stop(self) }
     fn unlock(&mut self) -> device_adapter_api::AdapterResult<()> { SidecarDeviceAdapter::unlock(self) }
+    fn shutdown(&mut self) -> device_adapter_api::AdapterResult<()> { let timeout = self.manager.shutdown_timeout(); self.shutdown_bounded(timeout); Ok(()) }
 }
 impl Drop for SidecarDeviceAdapter {
-    fn drop(&mut self) { self.close(); }
+    fn drop(&mut self) { self.shutdown_bounded(Duration::from_secs(2)); }
 }
 
 #[cfg(test)]
@@ -662,5 +679,29 @@ mod tests {
         device_adapter_api::DeviceAdapter::send_joint_target(&mut adapter, &command).unwrap();
         device_adapter_api::DeviceAdapter::disconnect(&mut adapter).unwrap();
         adapter.close();
+    }
+    #[test]
+    fn fake_process_bounded_protocol_close() {
+        let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar/linkerhand-bridge/main.py");
+        let manager = process::SidecarProcessManager::new(process::ProcessConfig::fake(script));
+        manager.start().unwrap();
+        let started = std::time::Instant::now();
+        manager.close_bounded(Duration::from_secs(2));
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(manager.state(), SidecarState::Stopped);
+    }
+    #[test]
+    fn timeout_then_restart_is_bounded() {
+        let mut config = process::ProcessConfig::python("-c");
+        config.args = vec!["-c".into(), "import time; time.sleep(5)".into()];
+        config.request_timeout = Duration::from_millis(50);
+        let manager = process::SidecarProcessManager::new(config);
+        manager.start().unwrap();
+        let result = manager.request(SidecarOperation::GetTelemetry, serde_json::json!({}));
+        assert!(matches!(result, Err(process::ProcessError::Timeout)));
+        assert_eq!(manager.state(), SidecarState::TimedOut);
+        manager.restart().unwrap();
+        assert_eq!(manager.state(), SidecarState::Running);
+        manager.close_bounded(Duration::from_millis(100));
     }
 }

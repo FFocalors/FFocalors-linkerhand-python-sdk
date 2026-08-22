@@ -25,10 +25,17 @@ export const tauriRuntime: ConsolePorts = {
     read: () => invoke<TelemetrySnapshot>('telemetry_read'),
     subscribe(listener: (value: TelemetrySnapshot) => void) {
       const channel = new Channel<TelemetrySnapshot>(listener);
-      void invoke<void>('telemetry_subscribe', { channel }).catch(() => { channel.onmessage = () => undefined; });
+      let cancelled = false;
+      let registered = false;
+      const unsubscribe = () => invoke<void>('telemetry_unsubscribe', { channelId: channel.id }).catch(() => undefined);
+      void invoke<void>('telemetry_subscribe', { channel }).then(() => {
+        registered = true;
+        if (cancelled) void unsubscribe();
+      }).catch(() => { channel.onmessage = () => undefined; });
       return () => {
+        cancelled = true;
         channel.onmessage = () => undefined;
-        void invoke<void>('telemetry_unsubscribe', { channelId: channel.id }).catch(() => undefined);
+        if (registered) void unsubscribe();
       };
     },
   },

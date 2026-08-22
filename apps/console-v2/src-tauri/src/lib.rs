@@ -21,8 +21,6 @@ enum ActorRequest {
     Connect { reply: Reply<ConnectionSnapshot> },
     Disconnect { reply: Reply<ConnectionSnapshot> },
     Submit { command: JointTargetCommand, reply: Reply<()> },
-    Stop { reply: Reply<()> },
-    Unlock { reply: Reply<()> },
     Operation { reply: Reply<OperationSnapshot> },
     ReadTelemetry { reply: Reply<TelemetrySnapshot> },
     SubscribeTelemetry { channel: Channel<TelemetrySnapshot>, reply: Reply<()> },
@@ -33,7 +31,8 @@ enum ActorRequest {
 #[derive(Clone)]
 pub struct RuntimeHandle {
     tx: mpsc::SyncSender<ActorRequest>,
-    stop_requested: Arc<AtomicBool>,
+    control_state: Arc<std::sync::atomic::AtomicU8>,
+    shutdown_requested: Arc<AtomicBool>,
     stopped: Arc<AtomicBool>,
 }
 pub struct RuntimeState(pub RuntimeHandle);
@@ -46,8 +45,9 @@ impl RuntimeHandle {
         })
     }
     fn shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::Release);
         let _ = self.tx.try_send(ActorRequest::Shutdown);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(1900);
         while !self.stopped.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
             thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -59,19 +59,25 @@ struct RuntimeActor {
     rx: mpsc::Receiver<ActorRequest>,
     telemetry_channels: Vec<Channel<TelemetrySnapshot>>,
     latest: Option<TelemetrySnapshot>,
-    stop_requested: Arc<AtomicBool>,
+    control_state: Arc<std::sync::atomic::AtomicU8>,
+    shutdown_requested: Arc<AtomicBool>,
+    applied_control: u8,
     stopped: Arc<AtomicBool>,
 }
 impl RuntimeActor {
     fn run(mut self) {
         let mut next_telemetry = now_ms();
         loop {
+            self.apply_control();
+            if self.shutdown_requested.load(Ordering::Acquire) { self.shutdown(); break; }
             match self.rx.recv_timeout(std::time::Duration::from_millis(5)) {
                 Ok(ActorRequest::Shutdown) => { self.shutdown(); break; }
                 Ok(request) => self.handle(request),
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => { self.shutdown(); break; }
             }
+            self.apply_control();
+            if self.shutdown_requested.load(Ordering::Acquire) { self.shutdown(); break; }
             let now = now_ms();
             if now.saturating_sub(next_telemetry) >= 50 {
                 next_telemetry = now;
@@ -88,13 +94,11 @@ impl RuntimeActor {
             ActorRequest::Connect { reply } => { let result = self.runtime.connect().map(|_| app_runtime::ui::DevicePort::get_connection(&self.runtime)).map_err(map_error); let _ = reply.send(result); }
             ActorRequest::Disconnect { reply } => { let result = self.runtime.device.disconnect().map(|_| app_runtime::ui::DevicePort::get_connection(&self.runtime)).map_err(map_error); let _ = reply.send(result); }
             ActorRequest::Submit { command, reply } => {
-                if self.stop_requested.load(Ordering::Acquire) { let _ = reply.send(Err(app_error("STOPPED", "motion is locked after stop", false))); return; }
+                if self.control_state.load(Ordering::Acquire) == 1 { let _ = reply.send(Err(app_error("STOPPED", "motion is locked after stop", false))); return; }
                 let result = self.runtime.motion.submit(command.clone()).map_err(map_error);
                 if result.is_ok() && command.final_command { self.flush_motion(now_ms()); }
                 let _ = reply.send(result);
             }
-            ActorRequest::Stop { reply } => { self.stop_requested.store(true, Ordering::Release); self.runtime.stop_all(); let _ = reply.send(Ok(())); }
-            ActorRequest::Unlock { reply } => { self.runtime.unlock(); self.stop_requested.store(false, Ordering::Release); let _ = reply.send(Ok(())); }
             ActorRequest::Operation { reply } => { let _ = reply.send(Ok(app_runtime::ui::MotionPort::get_operation(&self.runtime))); }
             ActorRequest::ReadTelemetry { reply } => {
                 let result = self.latest.clone().or_else(|| self.runtime.sample_telemetry(now_ms()).ok()).ok_or_else(|| app_error("TELEMETRY_UNAVAILABLE", "telemetry is not available until the device is connected", true));
@@ -112,6 +116,19 @@ impl RuntimeActor {
             ActorRequest::Shutdown => {}
         }
     }
+    fn apply_control(&mut self) {
+        let desired = self.control_state.load(Ordering::Acquire);
+        if desired == self.applied_control { return; }
+        if desired == 2 && self.applied_control == 0 {
+            // Preserve stop-before-unlock ordering even if both atomics were
+            // changed while the actor was busy or the request queue was full.
+            self.runtime.stop_all();
+            self.applied_control = 1;
+            return;
+        }
+        match desired { 1 => self.runtime.stop_all(), 2 => self.runtime.unlock(), _ => return }
+        self.applied_control = desired;
+    }
     fn flush_motion(&mut self, now: u64) {
         if let Some(command) = self.runtime.motion.tick(now) { let _ = self.runtime.device.send(&command); }
     }
@@ -121,8 +138,8 @@ impl RuntimeActor {
         self.telemetry_channels.retain(|channel| channel.send(value.clone()).is_ok());
     }
     fn shutdown(&mut self) {
-        self.runtime.stop_all();
-        let _ = self.runtime.device.disconnect();
+        self.runtime.motion.stop_all();
+        self.runtime.shutdown();
         self.stopped.store(true, Ordering::Release);
     }
 }
@@ -133,12 +150,14 @@ fn spawn_runtime() -> RuntimeHandle {
     let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/linkerhand-bridge/main.py");
     runtime.install_adapter(Box::new(SidecarDeviceAdapter::new(config, SidecarProcessManager::new(ProcessConfig::fake(script)))));
     let (tx, rx) = mpsc::sync_channel(128);
-    let stop_requested = Arc::new(AtomicBool::new(false));
+    let control_state = Arc::new(std::sync::atomic::AtomicU8::new(0));
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
     let stopped = Arc::new(AtomicBool::new(false));
-    let actor_stop = Arc::clone(&stop_requested);
+    let actor_control = Arc::clone(&control_state);
+    let actor_shutdown = Arc::clone(&shutdown_requested);
     let actor_stopped = Arc::clone(&stopped);
-    thread::Builder::new().name("linkerhand-runtime-actor".into()).spawn(move || RuntimeActor { runtime, rx, telemetry_channels: Vec::new(), latest: None, stop_requested: actor_stop, stopped: actor_stopped }.run()).expect("spawn runtime actor");
-    RuntimeHandle { tx, stop_requested, stopped }
+    thread::Builder::new().name("linkerhand-runtime-actor".into()).spawn(move || RuntimeActor { runtime, rx, telemetry_channels: Vec::new(), latest: None, control_state: actor_control, shutdown_requested: actor_shutdown, applied_control: 0, stopped: actor_stopped }.run()).expect("spawn runtime actor");
+    RuntimeHandle { tx, control_state, shutdown_requested, stopped }
 }
 
 async fn dispatch<T>(handle: RuntimeHandle, request: impl FnOnce(Reply<T>) -> ActorRequest) -> Result<T, AppError> {
@@ -162,9 +181,9 @@ mod commands {
     #[tauri::command]
     pub async fn set_joint_target(state: tauri::State<'_, RuntimeState>, command: JointTargetCommand) -> Result<(), AppError> { dispatch(state.0.clone(), |reply| ActorRequest::Submit { command, reply }).await }
     #[tauri::command]
-    pub async fn stop_all(state: tauri::State<'_, RuntimeState>) -> Result<(), AppError> { state.0.stop_requested.store(true, Ordering::Release); dispatch(state.0.clone(), |reply| ActorRequest::Stop { reply }).await }
+    pub async fn stop_all(state: tauri::State<'_, RuntimeState>) -> Result<(), AppError> { state.0.control_state.store(1, Ordering::Release); Ok(()) }
     #[tauri::command]
-    pub async fn unlock(state: tauri::State<'_, RuntimeState>) -> Result<(), AppError> { dispatch(state.0.clone(), |reply| ActorRequest::Unlock { reply }).await }
+    pub async fn unlock(state: tauri::State<'_, RuntimeState>) -> Result<(), AppError> { state.0.control_state.store(2, Ordering::Release); Ok(()) }
     #[tauri::command]
     pub async fn operation(state: tauri::State<'_, RuntimeState>) -> Result<OperationSnapshot, AppError> { dispatch(state.0.clone(), |reply| ActorRequest::Operation { reply }).await }
     #[tauri::command]
@@ -196,8 +215,8 @@ mod tests {
     use console_contracts::{CommandSource, CURRENT_SCHEMA_VERSION};
     use std::time::Duration;
 
-    fn command(id: &str, final_command: bool) -> JointTargetCommand {
-        JointTargetCommand { schema_version: CURRENT_SCHEMA_VERSION, command_id: id.into(), source: CommandSource::Manual, positions: vec![0.1; 6], duration_ms: None, final_command }
+    fn command(id: &str, value: f64, final_command: bool) -> JointTargetCommand {
+        JointTargetCommand { schema_version: CURRENT_SCHEMA_VERSION, command_id: id.into(), source: CommandSource::Manual, positions: vec![value; 6], duration_ms: None, final_command }
     }
 
     #[test]
@@ -216,14 +235,42 @@ mod tests {
         let first = frames_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let second = frames_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(second.sequence > first.sequence);
-        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("final", true), reply })).unwrap();
-        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Stop { reply })).unwrap();
-        let stopped = runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("blocked", false), reply }));
+        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("first", 0.1, false), reply })).unwrap();
+        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("latest", 0.8, false), reply })).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let latest = runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::ReadTelemetry { reply })).unwrap();
+        assert_eq!(latest.positions, vec![0.8; 6]);
+        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("final", 0.9, true), reply })).unwrap();
+        handle.control_state.store(1, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(30));
+        let stopped = runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("blocked", 0.2, false), reply }));
         assert!(stopped.is_err());
-        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Unlock { reply })).unwrap();
-        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("after-unlock", true), reply })).unwrap();
+        handle.control_state.store(2, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(30));
+        runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command: command("after-unlock", 0.3, true), reply })).unwrap();
         let started = std::time::Instant::now();
         handle.shutdown();
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn atomic_shutdown_signal_survives_a_full_command_queue() {
+        let handle = spawn_runtime();
+        let mut filled = 0;
+        for _ in 0..256 {
+            let (reply, _receiver) = tokio::sync::oneshot::channel();
+            if handle.tx.try_send(ActorRequest::Config { reply }).is_ok() { filled += 1; } else { break; }
+        }
+        assert!(filled > 0);
+        handle.control_state.store(1, Ordering::Release);
+        std::thread::sleep(Duration::from_millis(30));
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let command = command("saturated-stop", 0.2, false);
+        let stopped = runtime.block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit { command, reply }));
+        assert!(stopped.is_err());
+        let started = std::time::Instant::now();
+        handle.shutdown();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(handle.stopped.load(Ordering::Acquire));
     }
 }

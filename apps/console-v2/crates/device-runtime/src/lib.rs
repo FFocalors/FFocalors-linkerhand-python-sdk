@@ -107,6 +107,9 @@ impl DeviceRuntime {
     pub fn unlock(&mut self) -> Result<(), RuntimeError> {
         self.adapter.as_mut().ok_or(RuntimeError::NoAdapter)?.unlock().map_err(Into::into)
     }
+    pub fn shutdown(&mut self) -> Result<(), RuntimeError> {
+        self.adapter.as_mut().ok_or(RuntimeError::NoAdapter)?.shutdown().map_err(Into::into)
+    }
 }
 #[cfg(test)]
 mod tests {
