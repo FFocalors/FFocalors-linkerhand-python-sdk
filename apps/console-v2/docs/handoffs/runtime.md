@@ -1,7 +1,7 @@
 # Runtime handoff
 
 - Branch: `codex/v2-m1-runtime`
-- Commit: `735e188c05edb41333356ee3f96f2d53febf83b8`
+- Commit: `6083f3c7838f10f1401581d8a8977b470ed3e7da` (runtime follow-up; this handoff text is finalized in the subsequent docs commit)
 - Scope: Rust-only `console-contracts`, `device-adapter-api`, `device-simulator`, `motion-engine`, `telemetry`, `device-runtime`, `action-engine`, `adaptive-grasp`, `structured-logging`, `sidecar-client`, `app-runtime`, plus a minimal Tauri 2 Channel assembly shell.
 - Public interfaces: added versioned camelCase DTOs and `WireEnvelope`; adapter, motion, telemetry, sidecar, and typed application ports are new. The follow-up adds `RockPaperScissors`, explicit motion source begin/end/finish lifecycle, and `DevicePort`/`MotionPort`/`TelemetryPort`/`ActionPort`/`GraspPort`/`LogPort` interfaces. No existing public interface was changed because this was an empty baseline.
 - Verification: `cargo fmt --all`; `cargo test --workspace` (all unit/doc tests pass, including app-runtime stop-all integration and 100,000 bounded log writes); `cargo clippy --workspace --all-targets -- -D warnings` passes on the current Windows MSVC target.
