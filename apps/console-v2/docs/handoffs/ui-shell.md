@@ -1,7 +1,7 @@
 # Console V2 UI Shell handoff
 
 - 分支：`codex/v2-m1-ui-shell`
-- 提交：待本分支提交后回填
+- 提交：`f5aefd6`（feat(console-v2): add operator UI shell and mock runtime）
 - 范围：React + TypeScript + Vite 的普通操作员工作台，包含设备控制、智能抓取、视觉模仿、猜拳互动、动作中心、诊断中心、设置。
 - 模块：`frontend/app` 负责壳与路由状态；`frontend/features/{device-control,smart-grasp,vision,rock-paper-scissors,actions,diagnostics,settings}` 仅通过各自 `index.tsx` 公开；`frontend/shared/{ui,theme,contracts,utilities}` 提供 UI、主题、契约和合帧工具；`frontend/workers/vision-worker` 保留视觉 Worker 边界。
 - 公共接口：`shared/contracts` 对齐 DeviceConfig、DeviceCapabilities、ConnectionSnapshot、JointTargetCommand、TelemetrySnapshot、OperationSnapshot、StructuredLogEntry、AppError、ActionRecording、VisionPoseProposal，并提供 Device/Motion/Telemetry/Action/Grasp/Vision/Log ports。当前实现由可替换的 `mockRuntime` 提供数据。
