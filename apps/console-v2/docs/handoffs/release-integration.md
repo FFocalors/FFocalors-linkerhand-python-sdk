@@ -29,10 +29,9 @@
   executable/protocol health, and the still-unverified hardware gate.
 - `ProcessConfig::executable` makes the release intent explicit; `fake` and
   `python` remain test/development constructors.
-- NSIS uses Tauri's `{ "type": "offlineInstaller" }` WebView2 mode. The build
-  host must be able to obtain/cache the approximately 127 MB WebView2 offline
-  installer; no local offline-installer binary was available in this run, so
-  a fresh air-gapped Windows installation is not yet claimed as verified.
+- NSIS uses Tauri's `{ "type": "offlineInstaller" }` WebView2 mode. The
+  `pnpm build:windows` run downloaded the WebView2 payload and produced the
+  installer; a fresh air-gapped install still needs a separate machine test.
 - Vite injects `package.json` version `2.0.0-rc.1` as `VITE_APP_VERSION`; the
   settings page has the same RC fallback for browser/offline simulation and
   contains no `0.1.0`/`v2-preview` display path.
@@ -49,6 +48,15 @@
 - Packaging branch evidence remains in `docs/handoffs/packaging.md`:
   Python tests, fake NDJSON smoke, PyInstaller sidecar (22,725,009 bytes),
   NSIS installer (35,909,699 bytes), and portable ZIP (36,417,092 bytes).
+- Rebuilt on this branch with the runtime/UX integration:
+  - NSIS `LinkerHand Console_2.0.0-rc.1_x64-setup.exe`: 251,852,946 bytes,
+    SHA-256 `6A1B6EEE377B943CDF9BEA8E8CDD242572AF5C169404E700E0B9D183D2C0FA17`.
+  - Portable ZIP `LinkerHand-Console-v2.0.0-rc.1-win-x64-portable.zip`:
+    36,735,343 bytes, SHA-256
+    `8B294E500A8BD5DA3BE13A6A55BC5AEE55DF7833B969BB422003993906B4DACB`.
+  - Sidecar: 22,725,876 bytes, SHA-256
+    `BB7F43FADB498E1E3D67871541E87FD373FCACA4692ED043421201935E72A77F`.
+  - Packaged sidecar fake NDJSON smoke passed with three envelopes.
 
 ## Remaining gates
 
