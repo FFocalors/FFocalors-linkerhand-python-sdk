@@ -564,4 +564,21 @@ mod tests {
             Err(GraspError::Failed(FailureReason::Disconnected))
         );
     }
+    #[test]
+    fn overcurrent_stops_with_joint_explanation() {
+        let mut machine = GraspMachine::new(Profile::O6);
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.5; 6]).unwrap();
+        let mut sample = telemetry(6);
+        sample.raw_current[3] = 250;
+        assert_eq!(
+            machine.tick(50, &sample),
+            Err(GraspError::Failed(FailureReason::OverCurrent { joint: 3 }))
+        );
+        assert_eq!(
+            machine.failure_message(),
+            Some("检测到过流，动作已停止以保护设备。")
+        );
+    }
 }

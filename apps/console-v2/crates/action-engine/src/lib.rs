@@ -596,4 +596,69 @@ mod tests {
         assert_eq!(out.source, CommandSource::Playback);
         assert!(a.tick(150).is_none());
     }
+    #[test]
+    fn speed_scales_fake_clock_intervals() {
+        let mut engine = ActionEngine::new();
+        let mut first = f(1);
+        first.duration_ms = Some(100);
+        let mut second = f(2);
+        second.duration_ms = Some(100);
+        let recording = ActionRecording {
+            schema_version: 1,
+            id: "speed".into(),
+            name: "Speed".into(),
+            frames: vec![first, second],
+            duration_ms: 200,
+            steps: 2,
+            updated_at: String::new(),
+        };
+        engine.play_at(recording, 0).unwrap();
+        engine.set_speed(0.25).unwrap();
+        assert_eq!(engine.tick(0).unwrap().command_id, "1");
+        assert!(engine.tick(399).is_none());
+        assert_eq!(engine.tick(400).unwrap().command_id, "2");
+        let fast = ActionRecording {
+            schema_version: 1,
+            id: "fast".into(),
+            name: "Fast".into(),
+            frames: vec![f(1), f(2)],
+            duration_ms: 100,
+            steps: 2,
+            updated_at: String::new(),
+        };
+        engine.play_at(fast, 0).unwrap();
+        engine.set_speed(2.0).unwrap();
+        engine.tick(0);
+        assert!(engine.tick(24).is_none());
+        assert!(engine.tick(25).is_some());
+    }
+    #[test]
+    fn infinite_loop_has_software_cap_and_frame_limit_is_bounded() {
+        let mut engine = ActionEngine::new();
+        let recording = ActionRecording {
+            schema_version: 1,
+            id: "loop".into(),
+            name: "Loop".into(),
+            frames: vec![f(1)],
+            duration_ms: 50,
+            steps: 1,
+            updated_at: String::new(),
+        };
+        engine.play(recording).unwrap();
+        engine.set_loop(true, None);
+        for _ in 0..=MAX_INFINITE_LOOPS {
+            assert!(engine.next().is_some());
+        }
+        assert!(engine.next().is_none());
+        assert_eq!(engine.loop_count(), MAX_INFINITE_LOOPS);
+        let mut bounded = ActionEngine::new();
+        bounded.start_recording("bounded", "Bounded");
+        for _ in 0..MAX_RECORDING_FRAMES {
+            bounded.record(f(1)).unwrap();
+        }
+        assert_eq!(
+            bounded.record(f(1)),
+            Err(ActionError::FrameLimit(MAX_RECORDING_FRAMES))
+        );
+    }
 }

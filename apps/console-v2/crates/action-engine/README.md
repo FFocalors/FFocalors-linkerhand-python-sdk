@@ -8,3 +8,5 @@
 - `cancel` / `stop_all` 清除录制与回放来源；状态机不持有线程、硬件或持久化句柄。
 
 `record` 和 `next` 保留给旧运行时的同步兼容路径；产品接线应使用带时间戳的 API。
+
+前端公开的 `features/actions` `ActionController` 是 UI 与运行时之间的 feature-local Port：它覆盖录制、回放速度/循环、暂停继续、停止和状态订阅。未接线时 UI 明确禁用控制，不伪造进度。
