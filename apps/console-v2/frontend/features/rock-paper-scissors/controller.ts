@@ -101,9 +101,9 @@ export class RpsGameController {
 
   lock(): void {
     this.generation += 1; this.clearTimers(); this.stable.reset();
-    const token = this.generation;
-    this.emit({ hardwareAuthorized: false, phase: this.state.cameraState === 'running' ? 'cameraReady' : 'idle', countdown: null, playerMove: null, machineMove: null, outcome: null });
-    void this.cancelAction('locked', token);
+    const token = this.generation; const ownedByRps = this.runtime.snapshot().owner === 'rps';
+    this.emit({ hardwareAuthorized: false, phase: ownedByRps ? 'idle' : this.state.cameraState === 'running' ? 'cameraReady' : 'idle', cameraState: ownedByRps ? 'stopping' : this.state.cameraState, countdown: null, playerMove: null, machineMove: null, outcome: null });
+    void this.cancelAction('locked', token).then(async () => { if (ownedByRps && this.runtime.snapshot().owner === 'rps') await this.runtime.stop(); });
   }
 
   async stop(reason: 'stopped' | 'unmounted' = 'stopped'): Promise<void> {
@@ -137,8 +137,8 @@ export class RpsGameController {
     if (snapshot.state === 'running' && snapshot.owner === 'rps' && this.startGeneration !== null && this.startGeneration !== this.generation) { void this.runtime.stop(); return; }
     if (snapshot.state === 'running' && snapshot.owner !== 'rps') {
       const wasActive = this.state.cameraState === 'running' || ACTIVE_PHASES.has(this.state.phase) || this.state.hardwareAuthorized;
-      if (wasActive) { this.generation += 1; this.clearTimers(); this.stable.reset(); const token = this.generation; this.emit({ cameraState: snapshot.state, phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` }, countdown: null, hardwareAuthorized: false, playerMove: null, machineMove: null, outcome: null, stableFrames: 0 }); void this.cancelAction('stopped', token); }
-      else this.emit({ cameraState: snapshot.state, phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` } });
+      if (wasActive) { this.generation += 1; this.clearTimers(); this.stable.reset(); const token = this.generation; this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` }, countdown: null, hardwareAuthorized: false, playerMove: null, machineMove: null, outcome: null, stableFrames: 0 }); void this.cancelAction('stopped', token); }
+      else this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` } });
       return;
     }
     const leavingRunning = snapshot.state !== 'running' && (this.state.cameraState === 'running' || ACTIVE_PHASES.has(this.state.phase) || this.state.hardwareAuthorized);

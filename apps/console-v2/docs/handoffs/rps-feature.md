@@ -15,7 +15,7 @@
 基线 `apps/console-v2/frontend/app/App.tsx` 仍将 RPS 当作旧的 `{ vision, capabilities, locked }` 页面，且没有注入 `RpsVisionRuntime`。集成时必须由 App/应用 facade 创建一份共享 runtime，并传入 `runtime={sharedVisionRuntime}`；不能在 RPS 或 Vision Feature 中各自 `new VisionRuntime`。O6 动作侧传入实现 `RpsActionController` 的 controller；其他型号可省略该 prop。
 
 页面组件卸载会调用 runtime `stop()`，runtime 自己处理 hidden visibility、tracks、Worker 与 owner 释放。全局 stop/lock 应由 App 同时传入 `locked`，使 feature 立即 cancel。
-controller 用 generation token 使迟到的 start/authorize/dispatch Promise 失效，并保证最多一个 dispatch in-flight。runtime 从 running 离开时会清理本局 timers/stable window/授权；只有 snapshot owner 为 `rps` 时才调用 `runtime.stop()`，不会误停 vision 会话。reset 在摄像头仍 running 时回到 `cameraReady` 并清零比分。
+controller 用 generation token 使迟到的 start/authorize/dispatch Promise 失效，并保证最多一个 dispatch in-flight。runtime 从 running 离开时会清理本局 timers/stable window/授权；busy 的 vision owner 在 RPS 中始终显示为 idle + `VISION_BUSY`，不会误显示运行中的摄像头。全局 lock/stop 会在 owner 为 `rps` 时有界异步 stop runtime，owner 为 vision 时绝不误停。reset 在摄像头仍 running 时回到 `cameraReady` 并清零比分。
 
 ## 验证记录
 
