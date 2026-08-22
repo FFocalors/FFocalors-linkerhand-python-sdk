@@ -6,6 +6,7 @@ export type MapperSettings = { deadZone: number; emaAlpha: number; maxDeltaPerFr
 export type CalibrationSnapshot = { phase: CalibrationPhase; openSamples: number; fistSamples: number; complete: boolean; openReference: number[] | null; fistReference: number[] | null };
 
 export const DEFAULT_MAPPER_SETTINGS: MapperSettings = { deadZone: 0.025, emaAlpha: 0.35, maxDeltaPerFrame: 0.12 };
+export const MIN_STABLE_GESTURE_CONFIDENCE = 0.7;
 const FINGER_GROUPS = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]] as const;
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 const distance = (a: Landmark, b: Landmark): number => Math.hypot(a.x - b.x, a.y - b.y, (a.z - b.z) * 0.25);
@@ -42,12 +43,13 @@ export class GestureStabilizer {
   private stableConfidence = 0;
 
   update(gesture: Gesture, confidence: number, frames = 3): { gesture: Gesture; confidence: number } {
-    if (gesture === this.candidate) this.count += 1;
-    else { this.candidate = gesture; this.count = 1; }
-    if (this.count >= frames) {
-      this.stable = gesture;
-      this.stableConfidence = confidence;
+    if (gesture === 'unknown' || confidence < MIN_STABLE_GESTURE_CONFIDENCE) {
+      this.reset();
+      return { gesture: 'unknown', confidence: 0 };
     }
+    if (gesture === this.candidate) this.count += 1;
+    else { this.candidate = gesture; this.count = 1; this.stable = 'unknown'; this.stableConfidence = 0; }
+    if (this.count >= frames) { this.stable = gesture; this.stableConfidence = confidence; }
     return { gesture: this.stable, confidence: this.stableConfidence };
   }
 

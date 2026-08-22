@@ -26,6 +26,10 @@ pnpm build
 
 The feature tests cover all proposal gates, complete O6 vectors and bounded mapping, lock revocation, shared-runtime owner cleanup, fixture recognition, and the session calibration sequence.
 
+The first build attempt on this branch was blocked by Windows checkout line-ending conversion of the tracked vision JavaScript asset. The upstream `6dfb66c` / `8fddbad` fixes were cherry-picked, the two JS assets were refreshed from the clean Git blobs, and `pnpm check:vision-assets` now passes (`Verified 5 offline vision assets`). A fresh checkout must honor the root `.gitattributes` `-text` rules for these files.
+
+After that refresh, this branch ran `pnpm typecheck`, `pnpm lint`, `pnpm test -- --run` (7 files, 24 tests), and `pnpm build` successfully. Vite emitted the normal `index` JS/CSS assets, but no separate vision worker chunk: the current App composition does not instantiate/import the concrete `VisionRuntime`, and this feature deliberately injects only `VisionRuntimeLike`. The integration follow-up must compose the shared concrete runtime; then inspect the production bundle for the runtime's dynamic worker chunk and validate its packaged URLs.
+
 ## Follow-up integration
 
 Wire `proposalController.submit` to the app-runtime Vision facade/motion arbitration in the composition layer. Keep authorization and lock state owned by that composition layer, pass the same runtime to Rock-Paper-Scissors, and retain the runtime's owner exclusion. Browser validation should verify the camera preview, `snapshot().inflight <= 1`, real FPS/dropped frames and recovery from permission/device errors.

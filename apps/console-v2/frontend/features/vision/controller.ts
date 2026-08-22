@@ -1,6 +1,6 @@
 import type { DeviceModel, VisionPoseProposal } from '../../shared/contracts';
 import type { HandLandmark, VisionLandmarkResult, VisionRuntimeSnapshot, VisionRuntimeState } from '../../shared/vision-runtime';
-import { classifyGesture, GestureStabilizer, mapLandmarksToO6, PoseMapper, SessionCalibration, type Gesture, type MapperSettings } from './model';
+import { classifyGesture, GestureStabilizer, MIN_STABLE_GESTURE_CONFIDENCE, PoseMapper, SessionCalibration, type Gesture, type MapperSettings } from './model';
 
 export const MIN_PROPOSAL_CONFIDENCE = 0.7;
 
@@ -14,6 +14,59 @@ export interface VisionRuntimeLike {
 export interface VisionProposalController {
   submit(proposal: VisionPoseProposal): void | Promise<void>;
   revoke(reason: string): void | Promise<void>;
+}
+
+type ProposalErrorHandler = (error: unknown, operation: 'submit' | 'revoke') => void;
+
+/** Latest-wins dispatch: one active submit and one replaceable pending submit. */
+export class LatestWinsProposalDispatcher {
+  private inFlight = false;
+  private pending: VisionPoseProposal | null = null;
+  private generation = 0;
+  private disposed = false;
+
+  constructor(private readonly sink: VisionProposalController, private readonly onError: ProposalErrorHandler) {}
+
+  submit(proposal: VisionPoseProposal): void {
+    if (this.disposed) return;
+    this.pending = proposal;
+    this.pump();
+  }
+
+  revoke(reason: string): void {
+    this.generation += 1;
+    this.pending = null;
+    this.invokeRevoke(reason);
+  }
+
+  dispose(reason: string): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.generation += 1;
+    this.pending = null;
+    this.invokeRevoke(reason);
+  }
+
+  private pump(): void {
+    if (this.inFlight || !this.pending || this.disposed) return;
+    const proposal = this.pending;
+    const generation = this.generation;
+    this.pending = null;
+    this.inFlight = true;
+    Promise.resolve()
+      .then(() => this.sink.submit(proposal))
+      .catch(error => this.onError(error, 'submit'))
+      .finally(() => {
+        this.inFlight = false;
+        if (!this.disposed && generation === this.generation) this.pump();
+      });
+  }
+
+  private invokeRevoke(reason: string): void {
+    Promise.resolve()
+      .then(() => this.sink.revoke(reason))
+      .catch(error => this.onError(error, 'revoke'));
+  }
 }
 
 export interface VisionFeatureSnapshot {
@@ -64,6 +117,7 @@ export class VisionFeatureController {
   private readonly calibration = new SessionCalibration();
   private readonly stabilizer = new GestureStabilizer();
   private readonly mapper: PoseMapper;
+  private readonly dispatcher: LatestWinsProposalDispatcher;
   private readonly listeners = new Set<FeatureListener>();
   private readonly unsubscribeRuntime: () => void;
   private readonly unsubscribeResult: () => void;
@@ -75,12 +129,17 @@ export class VisionFeatureController {
   private gesture: Gesture = 'unknown';
   private confidence = 0;
   private lastProposal: VisionPoseProposal | null = null;
+  private revokedReason: string | null = null;
   private lastError: string | null = null;
 
   constructor(runtime: VisionRuntimeLike, sink: VisionProposalController = noOpController, mapperSettings?: Partial<MapperSettings>) {
     this.runtime = runtime;
     this.sink = sink;
     this.mapper = new PoseMapper(mapperSettings);
+    this.dispatcher = new LatestWinsProposalDispatcher(sink, (error, operation) => {
+      this.lastError = `${operation === 'submit' ? '视觉建议提交' : '视觉建议撤销'}失败：${error instanceof Error ? error.message : '未知错误'}`;
+      this.emit();
+    });
     this.runtimeSnapshot = runtime.snapshot();
     this.unsubscribeRuntime = runtime.subscribe(snapshot => {
       this.runtimeSnapshot = snapshot;
@@ -145,6 +204,9 @@ export class VisionFeatureController {
 
   beginCalibration(): void {
     this.calibration.begin();
+    this.stabilizer.reset();
+    this.gesture = 'unknown';
+    this.confidence = 0;
     this.mapper.reset();
     this.revoke('校准进行中');
     this.emit();
@@ -184,7 +246,8 @@ export class VisionFeatureController {
   async dispose(): Promise<void> {
     this.stopped = true;
     this.authorized = false;
-    this.revoke('视觉页面已离开');
+    this.lastProposal = null;
+    this.dispatcher.dispose('视觉页面已离开');
     this.unsubscribeResult();
     this.unsubscribeRuntime();
     if (this.runtime.snapshot().owner === 'vision') await this.runtime.stop();
@@ -195,8 +258,10 @@ export class VisionFeatureController {
     if (this.stopped || result.source !== 'vision') return;
     const hand = this.bestHand(result.hands);
     if (!hand) {
+      this.stabilizer.reset();
       this.gesture = 'unknown';
       this.confidence = 0;
+      this.revoke('未检测到手');
       this.emit();
       return;
     }
@@ -204,6 +269,11 @@ export class VisionFeatureController {
     const stable = this.stabilizer.update(observation.gesture, observation.confidence);
     this.gesture = stable.gesture;
     this.confidence = stable.confidence;
+    if (stable.gesture === 'unknown' || stable.gesture !== observation.gesture || stable.confidence < MIN_STABLE_GESTURE_CONFIDENCE) {
+      this.revoke(observation.gesture === 'unknown' ? '手势置信度不足' : '手势过渡中');
+      this.emit();
+      return;
+    }
     this.calibration.accept(stable.gesture, hand.landmarks);
     if (canSubmitProposal({
       model: this.model,
@@ -224,22 +294,21 @@ export class VisionFeatureController {
         expiresAtMonotonicMs: result.monotonicTimeMs + 500,
       };
       this.lastProposal = proposal;
-      try {
-        void this.sink.submit(proposal);
-      } catch (error) {
-        this.lastError = error instanceof Error ? error.message : '视觉建议提交失败';
-      }
+      this.revokedReason = null;
+      this.dispatcher.submit(proposal);
     }
     this.emit();
   }
 
   private bestHand(hands: HandLandmark[]): HandLandmark | null {
-    return hands.filter(hand => hand.landmarks.length === 21).sort((a, b) => b.confidence - a.confidence)[0] ?? null;
+    return hands.filter(hand => hand.landmarks.length === 21).reduce<HandLandmark | null>((best, hand) => !best || hand.confidence > best.confidence ? hand : best, null);
   }
 
   private revoke(reason: string): void {
+    if (this.revokedReason === reason && this.lastProposal === null) return;
     this.lastProposal = null;
-    try { void this.sink.revoke(reason); } catch (error) { this.lastError = error instanceof Error ? error.message : '视觉建议撤销失败'; }
+    this.revokedReason = reason;
+    this.dispatcher.revoke(reason);
   }
 
   private emit(): void {
