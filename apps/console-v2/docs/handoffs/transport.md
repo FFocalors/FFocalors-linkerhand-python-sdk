@@ -23,10 +23,10 @@ linkerhand-console`, and the Python sidecar test suite. Frontend package
 dependencies were not installed in this checkout, so `pnpm typecheck` could
 not run until `pnpm install` is available.
 
-Limitations: the initial Tauri runtime installs the deterministic simulator so
-the shell is hardware-free; production packaging should construct
-`SidecarDeviceAdapter` with the bundled Python bridge. Feature ports that do
-not yet have a Rust facade return an explicit `UNSUPPORTED` AppError.
+Limitations: the initial Tauri runtime constructs `SidecarDeviceAdapter` with
+the checked-in Python bridge in `--fake` mode, so the shell is hardware-free;
+production packaging should select real mode and bundle the SDK. Feature ports
+that do not yet have a Rust facade return an explicit `UNSUPPORTED` AppError.
 
 Next entry: wire the production sidecar launcher into the Tauri runtime and
 replace the simulator factory, then add Channel subscription plumbing once
