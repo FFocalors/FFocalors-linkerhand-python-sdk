@@ -7,6 +7,7 @@ import './styles.css';
 
 const MOVE_ICONS: Record<RpsMove, string> = { rock: '●', paper: '▤', scissors: '✂' };
 const outcomeLabels = { win: '你赢了', lose: '机械手赢了', draw: '平局' } as const;
+const actionLabels = { disabled: '动作未接线', idle: '动作待命', authorizing: '等待本局授权', authorized: '本局已授权', dispatching: '动作请求中', executed: '动作控制器已返回执行结果', cancelled: '动作已撤销', error: '动作控制器返回错误' } as const;
 
 export type RockPaperScissorsProps = {
   vision?: VisionPort;
@@ -32,6 +33,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
   useEffect(() => { if (locked) controller?.lock(); }, [locked, controller]);
 
   const hardwareEligible = capabilities.model === 'O6' && capabilities.supportedOperations.includes('setPosition');
+  const hardwareConnected = hardwareEligible && Boolean(actionController);
   const hardwareReady = Boolean(state?.hardwareAuthorized);
   const cameraRunning = state?.cameraState === 'running';
   const canStart = Boolean(controller && cameraRunning && (state?.phase === 'cameraReady' || state?.phase === 'ready') && (!hardwareEligible || hardwareReady));
@@ -44,18 +46,19 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
       <div className="rps-board">
         <div className="rps-camera-frame"><video ref={videoRef} muted playsInline aria-label="猜拳摄像头预览" /><div className={`rps-camera-placeholder ${cameraRunning ? 'is-hidden' : ''}`} aria-hidden={cameraRunning}>◎<small>{cameraRunning ? '' : '共享视觉输入'}</small></div>{state?.phase === 'countdown' && <div className="rps-countdown" aria-live="assertive">{state.countdown}</div>}</div>
         <div className="rps-panel">
-          <div className="rps-status" role="status" aria-live="polite"><span className="eyebrow">识别状态</span><strong>{status}</strong>{state?.stableFrames ? <span className="muted">稳定帧 {state.stableFrames}/3</span> : null}</div>
+          <div className="rps-status" role="status" aria-live="polite"><span className="eyebrow">识别状态</span><strong>{status}</strong>{state?.stableFrames ? <span className="muted">稳定帧 {state.stableFrames}/3</span> : null}{state && state.action.status !== 'disabled' && <span className="muted">{actionLabels[state.action.status]}{state.action.detail ? `：${state.action.detail}` : ''}</span>}</div>
           <div className="rps-results"><div><span className="muted">你的手势</span><strong>{state?.playerMove ? `${MOVE_ICONS[state.playerMove]} ${MOVE_LABELS[state.playerMove]}` : '—'}</strong></div><div><span className="muted">机械手</span><strong>{state?.machineMove ? `${MOVE_ICONS[state.machineMove]} ${MOVE_LABELS[state.machineMove]}` : '—'}</strong></div></div>
           <div className="rps-score"><span>你 <b>{state?.score.player ?? 0}</b></span><span>平局 <b>{state?.score.draws ?? 0}</b></span><span>机械手 <b>{state?.score.machine ?? 0}</b></span></div>
           {state?.outcome && <p className="rps-outcome" aria-live="assertive">{outcomeLabels[state.outcome]}</p>}
           <div className="rps-actions">
             {!cameraRunning ? <button className="button button-primary" disabled={!controller || locked} onClick={() => void controller?.startCamera()}>开启摄像头</button> : <button className="button button-secondary" disabled={locked || state?.phase === 'countdown' || state?.phase === 'capture'} onClick={() => void controller?.stop()}>停止摄像头</button>}
-            {hardwareEligible && !hardwareReady && <button className="button button-secondary" disabled={!controller || locked || !cameraRunning || state?.phase === 'countdown'} onClick={() => void controller?.authorizeHardware()}>授权本局机械手</button>}
+            {hardwareEligible && !hardwareReady && <button className="button button-secondary" disabled={!controller || !hardwareConnected || locked || !cameraRunning || state?.phase === 'countdown'} onClick={() => void controller?.authorizeHardware()}>授权本局机械手</button>}
             <button className="button button-primary" disabled={!canStart || locked} onClick={() => controller?.beginRound()}>开始一局</button>
             {(state?.phase === 'invalid' || state?.phase === 'ready') && <button className="button button-ghost" disabled={locked} onClick={() => controller?.retry()}>重试</button>}
             <button className="button button-ghost" disabled={!controller || locked} onClick={() => controller?.reset()}>重置比分</button>
           </div>
-          {hardwareEligible ? <p className="permission-note">O6：点击“授权本局机械手”后，揭晓时才会向动作控制器请求回应；锁定、停止或离开页面会立即撤销。</p> : <p className="permission-note">当前型号仅进行摄像头识别与比分展示，不会下发机械手动作，也不提供动作测试。</p>}
+          {hardwareEligible && hardwareConnected && <div className="rps-test-actions" aria-label="动作测试"><span className="muted">动作测试（不会改变比分）</span>{(['rock', 'paper', 'scissors'] as const).map(move => <button key={move} className="button button-ghost" disabled={!controller || !hardwareReady || locked || !cameraRunning || (state?.phase !== 'cameraReady' && state?.phase !== 'ready')} onClick={() => void controller?.testAction(move)}>测试{MOVE_LABELS[move]}</button>)}</div>}
+          {hardwareEligible && !hardwareConnected ? <p className="permission-note">O6 已支持动作，但动作控制器未接线；当前只能识别和记分。</p> : hardwareEligible ? <p className="permission-note">O6：点击“授权本局机械手”后，揭晓时才会向动作控制器请求回应；锁定、停止或离开页面会立即撤销。</p> : <p className="permission-note">当前型号仅进行摄像头识别与比分展示，不会下发机械手动作，也不提供动作测试。</p>}
           {!runtime && <p className="permission-note">集成提示：此页需要应用层注入同一个 VisionRuntime（owner 为 rps），页面不会自行创建摄像头或 Worker。</p>}
         </div>
       </div>

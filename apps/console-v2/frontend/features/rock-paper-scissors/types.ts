@@ -19,7 +19,7 @@ export interface RpsVisionRuntime {
   snapshot(): VisionRuntimeSnapshot;
 }
 
-export type RpsActionRequest = { move: RpsMove; round: number; reason: 'rps-reveal' };
+export type RpsActionRequest = { move: RpsMove; round: number; reason: 'rps-reveal' | 'rps-test' };
 export type RpsActionResult = { status: 'executed' | 'cancelled' | 'error'; message?: string };
 
 /** Feature-local hardware boundary. It must be supplied by the app; RPS never creates one. */

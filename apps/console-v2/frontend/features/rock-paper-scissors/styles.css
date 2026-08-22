@@ -24,7 +24,9 @@
 .rps-score b { color: var(--text); font-size: 17px; margin-left: 3px; }
 .rps-outcome { color: var(--rps-accent); font-size: 18px; font-weight: 800; margin: 16px 0 0; }
 .rps-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
-.rps-countdown { will-change: transform, opacity; }
+.rps-test-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 15px; }
+.rps-test-actions .muted { flex-basis: 100%; }
+.rps-countdown { animation: rps-countdown-in .18s cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes rps-countdown-in { from { opacity: 0; transform: scale(.9); } to { opacity: 1; transform: scale(1); } }
 @media (max-width: 900px) { .rps-board { grid-template-columns: 1fr; } .rps-camera-frame { min-height: 240px; } .rps-camera-frame video { min-height: 240px; } }
-@media (prefers-reduced-motion: reduce) { .rps-countdown { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .rps-countdown { animation: none; transition: none; } }
