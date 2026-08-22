@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "pnpm check:vision-assets && tsc -b && vite build",
+    "build": "pnpm check:vision-assets && tsc -b && vite build && pnpm check:vision-worker",
     "build:windows": "pnpm tauri build --target x86_64-pc-windows-msvc",
     "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable.ps1",
     "lint": "eslint .",
@@ -17,6 +17,7 @@
     "check:contracts": "node scripts/check-contracts.mjs",
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:vision-assets": "node scripts/check-vision-assets.mjs",
+    "check:vision-worker": "node scripts/check-vision-worker.mjs",
     "vision:download": "node scripts/download-vision-assets.mjs",
     "test:sidecar:smoke": "python scripts/smoke-sidecar.py",
     "bundle:inventory": "node scripts/create-bundle-inventory.mjs"

@@ -39,7 +39,9 @@ export class VisionRuntime {
   constructor(options: VisionRuntimeOptions = {}, dependencies: { mediaDevices?: MediaDevicesLike; workerFactory?: () => WorkerLike; now?: () => number } = {}) {
     this.options = { ...defaultOptions, ...options, wasmRootUrl: normalizeVisionAssetRootUrl(options.wasmRootUrl ?? defaultOptions.wasmRootUrl) };
     this.mediaDevices = dependencies.mediaDevices ?? navigator.mediaDevices;
-    this.workerFactory = dependencies.workerFactory ?? (() => new Worker(new URL('../../workers/vision-worker/index.ts', import.meta.url), { type: 'module' }) as unknown as WorkerLike);
+    // The bundled worker is intentionally classic: MediaPipe's official
+    // Emscripten loader uses importScripts and exposes ModuleFactory globally.
+    this.workerFactory = dependencies.workerFactory ?? (() => new Worker(new URL('../../workers/vision-worker/index.ts', import.meta.url)) as unknown as WorkerLike);
     this.now = dependencies.now ?? (() => performance.now());
     if (typeof document !== 'undefined') document.addEventListener('visibilitychange', this.handleVisibilityChange);
   }
