@@ -26,6 +26,13 @@ software stop/unlock barrier, UI facade Ports, and the documented generic
 The handoff preserves the existing UI visual acceptance work. No new product
 feature or contract semantic change was introduced during integration.
 
+The pre-freeze integration record remains: the earlier runtime commits were
+`384012f`, `6083f3c`, `9413c08`; sidecar commits were `2e61ae6`, `697c8e4`,
+`7e60db9`, `40fb464`, `c60caca`, `8515f95`; and UI-shell commits were
+`f5aefd6`, `73b4e19`, `fbdd1e3`. Its `.gitignore` add/add conflict retained
+Rust `target/` and frontend build/cache ignores; no runtime, sidecar, UI, or
+visual-acceptance source was discarded.
+
 ## Verification
 
 From `apps/console-v2` on `codex/v2-rewrite`:
@@ -39,6 +46,10 @@ From `apps/console-v2` on `codex/v2-rewrite`:
 - `pnpm test` passed: 3 files / 4 tests.
 - `pnpm build` passed.
 
+The earlier handoff also verified `cargo fmt --all -- --check`, `pnpm
+install --frozen-lockfile`, `cargo check -p linkerhand-console`, and the
+sidecar suite through the Python 3.12 test runner.
+
 The Rust/ts-rs build emits a non-fatal note that `skip_serializing_if` is not
 parsed by the metadata helper. The explicit `#[ts(...)]` override, Rust serde
 tests, and checked-in projection regression protect the resulting `AppError`
@@ -49,3 +60,8 @@ shape. This is a generator limitation, not an integration mismatch.
 The integration worktree is clean after the handoff commit. Future changes to
 public DTOs or serde names must update Rust metadata first, run
 `pnpm generate:contracts`, and keep `pnpm check:contracts` in CI.
+
+Known remaining gaps are unchanged: the Tauri shell is still an assembly
+skeleton, the UI uses mock runtime data, and build/test outputs remain ignored
+(`dist`, `node_modules`, Python caches, Rust `target`, and TypeScript build
+info).
