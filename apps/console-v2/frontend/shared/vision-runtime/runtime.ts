@@ -45,6 +45,11 @@ export class VisionRuntime {
 
   start(video: HTMLVideoElement, source: VisionSource, deviceId?: string): Promise<void> {
     if (this.owner && this.owner !== source) return Promise.reject(new VisionRuntimeError('VISION_BUSY', `视觉输入当前由 ${this.owner} 占用`, true));
+    // A running session owns the video element as well as the camera. Silently
+    // replacing this.video would leave the stream attached to the old element
+    // while stop/cancel would target the new one, so same-owner starts are only
+    // idempotent for the exact same element.
+    if (this.owner === source && this.video && this.video !== video) return Promise.reject(new VisionRuntimeError('INVALID_STATE', '当前视觉会话已绑定另一个视频元素', true));
     if (this.startPromise) return this.startPromise;
     if (this.state === 'running' || this.state === 'suspended') return Promise.resolve();
     this.owner = source;

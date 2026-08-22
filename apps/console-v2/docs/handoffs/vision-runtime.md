@@ -37,8 +37,10 @@ Use `pnpm check:vision-assets` to validate the manifest hashes. Use `pnpm vision
 
 - `pnpm typecheck`
 - `pnpm lint`
-- `pnpm test` (8 tests)
+- `pnpm test` (12 tests, including same-owner video binding, model/worker/frame errors, track-ended loss, hidden cleanup, async capture-stop race and ack/backpressure)
 - `pnpm build` (offline asset check + Vite build)
+
+The baseline App does not yet import `VisionRuntime`; therefore this build validates TypeScript, local resources and the runtime source but does not prove that Vite emitted a worker chunk. The current `dist/assets` output contains only the baseline app CSS/JS. After Feature integration, run `pnpm build` and inspect `dist/assets` for the worker chunk (and verify its URL is local) before claiming browser packaging coverage.
 
 ## Follow-up entry points
 
