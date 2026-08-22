@@ -58,6 +58,27 @@
     `BB7F43FADB498E1E3D67871541E87FD373FCACA4692ED043421201935E72A77F`.
   - Packaged sidecar fake NDJSON smoke passed with three envelopes.
 
+## Final RC packaging refresh
+
+- Packaging branch: `codex/v2-m5-final-packaging`
+- Source integration commit: `94348d19fd0475cefdc9f24484c044c1e0fe1e2f`
+- `pnpm build:windows` completed with the configured Tauri NSIS
+  `webviewInstallMode.type = offlineInstaller`; the build downloaded and
+  embedded the offline WebView2 payload.
+- Bundle inventory contains the release frontend, classic
+  `vision-worker-*.js` chunk, `vision/vision_bundle.js`, hand-landmarker model,
+  both WASM variants, and the target-triple sidecar executable. The portable
+  ZIP contains the release executable, sidecar, and inventory.
+- Final artifacts (Windows x64):
+  - `E:\OneDrive\Desktop\必备安装\linkerhand-v2-final-packaging\apps\console-v2\target\x86_64-pc-windows-msvc\release\bundle\nsis\LinkerHand Console_2.0.0-rc.1_x64-setup.exe` — 251,854,576 bytes,
+    SHA-256 `46C1B12A153147D64BBAB2A96F0CE176900B85DB2F9EEBC891895ACEE65650A2`.
+  - `E:\OneDrive\Desktop\必备安装\linkerhand-v2-final-packaging\apps\console-v2\artifacts\LinkerHand-Console-v2.0.0-rc.1-win-x64-portable.zip` — 36,736,155 bytes,
+    SHA-256 `13AEAE7C2EA5514DF19A6A9DF09609374D39EFA7E47B9EDEA181CC41653ABB37`.
+  - `E:\OneDrive\Desktop\必备安装\linkerhand-v2-final-packaging\apps\console-v2\src-tauri\binaries\linkerhand-sidecar-x86_64-pc-windows-msvc.exe` — 22,725,412 bytes,
+    SHA-256 `0296BF57EC128DAA052A57FC50CAB60C119E3360225D75584CEE4402814A96B2`.
+- The source and packaged sidecar both passed the three-envelope fake NDJSON
+  smoke. No hardware connect is performed by this smoke.
+
 ## Remaining gates
 
 - The complete Rust/Python/pnpm suite, offline asset checks, sidecar smoke,
@@ -65,6 +86,8 @@
 - A fresh air-gapped Windows machine installation has not yet been executed;
   the offline WebView2 payload was downloaded and embedded during the build,
   but installation still needs an independent clean-machine verification.
-- Browser QA must verify navigation/theme/slider behavior at 1366x768.
+- Browser QA for navigation/theme/slider and the classic vision worker was
+  completed on the integration branch before this packaging refresh; this
+  packaging task did not repeat interactive browser QA.
 - O6 Windows PCAN hardware acceptance is mandatory before calling V2.0
   formal; this branch is an RC/simulator-ready delivery only.
