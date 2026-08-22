@@ -1,3 +1,0 @@
-# Offline MediaPipe glue must retain its checked-in bytes for asset hash checks.
-apps/console-v2/public/vision/wasm/*.js -text
-apps/console-v2/public/vision/wasm/*.wasm binary
