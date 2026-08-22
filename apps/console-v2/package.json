@@ -5,15 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "pnpm check:vision-assets && tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
     "typecheck": "tsc -b --pretty false",
     "generate:contracts": "node scripts/generate-contracts.mjs",
-    "check:contracts": "node scripts/check-contracts.mjs"
+    "check:contracts": "node scripts/check-contracts.mjs",
+    "check:vision-assets": "node scripts/check-vision-assets.mjs",
+    "vision:download": "node scripts/download-vision-assets.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
+    "@mediapipe/tasks-vision": "1.0.1",
     "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
     "react": "latest",
