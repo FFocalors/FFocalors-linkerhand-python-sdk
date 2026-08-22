@@ -3,7 +3,8 @@
 Branch: `codex/v2-m2-transport`
 
 Commits: `e93bab7`, `62d65bf`, `77968fd`, `6c06b34`, `5531df8`, `e836671`,
-and the actor/Channel and bounded-shutdown fixes in the current handoff commit.
+and `cc068f6`, followed by `adbba78` for actor control ordering and bounded
+shutdown.
 
 The frozen public DTOs are unchanged. `sidecar-client` now owns a bounded,
 thread-backed process manager with separate stdin/stdout/stderr handling,
