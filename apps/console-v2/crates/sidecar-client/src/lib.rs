@@ -435,10 +435,11 @@ pub struct SidecarDeviceAdapter {
     manager: process::SidecarProcessManager,
     capabilities: Option<DeviceCapabilities>,
     connected: bool,
+    telemetry_sequence: u64,
 }
 impl SidecarDeviceAdapter {
     pub fn new(config: console_contracts::DeviceConfig, manager: process::SidecarProcessManager) -> Self {
-        Self { config, manager, capabilities: None, connected: false }
+        Self { config, manager, capabilities: None, connected: false, telemetry_sequence: 0 }
     }
     pub fn manager(&self) -> &process::SidecarProcessManager { &self.manager }
     pub fn stop(&self) -> Result<(), device_adapter_api::AdapterError> { self.command(SidecarOperation::Stop, serde_json::json!({})).map(|_| ()) }
@@ -498,7 +499,8 @@ impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
         let payload = self.command(SidecarOperation::GetTelemetry, serde_json::json!({}))?.payload;
         let get = |name: &str| -> Result<Vec<u8>, device_adapter_api::AdapterError> { payload.get(name).and_then(|v| v.as_array()).ok_or_else(|| invalid(format!("telemetry missing {name}"))).and_then(|values| values.iter().map(|v| v.as_u64().map(|n| n as u8).ok_or_else(|| invalid(format!("telemetry {name} contains non-byte")))).collect()) };
         let raw_position = get("position")?; let positions = raw_to_normalized(&raw_position); let raw_current = get("current")?; let raw_speed = get("speed")?; let raw_touch = get("touch")?;
-        Ok(console_contracts::TelemetrySnapshot { schema_version: CURRENT_SCHEMA_VERSION, device_id: self.config.device_id.clone(), sequence: monotonic_time_ms, monotonic_time_ms, positions, raw_position, raw_current, raw_speed, raw_touch, connected: true })
+        self.telemetry_sequence = self.telemetry_sequence.saturating_add(1);
+        Ok(console_contracts::TelemetrySnapshot { schema_version: CURRENT_SCHEMA_VERSION, device_id: self.config.device_id.clone(), sequence: self.telemetry_sequence, monotonic_time_ms, positions, raw_position, raw_current, raw_speed, raw_touch, connected: true })
     }
 }
 
