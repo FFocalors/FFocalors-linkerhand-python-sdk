@@ -25,6 +25,7 @@
 .camera-controls label { flex: 1; }
 .camera-controls select { min-width: 0; }
 .camera-empty { border: 1px dashed var(--line); border-radius: 7px; margin: 14px 0 0; padding: 11px; line-height: 1.5; }
+.camera-error { border: 1px solid #f5c4bb; border-radius: 7px; margin: 14px 0 0; padding: 11px; color: #b65144; background: #fff1ee; line-height: 1.5; font-size: 11px; }
 .theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 20px; }
 .theme-options label { display: grid; place-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 7px; padding: 11px 5px; color: var(--muted); font-size: 11px; cursor: pointer; }
 .theme-options label.selected { color: var(--blue); border-color: #b9c9fc; background: var(--blue-soft); }
