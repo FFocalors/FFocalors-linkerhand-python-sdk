@@ -11,7 +11,13 @@ use ts_rs::TS;
 const HEADER: &str = "// GENERATED FILE. Do not edit; run `pnpm generate:contracts`.\n// Source: crates/console-contracts/src/lib.rs\n";
 
 fn declaration<T: TS>() -> String {
-    format!("export {}\n", T::decl())
+    let declaration = T::decl();
+    let declaration = declaration
+        .lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("export {declaration}\n")
 }
 
 fn main() -> io::Result<()> {

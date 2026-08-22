@@ -19,7 +19,7 @@ export type DeviceConfig = { schemaVersion: number, deviceId: string, name: stri
 export type DeviceCapabilities = { schemaVersion: number, deviceId: string, model: DeviceModel, hand: Hand, transport: Transport, jointCount: number, position: VectorCapability, speed: VectorCapability, current: VectorCapability, torque: VectorCapability, touch: VectorCapability, speedCommandLength: number, currentCommandLength: number | null, torqueCommandLength: number | null, supportedOperations: Array<SidecarOperation>, };
 export type AppError = { code: string, message: string, retryable: boolean, details?: unknown, };
 export type ConnectionSnapshot = { schemaVersion: number, deviceId: string, state: ConnectionState, attempt: number, lastError: AppError | null, };
-export type JointTargetCommand = { schemaVersion: number, commandId: string, source: CommandSource, 
+export type JointTargetCommand = { schemaVersion: number, commandId: string, source: CommandSource,
 /**
  * Complete joint vector in normalized `0.0..=1.0` position units.
  */
