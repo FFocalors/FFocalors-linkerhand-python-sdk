@@ -1,7 +1,7 @@
 //! Minimal Tauri 2 assembly shell. Business logic stays in app-runtime.
 use app_runtime::AppRuntime;
 use console_contracts::{AppError, ConnectionSnapshot, DeviceCapabilities, DeviceConfig, JointTargetCommand, TelemetrySnapshot, WireEnvelope};
-use device_simulator::DeviceSimulator;
+use sidecar_client::{process::{ProcessConfig, SidecarProcessManager}, SidecarDeviceAdapter};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Mutex;
@@ -52,7 +52,8 @@ fn now_ms() -> u64 { static START: std::sync::OnceLock<std::time::Instant> = std
 pub fn run() {
     let config = DeviceConfig::new("sim-1", "演示机械手 O6");
     let mut runtime = AppRuntime::new(config.clone(), adaptive_grasp::Profile::O6);
-    runtime.install_adapter(Box::new(DeviceSimulator::new("sim-1", 6)));
+    let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar/linkerhand-bridge/main.py");
+    runtime.install_adapter(Box::new(SidecarDeviceAdapter::new(config, SidecarProcessManager::new(ProcessConfig::fake(script)))));
     tauri::Builder::default()
         .manage(RuntimeState(Mutex::new(runtime)))
         .invoke_handler(tauri::generate_handler![commands::config, commands::capabilities, commands::connection, commands::connect, commands::disconnect, commands::set_joint_target, commands::stop_all, commands::unlock, commands::telemetry, commands::subscribe_runtime_events])

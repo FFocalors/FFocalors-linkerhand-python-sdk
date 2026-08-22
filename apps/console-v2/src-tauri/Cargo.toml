@@ -11,5 +11,5 @@ serde.workspace = true
 serde_json.workspace = true
 console-contracts = { path = "../crates/console-contracts" }
 app-runtime = { path = "../crates/app-runtime" }
-device-simulator = { path = "../crates/device-simulator" }
+sidecar-client = { path = "../crates/sidecar-client" }
 adaptive-grasp = { path = "../crates/adaptive-grasp" }
