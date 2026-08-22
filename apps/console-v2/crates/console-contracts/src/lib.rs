@@ -6,6 +6,7 @@
 //! boundary; all public position values are normalized to `0.0..=1.0`.
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use ts_rs::TS;
 
 pub const CURRENT_SCHEMA_VERSION: u16 = 1;
 pub const RAW_MIN: u8 = 0;
@@ -15,7 +16,7 @@ fn schema_version() -> u16 {
     CURRENT_SCHEMA_VERSION
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum DeviceModel {
     O6,
@@ -28,21 +29,21 @@ pub enum DeviceModel {
     L25,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum Hand {
     Left,
     Right,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Transport {
     Can { channel: String },
     Rs485 { port: String, baudrate: u32 },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceConfig {
     #[serde(default = "schema_version")]
@@ -72,14 +73,14 @@ impl DeviceConfig {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct RawRange {
     pub min: u8,
     pub max: u8,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct VectorCapability {
     pub length: u16,
@@ -87,7 +88,7 @@ pub struct VectorCapability {
     pub range: RawRange,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceCapabilities {
     #[serde(default = "schema_version")]
@@ -108,7 +109,7 @@ pub struct DeviceCapabilities {
     pub supported_operations: Vec<SidecarOperation>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionSnapshot {
     #[serde(default = "schema_version")]
@@ -119,7 +120,7 @@ pub struct ConnectionSnapshot {
     pub last_error: Option<AppError>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum ConnectionState {
     Disconnected,
@@ -129,7 +130,7 @@ pub enum ConnectionState {
     Error,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct JointTargetCommand {
     #[serde(default = "schema_version")]
@@ -138,13 +139,14 @@ pub struct JointTargetCommand {
     pub source: CommandSource,
     /// Complete joint vector in normalized `0.0..=1.0` position units.
     pub positions: Vec<f64>,
+    #[ts(type = "number | null", optional)]
     #[serde(default)]
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub final_command: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum CommandSource {
     Manual,
@@ -157,13 +159,15 @@ pub enum CommandSource {
     Safety,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct TelemetrySnapshot {
     #[serde(default = "schema_version")]
     pub schema_version: u16,
     pub device_id: String,
+    #[ts(type = "number")]
     pub sequence: u64,
+    #[ts(type = "number")]
     pub monotonic_time_ms: u64,
     pub positions: Vec<f64>,
     pub raw_position: Vec<u8>,
@@ -173,7 +177,7 @@ pub struct TelemetrySnapshot {
     pub connected: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum OperationState {
     Idle,
@@ -186,7 +190,7 @@ pub enum OperationState {
     Error,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationSnapshot {
     #[serde(default = "schema_version")]
@@ -195,25 +199,28 @@ pub struct OperationSnapshot {
     pub kind: String,
     pub state: OperationState,
     pub progress: f32,
+    #[ts(optional = nullable)]
     #[serde(default)]
     pub detail: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct StructuredLogEntry {
     #[serde(default = "schema_version")]
     pub schema_version: u16,
     pub id: String,
+    #[ts(type = "number")]
     pub monotonic_time_ms: u64,
     pub level: LogLevel,
     pub event: String,
     pub message: String,
+    #[ts(type = "Record<string, unknown>")]
     #[serde(default)]
     pub fields: serde_json::Value,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Trace,
@@ -223,17 +230,18 @@ pub enum LogLevel {
     Error,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct AppError {
     pub code: String,
     pub message: String,
     pub retryable: bool,
+    #[ts(type = "unknown", optional)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionRecording {
     #[serde(default = "schema_version")]
@@ -241,12 +249,13 @@ pub struct ActionRecording {
     pub id: String,
     pub name: String,
     pub frames: Vec<JointTargetCommand>,
+    #[ts(type = "number")]
     pub duration_ms: u64,
     pub steps: u32,
     pub updated_at: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct VisionPoseProposal {
     #[serde(default = "schema_version")]
@@ -255,11 +264,12 @@ pub struct VisionPoseProposal {
     pub label: String,
     pub confidence: f32,
     pub positions: Vec<f64>,
+    #[ts(type = "number | null", optional)]
     #[serde(default)]
     pub expires_at_monotonic_ms: Option<u64>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct GraspPreset {
     pub id: String,
@@ -267,7 +277,7 @@ pub struct GraspPreset {
     pub description: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum SidecarOperation {
     Connect,
@@ -299,7 +309,7 @@ pub struct WireEnvelope<T> {
     pub payload: T,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageType {
     Request,
@@ -385,5 +395,21 @@ mod tests {
         .unwrap();
         assert_eq!(fixture["models"].as_object().unwrap().len(), 8);
         assert_eq!(fixture["rawRange"]["max"], 255);
+    }
+
+    #[test]
+    fn checked_in_typescript_contains_rust_metadata_projection() {
+        let generated =
+            include_str!("../../../frontend/shared/contracts/generated.ts").replace("\r\n", "\n");
+        assert!(generated.contains(&format!("export {}", DeviceConfig::decl())));
+        assert!(generated.contains(&format!("export {}", Transport::decl())));
+        assert!(generated.contains("deviceId: string"));
+        assert!(!generated.contains("device_id"));
+        assert!(generated.contains("durationMs?: number | null"));
+        assert!(generated.contains(&format!(
+            "export const CURRENT_SCHEMA_VERSION = {CURRENT_SCHEMA_VERSION} as const;"
+        )));
+        assert!(generated.contains(&format!("export const RAW_MIN = {RAW_MIN} as const;")));
+        assert!(generated.contains(&format!("export const RAW_MAX = {RAW_MAX} as const;")));
     }
 }

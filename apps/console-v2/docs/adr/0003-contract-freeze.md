@@ -5,7 +5,9 @@ Date: 2026-08-23
 
 ## Decision
 
-`crates/console-contracts` is the only public domain-type source for Console V2. Its serde names are the wire names, and `generate-contracts` projects those types to the checked-in `frontend/shared/contracts/generated.ts`. `pnpm check:contracts` fails when the projection drifts.
+`crates/console-contracts` is the only public domain-type source for Console V2. Its serde names are the wire names, and `ts-rs` derives TypeScript metadata directly on each public DTO/enum. `generate-contracts` renders those declarations and Rust-owned constants to the checked-in `frontend/shared/contracts/generated.ts`; it does not repeat their fields or enum values. `pnpm check:contracts` runs that generator and fails when the projection drifts.
+
+`WireEnvelope<T>` remains a generic Rust type. Because the pinned ts-rs release cannot export an unconstrained generic declaration, the generator contains one thin TypeScript wrapper for that envelope only. Its field names and serde camelCase are protected by Rust serialization tests and a checked-in projection test; all concrete payload DTOs still come from Rust metadata.
 
 The supported device set is exactly `O6`, `L6`, `L7`, `L10`, `L20`, `G20`, `L21`, and `L25`. Configuration carries `deviceId`, model, `hand`, a tagged CAN/RS485 transport, and `autoReconnect`. Public positions are normalized `0..=1`; raw SDK vectors are explicitly named `raw*` and remain `0..=255` at the sidecar seam. Conversion uses round/clamp with exact vector-length checks.
 

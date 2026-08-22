@@ -63,14 +63,16 @@ Stable sidecar error codes include `INVALID_JSON`, `INVALID_REQUEST`,
 `INVALID_ARGUMENT`, `UNSUPPORTED_TRANSPORT`, `UNSUPPORTED_CAPABILITY`,
 `NOT_CONNECTED`, `SDK_UNAVAILABLE`, `SDK_ERROR`, `TIMEOUT`, and `STOPPED`.
 
-The raw model/length source snapshot is [raw-capabilities.json](../contracts/raw-capabilities.json). Generate and verify the UI projection from `apps/console-v2`:
+The raw model/length source snapshot is [raw-capabilities.json](../contracts/raw-capabilities.json). Public DTOs/enums derive `ts-rs::TS` in `crates/console-contracts/src/lib.rs`; the Rust generator calls each type's metadata declaration and formats the Rust-owned schema constants. No DTO fields or enum values are duplicated in the generator. `WireEnvelope<T>` is the one documented thin wrapper because the pinned ts-rs release cannot export an unconstrained generic; Rust serde tests cover its camelCase fields and the projection test compares generated declarations against Rust metadata.
+
+Generate and verify the UI projection from `apps/console-v2`:
 
 ```powershell
 pnpm generate:contracts
 pnpm check:contracts
 ```
 
-The freshness check compares generator output to the checked-in file and exits non-zero on drift.
+The freshness check compares generator output to the checked-in file and exits non-zero on drift. The Rust contract test also asserts that the checked-in projection contains the `DeviceConfig` and tagged `Transport` declarations produced by the Rust `TS` metadata, including camelCase names and optional fields.
 
 ## Verification
 
@@ -84,6 +86,7 @@ The freshness check compares generator output to the checked-in file and exits n
 - `pnpm test` passed: 3 files / 4 tests.
 - `pnpm build` passed.
 - `node scripts/check-contracts.mjs` passed.
+- `cargo test -p console-contracts` passed, including the Rust-metadata-to-checked-in-TypeScript projection regression.
 
 ## Current limitations
 
