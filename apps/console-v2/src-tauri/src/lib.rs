@@ -1524,7 +1524,9 @@ mod tests {
         );
         assert!(selected.is_none());
         let manager = SidecarProcessManager::new(process);
-        let error = manager.probe().expect_err("missing sidecar must fail only when probed/connect");
+        let error = manager
+            .probe()
+            .expect_err("missing sidecar must fail only when probed/connect");
         assert!(error.to_string().contains("sidecar process failed"));
     }
 

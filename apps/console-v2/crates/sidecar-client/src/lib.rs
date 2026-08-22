@@ -325,8 +325,15 @@ pub mod process {
         /// that no CAN/RS485 operation is attempted.
         pub fn probe(&self) -> Result<(), ProcessError> {
             self.start()?;
-            self.close_bounded(self.config.shutdown_timeout);
-            Ok(())
+            let result = self.request_timed(
+                SidecarOperation::Close,
+                serde_json::json!({}),
+                self.config
+                    .shutdown_timeout
+                    .min(Duration::from_millis(1500)),
+            );
+            self.close();
+            result.map(|_| ())
         }
 
         pub fn program(&self) -> &std::path::Path {
@@ -1068,6 +1075,33 @@ mod tests {
         let started = std::time::Instant::now();
         manager.close_bounded(Duration::from_secs(2));
         assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(manager.state(), SidecarState::Stopped);
+    }
+    #[test]
+    fn probe_requires_a_valid_protocol_response() {
+        let mut config = process::ProcessConfig::python("-c");
+        config.args = vec!["-c".into(), "print('not ndjson')".into()];
+        config.request_timeout = Duration::from_millis(300);
+        let manager = process::SidecarProcessManager::new(config);
+        let error = manager
+            .probe()
+            .expect_err("plain stdout must fail protocol probe");
+        assert!(matches!(
+            error,
+            process::ProcessError::Contamination(_)
+                | process::ProcessError::Crashed(_)
+                | process::ProcessError::Write(_)
+                | process::ProcessError::Timeout
+        ));
+    }
+    #[test]
+    fn fake_bridge_protocol_probe_succeeds_without_connecting_hardware() {
+        let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sidecar/linkerhand-bridge/main.py");
+        let manager = process::SidecarProcessManager::new(process::ProcessConfig::fake(script));
+        manager
+            .probe()
+            .expect("fake bridge can start and close without connect");
         assert_eq!(manager.state(), SidecarState::Stopped);
     }
     #[test]
