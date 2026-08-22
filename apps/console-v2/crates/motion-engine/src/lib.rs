@@ -189,6 +189,19 @@ impl MotionEngine {
             safety_locked: true,
         }
     }
+    /// Cancel one controller-owned source without changing the global safety
+    /// lock. Used when an action/loop stop is a normal operator cancellation.
+    pub fn cancel_source(&mut self, source: CommandSource) {
+        if self.active_source.as_ref() == Some(&source) {
+            self.active_source = None;
+        }
+        if self.pending.as_ref().is_some_and(|command| command.source == source) {
+            self.pending = None;
+        }
+        if !self.cancelled.contains(&source) {
+            self.cancelled.push(source);
+        }
+    }
     pub fn unlock(&mut self) {
         self.locked = false;
         self.cancelled.clear();

@@ -94,6 +94,20 @@ impl DeviceRuntime {
             .send_joint_target(c)
             .map_err(Into::into)
     }
+    pub fn set_speed(&mut self, values: &[u8]) -> Result<(), RuntimeError> {
+        self.adapter
+            .as_mut()
+            .ok_or(RuntimeError::NoAdapter)?
+            .set_speed(values)
+            .map_err(Into::into)
+    }
+    pub fn set_torque(&mut self, values: &[u8]) -> Result<(), RuntimeError> {
+        self.adapter
+            .as_mut()
+            .ok_or(RuntimeError::NoAdapter)?
+            .set_torque(values)
+            .map_err(Into::into)
+    }
     pub fn telemetry(&mut self, now: u64) -> Result<TelemetrySnapshot, RuntimeError> {
         self.adapter
             .as_mut()

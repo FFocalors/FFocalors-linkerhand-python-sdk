@@ -25,6 +25,16 @@ pub trait DeviceAdapter: Send {
     fn is_connected(&self) -> bool;
     fn capabilities(&self) -> Option<&DeviceCapabilities>;
     fn send_joint_target(&mut self, command: &JointTargetCommand) -> AdapterResult<()>;
+    /// Set the device's raw speed vector. Implementations must validate the
+    /// vector against the capability advertised by `connect`.
+    fn set_speed(&mut self, _values: &[u8]) -> AdapterResult<()> {
+        Err(AdapterError::Unsupported("setSpeed".into()))
+    }
+    /// Set the device's raw torque vector. Implementations must validate the
+    /// vector against the capability advertised by `connect`.
+    fn set_torque(&mut self, _values: &[u8]) -> AdapterResult<()> {
+        Err(AdapterError::Unsupported("setTorque".into()))
+    }
     fn read_telemetry(&mut self, monotonic_time_ms: u64) -> AdapterResult<TelemetrySnapshot>;
     /// Software stop barrier. Adapters with a transport-level stop command
     /// override this; simulators keep the no-op default.

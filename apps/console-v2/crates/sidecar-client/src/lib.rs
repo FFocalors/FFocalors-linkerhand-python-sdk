@@ -781,6 +781,43 @@ impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
         )?;
         Ok(())
     }
+    fn set_speed(&mut self, values: &[u8]) -> device_adapter_api::AdapterResult<()> {
+        if !self.connected {
+            return Err(device_adapter_api::AdapterError::NotConnected);
+        }
+        let expected = self
+            .capabilities
+            .as_ref()
+            .map(|c| c.speed_command_length as usize)
+            .ok_or(device_adapter_api::AdapterError::NotConnected)?;
+        if values.len() != expected {
+            return Err(invalid(format!("speed vector expects {expected}, got {}", values.len())));
+        }
+        self.command(
+            SidecarOperation::SetSpeed,
+            serde_json::json!({"speeds": values}),
+        )?;
+        Ok(())
+    }
+    fn set_torque(&mut self, values: &[u8]) -> device_adapter_api::AdapterResult<()> {
+        if !self.connected {
+            return Err(device_adapter_api::AdapterError::NotConnected);
+        }
+        let expected = self
+            .capabilities
+            .as_ref()
+            .and_then(|c| c.torque_command_length)
+            .ok_or_else(|| device_adapter_api::AdapterError::Unsupported("setTorque".into()))?
+            as usize;
+        if values.len() != expected {
+            return Err(invalid(format!("torque vector expects {expected}, got {}", values.len())));
+        }
+        self.command(
+            SidecarOperation::SetTorque,
+            serde_json::json!({"torques": values}),
+        )?;
+        Ok(())
+    }
     fn read_telemetry(
         &mut self,
         monotonic_time_ms: u64,

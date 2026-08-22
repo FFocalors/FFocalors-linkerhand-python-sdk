@@ -13,4 +13,5 @@ console-contracts = { path = "../crates/console-contracts" }
 app-runtime = { path = "../crates/app-runtime" }
 sidecar-client = { path = "../crates/sidecar-client" }
 adaptive-grasp = { path = "../crates/adaptive-grasp" }
+action-engine = { path = "../crates/action-engine" }
 tokio = { version = "1", features = ["sync"] }

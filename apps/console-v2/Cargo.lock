@@ -1811,6 +1811,7 @@ dependencies = [
 name = "linkerhand-console"
 version = "0.1.0"
 dependencies = [
+ "action-engine",
  "adaptive-grasp",
  "app-runtime",
  "console-contracts",
