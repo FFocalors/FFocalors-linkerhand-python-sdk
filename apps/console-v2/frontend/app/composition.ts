@@ -19,40 +19,32 @@ const stateListeners = <T>() => {
   return { add: (listener: (value: T) => void) => { listeners.add(listener); return () => listeners.delete(listener); }, emit: (value: T) => listeners.forEach(listener => listener(value)) };
 };
 
-function deviceController(runtime: ConsolePorts, simulator: boolean): DeviceControlController {
+export function createDeviceController(runtime: ConsolePorts, simulator: boolean, extras?: typeof tauriRuntimeExtras.device): DeviceControlController {
   let connection: ConnectionSnapshot | undefined;
   const connections = stateListeners<ConnectionSnapshot>();
   const operations = stateListeners<OperationSnapshot>();
   const actionExtras = simulator ? undefined : tauriRuntimeExtras.actions;
-  const device = runtime.device as ConsolePorts['device'] & Partial<{
-    reconnect(): Promise<ConnectionSnapshot>;
-    connect(): Promise<ConnectionSnapshot>;
-    disconnect(): Promise<ConnectionSnapshot>;
-    setSpeed(command: { values: number[]; finalCommand: boolean }): Promise<void>;
-    setTorque(command: { values: number[]; finalCommand: boolean }): Promise<void>;
-    subscribeConnection(listener: (snapshot: ConnectionSnapshot) => void): () => void;
-    subscribeOperation(listener: (snapshot: OperationSnapshot) => void): () => void;
-  }>;
+  const device = runtime.device;
   const refresh = async () => { connection = await device.getConnection(); connections.emit(connection); return connection; };
   const callConnection = async (action: 'connect' | 'disconnect' | 'reconnect') => {
     if (simulator) { connection = simulatorConnection(runtime, (await runtime.device.getConfig()).deviceId); if (action === 'disconnect') connection = { ...connection, state: 'disconnected' }; connections.emit(connection); return; }
-    if (action === 'connect' && device.connect) connection = await device.connect();
-    else if (action === 'disconnect' && device.disconnect) connection = await device.disconnect();
-    else if (action === 'reconnect' && device.reconnect) connection = await device.reconnect();
+    if (action === 'connect' && extras) connection = await extras.connect();
+    else if (action === 'disconnect' && extras) connection = await extras.disconnect();
+    else if (action === 'reconnect' && extras) connection = await extras.reconnect();
     else connection = await refresh();
     connections.emit(connection);
   };
   return {
     connect: () => callConnection('connect'), disconnect: () => callConnection('disconnect'), reconnect: () => callConnection('reconnect'),
-    subscribeConnection(listener) { const remove = connections.add(listener); const remote = device.subscribeConnection?.(listener); void refresh(); return () => { remove(); remote?.(); }; },
+    subscribeConnection(listener) { const remove = connections.add(listener); const remote = extras?.subscribeConnection(listener); void refresh(); return () => { remove(); remote?.(); }; },
     setJointTarget: (command: JointTargetCommand) => runtime.device.setJointTarget(command),
-    setSpeed: command => device.setSpeed ? device.setSpeed(command) : Promise.reject(new Error('速度控制器不可用')),
-    setTorque: command => device.setTorque ? device.setTorque(command) : Promise.reject(new Error('扭矩控制器不可用')),
+    setSpeed: command => extras ? extras.setSpeed(command) : Promise.resolve(),
+    setTorque: command => extras ? extras.setTorque(command) : Promise.resolve(),
     startQuickAction: async (id) => { if (actionExtras) await actionExtras.play(id, { speed: 1, loopCount: 0 }); else await runtime.motion.runAction(id); operations.emit({ schemaVersion: 1, operationId: id, kind: 'quick-action', state: 'running', progress: 0, detail: '动作引擎执行中' }); },
     stopQuickAction: async () => { if (actionExtras) await actionExtras.stop(); else await runtime.motion.pause(); operations.emit({ schemaVersion: 1, operationId: 'quick-action', kind: 'quick-action', state: 'cancelled', progress: 0, detail: '已停止' }); },
-    startLoop: async (id) => { if (actionExtras) await actionExtras.play(id, { speed: 1, loopCount: null }); else await runtime.motion.runAction(id); operations.emit({ schemaVersion: 1, operationId: id, kind: 'loop', state: 'running', progress: 0, detail: '循环由 actor 执行（安全上限 1000 次）' }); },
+    startLoop: async (id) => { if (actionExtras) await actionExtras.play(id, { speed: 1, loopCount: null }); else await runtime.motion.runAction(id); operations.emit({ schemaVersion: 1, operationId: id, kind: 'loop', state: 'running', progress: 0, detail: '循环由 actor 执行，直到明确停止' }); },
     stopLoop: async () => { if (actionExtras) await actionExtras.stop(); else await runtime.motion.pause(); operations.emit({ schemaVersion: 1, operationId: 'loop', kind: 'loop', state: 'cancelled', progress: 0, detail: '已停止' }); },
-    subscribeOperation(listener) { const remove = operations.add(listener); const remote = device.subscribeOperation?.(listener); return () => { remove(); remote?.(); }; },
+    subscribeOperation(listener) { const remove = operations.add(listener); const remote = extras?.subscribeOperation(listener); return () => { remove(); remote?.(); }; },
   };
 }
 
@@ -95,6 +87,14 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
 
 export function createComposition(): ConsoleComposition {
   const simulator = !isTauriRuntime();
-  const runtime = simulator ? mockRuntime : tauriRuntime;
-  return { ...runtime, simulator, deviceController: deviceController(runtime, simulator), actionController: actionController(runtime, simulator), graspController: graspController(runtime, simulator) };
+  const runtime = simulator
+    ? {
+      ...mockRuntime,
+      actions: {
+        ...mockRuntime.actions,
+        list: async () => [{ schemaVersion: 1, id: 'builtin:neutral', name: '中性姿态', frames: [{ schemaVersion: 1, commandId: 'builtin:neutral:0', source: 'preset' as const, positions: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5], finalCommand: true }], durationMs: 50, steps: 1, updatedAt: '' }],
+      },
+    }
+    : tauriRuntime;
+  return { ...runtime, simulator, deviceController: createDeviceController(runtime, simulator, simulator ? undefined : tauriRuntimeExtras.device), actionController: actionController(runtime, simulator), graspController: graspController(runtime, simulator) };
 }

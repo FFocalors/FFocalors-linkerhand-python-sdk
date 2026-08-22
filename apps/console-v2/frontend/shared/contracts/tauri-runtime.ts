@@ -1,7 +1,9 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
-import type { ActionControllerState } from '../../features/actions';
-import type { GraspControllerState } from '../../features/smart-grasp';
 import type { AppError, ConsolePorts, DeviceCapabilities, DeviceConfig, JointTargetCommand, OperationSnapshot, TelemetrySnapshot } from './index';
+
+/** Runtime wire events stay feature-agnostic; app composition maps them to feature-local state. */
+export type TauriActionState = { state: 'idle' | 'recording' | 'recordingPaused' | 'playing' | 'paused' | 'completed' | 'cancelled' | 'error'; actionId?: string; progress: number; detail?: string };
+export type TauriGraspState = { phase: 'idle' | 'calibrating' | 'ready' | 'approach' | 'grasping' | 'holding' | 'releasing' | 'aborted' | 'failed'; failure?: { code: string; message: string }; tactileAvailable: boolean; rawTouch?: number[] | null; degraded: boolean };
 
 const unsupported = (code: string, message: string): AppError => ({ code, message, retryable: false, details: null });
 const unavailable = (name: string): Promise<never> => Promise.reject(unsupported('UNSUPPORTED', `${name} is not available in the runtime adapter`));
@@ -29,12 +31,12 @@ export const tauriRuntimeExtras = {
   },
   actions: {
     startRecording: (name: string) => invoke<void>('action_start_recording', { name }), pauseRecording: () => invoke<void>('action_pause_recording'), resumeRecording: () => invoke<void>('action_resume_recording'), finishRecording: () => invoke<void>('action_finish_recording'), cancelRecording: () => invoke<void>('action_cancel_recording'),
-    play: (id: string, options: { speed: number; loopCount: number | null }) => invoke<void>('action_play', { id, speed: options.speed, loopCount: options.loopCount === null ? 1000 : options.loopCount }), pause: () => invoke<void>('action_pause'), resume: () => invoke<void>('action_resume'), stop: () => invoke<void>('action_stop'),
-    subscribe: (listener: (value: ActionControllerState) => void) => subscribeChannel('action_subscribe', 'action_unsubscribe', listener),
+    play: (id: string, options: { speed: number; loopCount: number | null }) => invoke<void>('action_play', { id, speed: options.speed, loopEnabled: options.loopCount !== 0, loopCount: options.loopCount }), pause: () => invoke<void>('action_pause'), resume: () => invoke<void>('action_resume'), stop: () => invoke<void>('action_stop'),
+    subscribe: (listener: (value: TauriActionState) => void) => subscribeChannel('action_subscribe', 'action_unsubscribe', listener),
   },
   grasp: {
     calibrate: () => invoke<void>('grasp_calibrate'), completeCalibration: () => invoke<void>('grasp_complete_calibration'), approach: () => invoke<void>('grasp_approach'), startGrasp: (degraded: boolean) => invoke<void>('grasp_start', { degraded }), release: () => invoke<void>('grasp_release'), abort: () => invoke<void>('grasp_abort'),
-    subscribe: (listener: (value: GraspControllerState) => void) => subscribeChannel('grasp_subscribe', 'grasp_unsubscribe', listener),
+    subscribe: (listener: (value: TauriGraspState) => void) => subscribeChannel('grasp_subscribe', 'grasp_unsubscribe', listener),
   },
 };
 
@@ -50,7 +52,7 @@ export const tauriRuntime: ConsolePorts = {
   },
   motion: {
     getOperation: () => invoke<OperationSnapshot>('operation'),
-    runAction: (id: string) => invoke<void>('action_play', { id, speed: 1, loopCount: 0 }),
+    runAction: (id: string) => invoke<void>('action_play', { id, speed: 1, loopEnabled: false, loopCount: null }),
     pause: () => invoke<void>('action_pause'),
   },
   telemetry: {
