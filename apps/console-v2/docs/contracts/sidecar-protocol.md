@@ -15,10 +15,10 @@ echoed. Errors use `messageType: "error"` and
 `UNSUPPORTED_CAPABILITY`, `NOT_CONNECTED`, `SDK_UNAVAILABLE`, `SDK_ERROR`, and
 `TIMEOUT`.
 
-Requests contain `schemaVersion`, `requestId`, `operation`, and `payload`; a
-full-envelope sender may additionally include `messageType` (`command` or
-`request`), non-negative `sequence`, and numeric `monotonicTimeMs`. All these
-metadata fields are validated when present.
+Requests must contain the complete envelope fields `schemaVersion`,
+`messageType` (`command` or `request`), `requestId`, non-negative integer
+`sequence`, numeric `monotonicTimeMs`, `operation`, and `payload`. Missing or
+unknown fields are rejected.
 Supported operations are `connect`, `disconnect`, `capabilities`,
 `getTelemetry`, `getPosition`, `getCurrent`, `getSpeed`, `getTouch`,
 `setPosition`, `setSpeed`, `setCurrent`, `setTorque`, `stop`, and `close`.
@@ -38,6 +38,8 @@ each vector must have the model's exact length. Write payload names are
 `positions`, `speeds`, `currents`, and `torques` respectively.
 
 `getTelemetry` returns all four keys (`position`, `current`, `speed`, `touch`).
-`stop` is a queue-level stop acknowledgement; it does not claim a hardware
-emergency-stop primitive that the legacy SDK does not expose. `disconnect` is
+`stop` is the sidecar runtime stop-path confirmation/barrier: subsequent
+commands are ordered after the stop acknowledgement. It does not represent
+physical power removal or a hardware emergency-stop primitive that the legacy
+SDK does not expose. `disconnect` is
 recoverable; `close` shuts down the process after its response.

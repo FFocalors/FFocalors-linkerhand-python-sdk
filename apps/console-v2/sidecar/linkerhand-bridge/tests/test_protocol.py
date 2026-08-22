@@ -9,6 +9,10 @@ from protocol.writer import EnvelopeWriter
 from adapters.base import FakeAdapter
 
 
+def envelope(request_id, operation, payload, sequence):
+    return {"schemaVersion": 1, "messageType": "command", "requestId": request_id, "sequence": sequence, "monotonicTimeMs": 1, "operation": operation, "payload": payload}
+
+
 def test_schema_and_unknown_field_rejected():
     with pytest.raises(ProtocolError) as exc:
         validate_request({"schemaVersion": 1, "requestId": "a", "operation": "capabilities", "payload": {}, "oops": 1})
@@ -16,6 +20,9 @@ def test_schema_and_unknown_field_rejected():
     with pytest.raises(ProtocolError) as exc:
         validate_request({"schemaVersion": 2, "requestId": "a", "operation": "capabilities", "payload": {}})
     assert exc.value.code == "SCHEMA_UNSUPPORTED"
+    with pytest.raises(ProtocolError) as exc:
+        validate_request({"schemaVersion": 1, "requestId": "a", "operation": "capabilities", "payload": {}})
+    assert exc.value.code == "INVALID_REQUEST"
 
 
 def test_writer_sequence_and_monotonic_time():
@@ -31,10 +38,10 @@ def test_writer_sequence_and_monotonic_time():
 
 def test_cli_fake_telemetry_and_protocol_purity():
     incoming = "\n".join([
-        json.dumps({"schemaVersion": 1, "requestId": "c", "operation": "connect", "payload": {"model": "L7", "hand": "right", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"}}),
-        json.dumps({"schemaVersion": 1, "requestId": "p", "operation": "setPosition", "payload": {"positions": list(range(7))}}),
-        json.dumps({"schemaVersion": 1, "requestId": "t", "operation": "getTelemetry", "payload": {}}),
-        json.dumps({"schemaVersion": 1, "requestId": "z", "operation": "close", "payload": {}}),
+        json.dumps(envelope("c", "connect", {"model": "L7", "hand": "right", "transport": {"type": "can", "channel": "fake"}, "mode": "fake"}, 1)),
+        json.dumps(envelope("p", "setPosition", {"positions": list(range(7))}, 2)),
+        json.dumps(envelope("t", "getTelemetry", {}, 3)),
+        json.dumps(envelope("z", "close", {}, 4)),
     ]) + "\n"
     stdout, stderr = io.StringIO(), io.StringIO()
     assert run(io.StringIO(incoming), stdout, stderr) == 0
@@ -46,7 +53,7 @@ def test_cli_fake_telemetry_and_protocol_purity():
 
 
 def test_invalid_schema_returns_error_envelope():
-    incoming = json.dumps({"schemaVersion": 99, "requestId": "bad", "operation": "close", "payload": {}}) + "\n"
+    incoming = json.dumps(envelope("bad", "close", {}, 1) | {"schemaVersion": 99}) + "\n"
     stdout = io.StringIO()
     run(io.StringIO(incoming), stdout, io.StringIO())
     row = json.loads(stdout.getvalue())

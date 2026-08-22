@@ -16,8 +16,6 @@ OPERATIONS = frozenset({
     "getCurrent", "getSpeed", "getTouch", "setPosition", "setSpeed",
     "setCurrent", "setTorque", "stop", "close",
 })
-# The metadata fields are optional on input for convenient pipes, but accepted
-# and validated when the Rust client sends a full envelope.
 REQUEST_FIELDS = frozenset({"schemaVersion", "messageType", "requestId", "sequence", "monotonicTimeMs", "operation", "payload"})
 
 
@@ -51,6 +49,9 @@ def validate_request(request: Any) -> dict[str, Any]:
         raise ProtocolError("UNKNOWN_FIELD", "unknown request field(s)", details={"fields": unknown})
     if obj.get("schemaVersion") != SCHEMA_VERSION:
         raise ProtocolError("SCHEMA_UNSUPPORTED", "schemaVersion must be 1", details={"schemaVersion": obj.get("schemaVersion")})
+    missing = sorted(REQUEST_FIELDS - set(obj))
+    if missing:
+        raise ProtocolError("INVALID_REQUEST", "missing required request field(s)", details={"fields": missing})
     request_id = obj.get("requestId")
     if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
         raise ProtocolError("INVALID_REQUEST", "requestId must be a non-empty string of at most 128 characters")

@@ -9,9 +9,9 @@ Run without hardware:
 
 ```powershell
 @'
-{"schemaVersion":1,"requestId":"1","operation":"connect","payload":{"model":"L10","hand":"left","transport":{"type":"can","channel":"fake"},"mode":"fake"}}
-{"schemaVersion":1,"requestId":"2","operation":"getTelemetry","payload":{}}
-{"schemaVersion":1,"requestId":"3","operation":"close","payload":{}}
+{"schemaVersion":1,"messageType":"command","requestId":"1","sequence":1,"monotonicTimeMs":1,"operation":"connect","payload":{"model":"L10","hand":"left","transport":{"type":"can","channel":"fake"},"mode":"fake"}}
+{"schemaVersion":1,"messageType":"command","requestId":"2","sequence":2,"monotonicTimeMs":1,"operation":"getTelemetry","payload":{}}
+{"schemaVersion":1,"messageType":"command","requestId":"3","sequence":3,"monotonicTimeMs":1,"operation":"close","payload":{}}
 '@ | python main.py --fake
 ```
 
