@@ -11,6 +11,7 @@ import { createSettingsController, createThemePort } from './settings';
 import type { SettingsController, ThemePort } from '../features/settings';
 import type { VisionProposalController, VisionRuntimeLike } from '../features/vision';
 import type { RpsActionController } from '../features/rock-paper-scissors/types';
+import VisionWorker from '../workers/vision-worker/index?worker&classic';
 
 export type ConsoleComposition = ConsolePorts & {
   deviceController: DeviceControlController;
@@ -108,7 +109,7 @@ export function createComposition(): ConsoleComposition {
       },
     }
     : tauriRuntime;
-  const visionRuntime = new VisionRuntime();
+  const visionRuntime = new VisionRuntime({}, { workerFactory: () => new VisionWorker() });
   const visionProposalController = createVisionProposalController(runtime, simulator);
   // In Tauri capabilities are loaded asynchronously by Shell. The app uses
   // O6 for the simulator and creates the RPS sink lazily with the authoritative

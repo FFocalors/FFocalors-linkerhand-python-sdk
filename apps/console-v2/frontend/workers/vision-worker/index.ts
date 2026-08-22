@@ -1,15 +1,30 @@
-import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+import type { FilesetResolver as FilesetResolverClass, HandLandmarker as HandLandmarkerClass } from '@mediapipe/tasks-vision';
 import type { HandLandmark, VisionLandmarkResult, VisionWorkerRequest, VisionWorkerResponse } from '../../shared/vision-runtime';
 
 type WorkerScope = { onmessage: ((event: MessageEvent<VisionWorkerRequest>) => void) | null; postMessage(message: VisionWorkerResponse): void };
+type VisionApi = { FilesetResolver: typeof FilesetResolverClass; HandLandmarker: typeof HandLandmarkerClass };
+type HandLandmarkerInstance = Awaited<ReturnType<typeof HandLandmarkerClass.createFromOptions>>;
 const scope = self as unknown as WorkerScope;
-let landmarker: HandLandmarker | undefined;
+let visionApi: VisionApi | undefined;
+let landmarker: HandLandmarkerInstance | undefined;
+
+function loadVisionApi(wasmRootUrl: string): VisionApi {
+  if (visionApi) return visionApi;
+  const bundleRoot = wasmRootUrl.replace(/\/wasm\/?$/, '');
+  const bundleUrl = new URL(`${bundleRoot}/vision_bundle.js`, self.location.href).toString();
+  importScripts(bundleUrl);
+  const loaded = (self as unknown as { Vision?: VisionApi }).Vision;
+  if (!loaded) throw new Error('MediaPipe Vision classic bundle did not expose Vision');
+  visionApi = loaded;
+  return loaded;
+}
 
 function errorResponse(requestId: string, code: string, message: string): VisionWorkerResponse { return { type: 'error', requestId, code, message }; }
 
 async function initialise(request: Extract<VisionWorkerRequest, { type: 'init' }>) {
-  const vision = await FilesetResolver.forVisionTasks(request.wasmRootUrl);
-  landmarker = await HandLandmarker.createFromOptions(vision, {
+  const api = loadVisionApi(request.wasmRootUrl);
+  const vision = await api.FilesetResolver.forVisionTasks(request.wasmRootUrl);
+  landmarker = await api.HandLandmarker.createFromOptions(vision, {
     baseOptions: { modelAssetPath: request.modelAssetUrl },
     runningMode: 'VIDEO', numHands: request.numHands,
     minHandDetectionConfidence: request.minHandDetectionConfidence,
