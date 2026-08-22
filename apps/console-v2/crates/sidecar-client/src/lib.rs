@@ -1,6 +1,7 @@
 //! Strict sidecar NDJSON boundary and software stop state.
 use console_contracts::{
-    AppError, MessageType, SidecarOperation, WireEnvelope, CURRENT_SCHEMA_VERSION,
+    normalized_to_raw, raw_to_normalized, AppError, DeviceCapabilities, MessageType,
+    SidecarOperation, WireEnvelope, CURRENT_SCHEMA_VERSION,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::time::Duration;
@@ -22,6 +23,8 @@ pub enum ProtocolError {
     InvalidMessageType,
     #[error("error payload is invalid")]
     InvalidErrorPayload,
+    #[error("raw vector is invalid: {0}")]
+    InvalidVector(String),
     #[error("stdout contamination")]
     StdoutContamination,
 }
@@ -66,6 +69,32 @@ impl NdjsonFramer {
             return Err(ProtocolError::InvalidErrorPayload);
         }
         Ok(msg)
+    }
+}
+
+/// Adapter seam between normalized public positions and sidecar raw bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RawVectorMapper {
+    pub position_length: usize,
+}
+impl RawVectorMapper {
+    pub fn from_capabilities(capabilities: &DeviceCapabilities) -> Self {
+        Self {
+            position_length: capabilities.position.length as usize,
+        }
+    }
+    pub fn encode_positions(&self, positions: &[f64]) -> Result<Vec<u8>, ProtocolError> {
+        normalized_to_raw(positions, self.position_length).map_err(ProtocolError::InvalidVector)
+    }
+    pub fn decode_positions(&self, raw: &[u8]) -> Result<Vec<f64>, ProtocolError> {
+        if raw.len() != self.position_length {
+            return Err(ProtocolError::InvalidVector(format!(
+                "expected {} raw positions, got {}",
+                self.position_length,
+                raw.len()
+            )));
+        }
+        Ok(raw_to_normalized(raw))
     }
 }
 
@@ -217,5 +246,51 @@ mod tests {
         assert!(!s.is_write_locked());
         s.close();
         assert_eq!(s.state, SidecarState::Stopped);
+    }
+    #[test]
+    fn raw_mapper_round_trips_capability_length_and_edges() {
+        let capabilities = DeviceCapabilities {
+            schema_version: 1,
+            device_id: "d".into(),
+            model: console_contracts::DeviceModel::O6,
+            hand: console_contracts::Hand::Left,
+            transport: console_contracts::Transport::Can {
+                channel: "fake".into(),
+            },
+            joint_count: 2,
+            position: console_contracts::VectorCapability {
+                length: 2,
+                available: true,
+                range: console_contracts::RawRange { min: 0, max: 255 },
+            },
+            speed: console_contracts::VectorCapability {
+                length: 2,
+                available: true,
+                range: console_contracts::RawRange { min: 0, max: 255 },
+            },
+            current: console_contracts::VectorCapability {
+                length: 2,
+                available: true,
+                range: console_contracts::RawRange { min: 0, max: 255 },
+            },
+            torque: console_contracts::VectorCapability {
+                length: 2,
+                available: true,
+                range: console_contracts::RawRange { min: 0, max: 255 },
+            },
+            touch: console_contracts::VectorCapability {
+                length: 2,
+                available: true,
+                range: console_contracts::RawRange { min: 0, max: 255 },
+            },
+            speed_command_length: 2,
+            current_command_length: None,
+            torque_command_length: Some(2),
+            supported_operations: vec![],
+        };
+        let mapper = RawVectorMapper::from_capabilities(&capabilities);
+        assert_eq!(mapper.encode_positions(&[0., 1.]).unwrap(), vec![0, 255]);
+        assert_eq!(mapper.decode_positions(&[0, 255]).unwrap(), vec![0., 1.]);
+        assert!(mapper.decode_positions(&[0]).is_err());
     }
 }
