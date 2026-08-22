@@ -27,6 +27,7 @@ The app shell should create one `VisionRuntime` and inject the same instance int
 - One source owns one runtime; another source receives `VISION_BUSY` without opening another camera.
 - `inflight` is always `0` or `1`; `SingleFrameGate` proves no queue is created and counts dropped frames.
 - `stop`/`dispose` close tracks and terminate the worker. Document hidden state invokes stop; callers may explicitly use suspend when retaining a stream is intentional.
+- Every start/switch/frame async path carries a monotonic generation. Stop/dispose invalidates it first, cancels pending model initialization immediately, and stops late camera/replacement streams instead of attaching them. Cancellation settles the old start normally and never emits `error` or `running`.
 - All inference timestamps are monotonic frame timestamps; result `hands[*].landmarks` contains 21 points.
 
 ## Resources and verification
@@ -37,7 +38,7 @@ Use `pnpm check:vision-assets` to validate the manifest hashes and required `.gi
 
 - `pnpm typecheck`
 - `pnpm lint`
-- `pnpm test` (12 tests, including same-owner video binding, model/worker/frame errors, track-ended loss, hidden cleanup, async capture-stop race and ack/backpressure)
+- `pnpm test` (15 tests, including same-owner video binding, model/worker/frame errors, track-ended loss, hidden cleanup, async capture-stop race, ack/backpressure, deferred worker init, late camera arrival and deferred camera replacement)
 - `pnpm build` (offline asset check + Vite build)
 
 The baseline App does not yet import `VisionRuntime`; therefore this build validates TypeScript, local resources and the runtime source but does not prove that Vite emitted a worker chunk. The current `dist/assets` output contains only the baseline app CSS/JS. After Feature integration, run `pnpm build` and inspect `dist/assets` for the worker chunk (and verify its URL is local) before claiming browser packaging coverage.
