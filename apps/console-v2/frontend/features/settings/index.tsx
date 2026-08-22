@@ -60,7 +60,7 @@ function cameraPermissionGuidance(permission: CameraPermission, detail?: string)
 
 interface SettingsProps { model: string; transport: { type: string; channel?: string; port?: string }; controller?: SettingsController; themePort?: ThemePort; version?: string; build?: string }
 
-export function Settings({ model, transport, controller, themePort, version = '0.1.0', build = 'dev' }: SettingsProps) {
+export function Settings({ model, transport, controller, themePort, version = '2.0.0-rc.1', build = 'dev' }: SettingsProps) {
   const fallbackTheme = useTheme();
   const wired = Boolean(controller);
   const [snapshot, setSnapshot] = useState<SettingsSnapshot>(() => ({ config: fallbackConfig(model, transport), version, build }));

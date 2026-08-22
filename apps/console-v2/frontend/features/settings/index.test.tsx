@@ -36,6 +36,7 @@ describe('settings feature boundary', () => {
   it('disables mutation and checks without a controller', () => {
     render(<ThemeProvider><Settings model="O6" transport={{ type: 'can', channel: 'can0' }} /></ThemeProvider>);
     expect(screen.getByText(/未注入 SettingsController/)).toBeInTheDocument();
+    expect(screen.getByText('版本 2.0.0-rc.1 · 构建 dev')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存设置' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '刷新摄像头' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '测试 sidecar' })).toBeDisabled();

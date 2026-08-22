@@ -27,7 +27,7 @@ export function createSettingsController(runtime: ConsolePorts, simulator: boole
       else {
         try { config = await invoke<DeviceConfig>('settings_load'); } catch { /* first run or older preview build */ }
       }
-      const snapshot: SettingsSnapshot = { config, theme: (localStorage.getItem(THEME_KEY) as ThemePreference | null) ?? 'system', version: import.meta.env.VITE_APP_VERSION ?? '0.1.0', build: import.meta.env.MODE };
+      const snapshot: SettingsSnapshot = { config, theme: (localStorage.getItem(THEME_KEY) as ThemePreference | null) ?? 'system', version: import.meta.env.VITE_APP_VERSION || '2.0.0-rc.1', build: import.meta.env.MODE };
       emit(snapshot); return snapshot;
     },
     validate: draft => validateSettingsDraft(draft),
