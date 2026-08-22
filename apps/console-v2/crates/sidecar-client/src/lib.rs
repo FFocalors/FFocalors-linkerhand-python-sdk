@@ -358,6 +358,10 @@ pub mod process {
                 Ok(message) => message,
                 Err(error) => { Self::mark_dead(inner, ProcessError::Contamination(error.to_string())); return; }
             };
+            if !matches!(message.message_type, MessageType::Response | MessageType::Error) {
+                Self::mark_dead(inner, ProcessError::Protocol("sidecar stdout message must be response or error".into()));
+                return;
+            }
             let mut guard = inner.lock().unwrap();
             if message.sequence <= guard.last_response_sequence {
                 let previous = guard.last_response_sequence;
@@ -425,6 +429,19 @@ pub mod process {
     fn monotonic_ms() -> u64 {
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
         START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+    }
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        #[test]
+        fn stdout_request_and_event_are_rejected_as_responses() {
+            let manager = SidecarProcessManager::new(ProcessConfig::python("missing.py"));
+            manager.inner.lock().unwrap().state = SidecarState::Running;
+            let envelope = WireEnvelope { schema_version: CURRENT_SCHEMA_VERSION, message_type: MessageType::Command, request_id: "r".into(), sequence: 1, monotonic_time_ms: 1, operation: SidecarOperation::GetTelemetry, payload: serde_json::json!({}) };
+            let line = serde_json::to_string(&envelope).unwrap();
+            SidecarProcessManager::route_line(&manager.inner, &line);
+            assert_eq!(manager.state(), SidecarState::Crashed);
+        }
     }
 }
 
@@ -502,6 +519,11 @@ impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
         self.telemetry_sequence = self.telemetry_sequence.saturating_add(1);
         Ok(console_contracts::TelemetrySnapshot { schema_version: CURRENT_SCHEMA_VERSION, device_id: self.config.device_id.clone(), sequence: self.telemetry_sequence, monotonic_time_ms, positions, raw_position, raw_current, raw_speed, raw_touch, connected: true })
     }
+    fn stop(&mut self) -> device_adapter_api::AdapterResult<()> { SidecarDeviceAdapter::stop(self) }
+    fn unlock(&mut self) -> device_adapter_api::AdapterResult<()> { SidecarDeviceAdapter::unlock(self) }
+}
+impl Drop for SidecarDeviceAdapter {
+    fn drop(&mut self) { self.close(); }
 }
 
 #[cfg(test)]

@@ -198,9 +198,11 @@ impl AppRuntime {
             s.stop();
             s.cancel_pending();
         }
+        let _ = self.device.stop();
     }
     pub fn unlock(&mut self) {
         self.motion.unlock();
+        let _ = self.device.unlock();
         if let Some(s) = self.sidecar.as_mut() {
             s.unlock();
         }

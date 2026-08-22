@@ -26,4 +26,8 @@ pub trait DeviceAdapter: Send {
     fn capabilities(&self) -> Option<&DeviceCapabilities>;
     fn send_joint_target(&mut self, command: &JointTargetCommand) -> AdapterResult<()>;
     fn read_telemetry(&mut self, monotonic_time_ms: u64) -> AdapterResult<TelemetrySnapshot>;
+    /// Software stop barrier. Adapters with a transport-level stop command
+    /// override this; simulators keep the no-op default.
+    fn stop(&mut self) -> AdapterResult<()> { Ok(()) }
+    fn unlock(&mut self) -> AdapterResult<()> { Ok(()) }
 }

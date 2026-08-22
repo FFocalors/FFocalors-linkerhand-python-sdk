@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Activity, Bot, Cable, CircleHelp, Hand, LayoutDashboard, Menu, Moon, Play, Settings as SettingsIcon, Sun, Terminal, WandSparkles, X, Zap } from 'lucide-react';
-import { mockRuntime, isTauriRuntime, tauriRuntime } from '../shared/contracts';
+import { isTauriRuntime, tauriRuntime } from '../shared/contracts';
+import { mockRuntime } from '../shared/contracts/mock-runtime';
 import type { ConsolePorts, DeviceCapabilities, DeviceConfig } from '../shared/contracts';
 import { ThemeProvider, useTheme } from '../shared/theme';
 import { Badge } from '../shared/ui';

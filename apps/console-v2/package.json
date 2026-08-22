@@ -8,17 +8,18 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",
-    "typecheck": "tsc -b --pretty false"
-    ,"generate:contracts": "node scripts/generate-contracts.mjs"
-    ,"check:contracts": "node scripts/check-contracts.mjs"
+    "typecheck": "tsc -b --pretty false",
+    "generate:contracts": "node scripts/generate-contracts.mjs",
+    "check:contracts": "node scripts/check-contracts.mjs"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.1",
     "@vitejs/plugin-react": "latest",
-    "vite": "latest",
-    "typescript": "5.9.3",
+    "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
-    "lucide-react": "latest"
+    "typescript": "5.9.3",
+    "vite": "latest"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "latest",
