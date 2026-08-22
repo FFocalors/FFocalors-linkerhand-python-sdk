@@ -290,14 +290,28 @@ impl RuntimeActor {
                 let _ = reply.send(Ok(app_runtime::ui::DevicePort::get_config(&self.runtime)));
             }
             ActorRequest::Capabilities { reply } => {
-                let result = app_runtime::ui::DevicePort::get_capabilities(&self.runtime)
-                    .ok_or_else(|| {
-                        app_error(
-                            "NOT_CONNECTED",
-                            "connect before querying capabilities",
-                            true,
-                        )
-                    });
+                let result = if let Some(capabilities) =
+                    app_runtime::ui::DevicePort::get_capabilities(&self.runtime)
+                {
+                    Ok(capabilities)
+                } else {
+                    self.runtime
+                        .connect()
+                        .map(|_| app_runtime::ui::DevicePort::get_capabilities(&self.runtime))
+                        .map_err(map_error)
+                        .and_then(|value| {
+                            value.ok_or_else(|| {
+                                app_error(
+                                    "NOT_CONNECTED",
+                                    "capabilities unavailable after connect",
+                                    true,
+                                )
+                            })
+                        })
+                };
+                if result.is_ok() {
+                    self.broadcast_connection(self.runtime.device.snapshot());
+                }
                 let _ = reply.send(result);
             }
             ActorRequest::Connection { reply } => {
