@@ -60,8 +60,11 @@
 
 ## Remaining gates
 
-- Re-run the complete Rust/Python/pnpm suite after final branch integration,
-  then rebuild NSIS/portable with the offline WebView2 payload available.
+- The complete Rust/Python/pnpm suite, offline asset checks, sidecar smoke,
+  NSIS build, and portable rebuild have passed on this branch.
+- A fresh air-gapped Windows machine installation has not yet been executed;
+  the offline WebView2 payload was downloaded and embedded during the build,
+  but installation still needs an independent clean-machine verification.
 - Browser QA must verify navigation/theme/slider behavior at 1366x768.
 - O6 Windows PCAN hardware acceptance is mandatory before calling V2.0
   formal; this branch is an RC/simulator-ready delivery only.
