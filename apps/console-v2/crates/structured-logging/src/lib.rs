@@ -90,12 +90,12 @@ mod tests {
         }
     }
     #[test]
-    fn ten_thousand_writes_stay_bounded() {
+    fn one_hundred_thousand_writes_stay_bounded() {
         let mut s = LogStore::new(8);
-        for i in 0..10_000 {
+        for i in 0..100_000 {
             s.push(e(i));
         }
         assert_eq!(s.len(), 8);
-        assert_eq!(s.dropped(), 9992);
+        assert_eq!(s.dropped(), 99_992);
     }
 }

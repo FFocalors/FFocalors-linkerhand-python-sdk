@@ -72,7 +72,9 @@ dependencies = [
  "console-contracts",
  "device-adapter-api",
  "device-runtime",
+ "device-simulator",
  "motion-engine",
+ "structured-logging",
  "telemetry",
  "thiserror 2.0.20",
 ]

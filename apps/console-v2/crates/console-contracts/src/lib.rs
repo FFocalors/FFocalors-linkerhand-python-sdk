@@ -111,6 +111,7 @@ pub enum CommandSource {
     Playback,
     Loop,
     Vision,
+    RockPaperScissors,
     Grasp,
     Safety,
 }

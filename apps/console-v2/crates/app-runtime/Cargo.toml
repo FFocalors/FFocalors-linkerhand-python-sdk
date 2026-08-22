@@ -10,4 +10,7 @@ motion-engine = { path = "../motion-engine" }
 telemetry = { path = "../telemetry" }
 action-engine = { path = "../action-engine" }
 adaptive-grasp = { path = "../adaptive-grasp" }
+structured-logging = { path = "../structured-logging" }
 thiserror.workspace = true
+[dev-dependencies]
+device-simulator = { path = "../device-simulator" }
