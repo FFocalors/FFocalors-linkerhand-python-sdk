@@ -10,11 +10,11 @@
 
 ## 状态与不变量
 
-- 曲线只保留并绘制最多 240 点、最多 4 个关节 series；遥测回调写入 ref，RAF 每帧最多一次。
+- 曲线只保留并绘制最多 240 点；关节选择最多 25 个 capability joints，遥测回调写入 ref，RAF 每帧最多一次。
 - 页面隐藏或组件卸载时取消 RAF；低可见度策略由 telemetry crate 的纯逻辑 sampler 提供。
 - 日志最多从 `LogPort` 请求 512 条，过滤后只渲染可视窗口；导出失败必须显示可执行错误。
 - 触觉矩阵固定 8 列，只有 `capabilities.touch.available` 为真时才显示值。
-- raw 遥测仅在操作员主动打开抽屉后展示。
+- raw 遥测仅在操作员主动打开抽屉后展示；连接自检的 `nowMs` 必须与 `TelemetrySnapshot.monotonicTimeMs` 使用同一单调时钟（默认 `performance.now()`）。
 
 ## 错误与扩展点
 
@@ -22,4 +22,4 @@
 
 ## 测试
 
-feature 测试覆盖应包含隐藏页面停绘、定长点数、遥测点不触发父级渲染、无触觉能力、日志窗口/关键词过滤/导出错误与确定性自检。运行 `pnpm test`、`pnpm typecheck`、`pnpm lint`。
+feature 测试覆盖隐藏页面停绘/卸载取消 RAF、定长点数、全关节选择、遥测点不触发父级渲染、无触觉能力与首帧等待、日志窗口/关键词过滤/导出错误及确定性自检。运行 `pnpm test`、`pnpm typecheck`、`pnpm lint`。

@@ -66,17 +66,7 @@ impl LogStore {
             .entries
             .iter()
             .filter(|e| cursor.is_none_or(|c| e.monotonic_time_ms > c))
-            .filter(|e| {
-                filter.is_none_or(|f| {
-                    f.min_level.as_ref().is_none_or(|l| &e.level >= l)
-                        && f.event.as_ref().is_none_or(|x| &e.event == x)
-                        && f.keyword.as_ref().is_none_or(|x| {
-                            let needle = x.to_lowercase();
-                            e.event.to_lowercase().contains(&needle)
-                                || e.message.to_lowercase().contains(&needle)
-                        })
-                })
-            })
+            .filter(|e| Self::matches_filter(e, filter))
             .take(page_limit)
         {
             out.push(e.clone());
@@ -92,8 +82,26 @@ impl LogStore {
         self.try_export_json(filter).expect("log DTO serializable")
     }
     pub fn try_export_json(&self, filter: Option<&LogFilter>) -> Result<String, serde_json::Error> {
-        let p = self.page(None, self.entries.len().max(1), filter);
-        serde_json::to_string(&p.entries)
+        // Export is intentionally separate from UI pagination: the store is
+        // already bounded by capacity, so every matching retained entry is safe.
+        let entries: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|entry| Self::matches_filter(entry, filter))
+            .cloned()
+            .collect();
+        serde_json::to_string(&entries)
+    }
+    fn matches_filter(entry: &StructuredLogEntry, filter: Option<&LogFilter>) -> bool {
+        filter.is_none_or(|f| {
+            f.min_level.as_ref().is_none_or(|l| &entry.level >= l)
+                && f.event.as_ref().is_none_or(|x| &entry.event == x)
+                && f.keyword.as_ref().is_none_or(|x| {
+                    let needle = x.to_lowercase();
+                    entry.event.to_lowercase().contains(&needle)
+                        || entry.message.to_lowercase().contains(&needle)
+                })
+        })
     }
 }
 #[cfg(test)]
@@ -153,5 +161,16 @@ mod tests {
         assert!(page.entries.iter().all(|e| e.event == "connection.retry"));
         assert_eq!(s.len(), 4);
         assert_eq!(s.dropped(), 99_996);
+    }
+
+    #[test]
+    fn export_includes_every_retained_entry_over_ui_page_limit() {
+        let mut s = LogStore::new(1_024);
+        s.push_batch((0..1_024).map(e));
+        let json = s.try_export_json(None).unwrap();
+        let exported: Vec<StructuredLogEntry> = serde_json::from_str(&json).unwrap();
+        assert_eq!(exported.len(), 1_024);
+        assert_eq!(exported.first().unwrap().monotonic_time_ms, 0);
+        assert_eq!(exported.last().unwrap().monotonic_time_ms, 1_023);
     }
 }
