@@ -297,7 +297,9 @@ pub mod process {
         pub fn state(&self) -> SidecarState {
             self.inner.lock().unwrap().state.clone()
         }
-        pub fn shutdown_timeout(&self) -> Duration { self.config.shutdown_timeout }
+        pub fn shutdown_timeout(&self) -> Duration {
+            self.config.shutdown_timeout
+        }
         pub fn start(&self) -> Result<(), ProcessError> {
             {
                 let mut inner = self.inner.lock().unwrap();
@@ -305,12 +307,29 @@ pub mod process {
                     return Ok(());
                 }
                 let mut command = Command::new(&self.config.program);
-                command.args(&self.config.args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-                if let Some(dir) = &self.config.working_dir { command.current_dir(dir); }
-                let mut child = command.spawn().map_err(|e| ProcessError::Spawn(e.to_string()))?;
-                let stdin = child.stdin.take().ok_or_else(|| ProcessError::Spawn("sidecar stdin unavailable".into()))?;
-                let stdout = child.stdout.take().ok_or_else(|| ProcessError::Spawn("sidecar stdout unavailable".into()))?;
-                let stderr = child.stderr.take().ok_or_else(|| ProcessError::Spawn("sidecar stderr unavailable".into()))?;
+                command
+                    .args(&self.config.args)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                if let Some(dir) = &self.config.working_dir {
+                    command.current_dir(dir);
+                }
+                let mut child = command
+                    .spawn()
+                    .map_err(|e| ProcessError::Spawn(e.to_string()))?;
+                let stdin = child
+                    .stdin
+                    .take()
+                    .ok_or_else(|| ProcessError::Spawn("sidecar stdin unavailable".into()))?;
+                let stdout = child
+                    .stdout
+                    .take()
+                    .ok_or_else(|| ProcessError::Spawn("sidecar stdout unavailable".into()))?;
+                let stderr = child
+                    .stderr
+                    .take()
+                    .ok_or_else(|| ProcessError::Spawn("sidecar stderr unavailable".into()))?;
                 inner.stdin = Some(stdin);
                 inner.child = Some(child);
                 inner.state = SidecarState::Running;
@@ -322,29 +341,42 @@ pub mod process {
             Ok(())
         }
         fn spawn_stdout(inner: Arc<Mutex<Inner>>, stdout: impl std::io::Read + Send + 'static) {
-            thread::Builder::new().name("linkerhand-sidecar-stdout".into()).spawn(move || {
-                let reader = BufReader::new(stdout);
-                for line in reader.lines() {
-                    match line {
-                        Ok(line) if line.trim().is_empty() => continue,
-                        Ok(line) => Self::route_line(&inner, &line),
-                        Err(error) => { Self::mark_dead(&inner, ProcessError::Crashed(error.to_string())); break; }
+            thread::Builder::new()
+                .name("linkerhand-sidecar-stdout".into())
+                .spawn(move || {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines() {
+                        match line {
+                            Ok(line) if line.trim().is_empty() => continue,
+                            Ok(line) => Self::route_line(&inner, &line),
+                            Err(error) => {
+                                Self::mark_dead(&inner, ProcessError::Crashed(error.to_string()));
+                                break;
+                            }
+                        }
                     }
-                }
-                let state = inner.lock().unwrap().state.clone();
-                if matches!(state, SidecarState::Running) { Self::mark_dead(&inner, ProcessError::Crashed("stdout closed".into())); }
-            }).expect("spawn stdout thread");
+                    let state = inner.lock().unwrap().state.clone();
+                    if matches!(state, SidecarState::Running) {
+                        Self::mark_dead(&inner, ProcessError::Crashed("stdout closed".into()));
+                    }
+                })
+                .expect("spawn stdout thread");
         }
         fn spawn_stderr(inner: Arc<Mutex<Inner>>, stderr: impl std::io::Read + Send + 'static) {
-            thread::Builder::new().name("linkerhand-sidecar-stderr".into()).spawn(move || {
-                let reader = BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
-                    let mut guard = inner.lock().unwrap();
-                    if guard.stderr_tail.len() > 4096 { guard.stderr_tail.clear(); }
-                    guard.stderr_tail.push_str(&line);
-                    guard.stderr_tail.push('\n');
-                }
-            }).expect("spawn stderr thread");
+            thread::Builder::new()
+                .name("linkerhand-sidecar-stderr".into())
+                .spawn(move || {
+                    let reader = BufReader::new(stderr);
+                    for line in reader.lines().map_while(Result::ok) {
+                        let mut guard = inner.lock().unwrap();
+                        if guard.stderr_tail.len() > 4096 {
+                            guard.stderr_tail.clear();
+                        }
+                        guard.stderr_tail.push_str(&line);
+                        guard.stderr_tail.push('\n');
+                    }
+                })
+                .expect("spawn stderr thread");
         }
         fn mark_dead(inner: &Arc<Mutex<Inner>>, error: ProcessError) {
             let mut guard = inner.lock().unwrap();
@@ -357,47 +389,116 @@ pub mod process {
         fn route_line(inner: &Arc<Mutex<Inner>>, line: &str) {
             let message = match NdjsonFramer::decode::<serde_json::Value>(line) {
                 Ok(message) => message,
-                Err(error) => { Self::mark_dead(inner, ProcessError::Contamination(error.to_string())); return; }
+                Err(error) => {
+                    Self::mark_dead(inner, ProcessError::Contamination(error.to_string()));
+                    return;
+                }
             };
-            if !matches!(message.message_type, MessageType::Response | MessageType::Error) {
-                Self::mark_dead(inner, ProcessError::Protocol("sidecar stdout message must be response or error".into()));
+            if !matches!(
+                message.message_type,
+                MessageType::Response | MessageType::Error
+            ) {
+                Self::mark_dead(
+                    inner,
+                    ProcessError::Protocol(
+                        "sidecar stdout message must be response or error".into(),
+                    ),
+                );
                 return;
             }
             let mut guard = inner.lock().unwrap();
             if message.sequence <= guard.last_response_sequence {
                 let previous = guard.last_response_sequence;
-                guard.reject_all(ProcessError::Protocol(format!("response sequence {} is not greater than {}", message.sequence, previous)));
+                guard.reject_all(ProcessError::Protocol(format!(
+                    "response sequence {} is not greater than {}",
+                    message.sequence, previous
+                )));
                 return;
             }
             guard.last_response_sequence = message.sequence;
-            let Some(pending) = guard.pending.remove(&message.request_id) else { return; };
+            let Some(pending) = guard.pending.remove(&message.request_id) else {
+                return;
+            };
             if pending.operation != message.operation {
-                let _ = pending.result.send(Err(ProcessError::Protocol("response request ordering or operation mismatch".into())));
+                let _ = pending.result.send(Err(ProcessError::Protocol(
+                    "response request ordering or operation mismatch".into(),
+                )));
                 return;
             }
             if message.message_type == MessageType::Error {
                 match serde_json::from_value::<ErrorPayload>(message.payload.clone()) {
-                    Ok(payload) => { let _ = pending.result.send(Err(ProcessError::Remote(payload.error.code, payload.error.message))); }
-                    Err(error) => { let _ = pending.result.send(Err(ProcessError::Protocol(error.to_string()))); }
+                    Ok(payload) => {
+                        let _ = pending.result.send(Err(ProcessError::Remote(
+                            payload.error.code,
+                            payload.error.message,
+                        )));
+                    }
+                    Err(error) => {
+                        let _ = pending
+                            .result
+                            .send(Err(ProcessError::Protocol(error.to_string())));
+                    }
                 }
             } else {
                 let _ = pending.result.send(Ok(message));
             }
         }
-        pub fn request(&self, operation: SidecarOperation, payload: serde_json::Value) -> Result<WireEnvelope<serde_json::Value>, ProcessError> {
+        pub fn request(
+            &self,
+            operation: SidecarOperation,
+            payload: serde_json::Value,
+        ) -> Result<WireEnvelope<serde_json::Value>, ProcessError> {
             self.request_timed(operation, payload, self.config.request_timeout)
         }
-        pub fn request_timed(&self, operation: SidecarOperation, payload: serde_json::Value, timeout: Duration) -> Result<WireEnvelope<serde_json::Value>, ProcessError> {
-            if !matches!(self.state(), SidecarState::Running) { return Err(ProcessError::NotRunning); }
+        pub fn request_timed(
+            &self,
+            operation: SidecarOperation,
+            payload: serde_json::Value,
+            timeout: Duration,
+        ) -> Result<WireEnvelope<serde_json::Value>, ProcessError> {
+            if !matches!(self.state(), SidecarState::Running) {
+                return Err(ProcessError::NotRunning);
+            }
             let sequence = self.next_sequence.fetch_add(1, Ordering::Relaxed) + 1;
-            let request_id = format!("rust-{}", self.next_request.fetch_add(1, Ordering::Relaxed) + 1);
+            let request_id = format!(
+                "rust-{}",
+                self.next_request.fetch_add(1, Ordering::Relaxed) + 1
+            );
             let (sender, receiver) = mpsc::channel();
-            let message = WireEnvelope { schema_version: CURRENT_SCHEMA_VERSION, message_type: MessageType::Command, request_id: request_id.clone(), sequence, monotonic_time_ms: monotonic_ms(), operation: operation.clone(), payload };
+            let message = WireEnvelope {
+                schema_version: CURRENT_SCHEMA_VERSION,
+                message_type: MessageType::Command,
+                request_id: request_id.clone(),
+                sequence,
+                monotonic_time_ms: monotonic_ms(),
+                operation: operation.clone(),
+                payload,
+            };
             let mut guard = self.inner.lock().unwrap();
-            if guard.pending.len() >= self.config.max_pending { return Err(ProcessError::TooManyPending); }
-            let line = NdjsonFramer::encode(&message).map_err(|e| ProcessError::Protocol(e.to_string()))?;
-            guard.pending.insert(request_id, Pending { operation, sequence, result: sender });
-            if let Err(error) = guard.stdin.as_mut().ok_or(ProcessError::NotRunning).and_then(|stdin| stdin.write_all(line.as_bytes()).and_then(|_| stdin.flush()).map_err(|e| ProcessError::Write(e.to_string()))) {
+            if guard.pending.len() >= self.config.max_pending {
+                return Err(ProcessError::TooManyPending);
+            }
+            let line = NdjsonFramer::encode(&message)
+                .map_err(|e| ProcessError::Protocol(e.to_string()))?;
+            guard.pending.insert(
+                request_id,
+                Pending {
+                    operation,
+                    sequence,
+                    result: sender,
+                },
+            );
+            if let Err(error) = guard
+                .stdin
+                .as_mut()
+                .ok_or(ProcessError::NotRunning)
+                .and_then(|stdin| {
+                    stdin
+                        .write_all(line.as_bytes())
+                        .and_then(|_| stdin.flush())
+                        .map_err(|e| ProcessError::Write(e.to_string()))
+                })
+            {
                 guard.pending.remove(&message.request_id);
                 return Err(error);
             }
@@ -411,7 +512,9 @@ pub mod process {
                     guard.reject_all(ProcessError::Timeout);
                     Err(ProcessError::Timeout)
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => Err(ProcessError::Crashed("response channel closed".into())),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    Err(ProcessError::Crashed("response channel closed".into()))
+                }
             }
         }
         pub fn restart(&self) -> Result<(), ProcessError> {
@@ -432,14 +535,25 @@ pub mod process {
         /// child regardless of whether the bridge or SDK is stuck.
         pub fn close_bounded(&self, timeout: Duration) {
             let protocol_deadline = timeout.min(Duration::from_millis(1500));
-            let _ = self.request_timed(SidecarOperation::Close, serde_json::json!({}), protocol_deadline);
+            let _ = self.request_timed(
+                SidecarOperation::Close,
+                serde_json::json!({}),
+                protocol_deadline,
+            );
             self.close();
         }
     }
-    impl Drop for SidecarProcessManager { fn drop(&mut self) { self.close(); } }
+    impl Drop for SidecarProcessManager {
+        fn drop(&mut self) {
+            self.close();
+        }
+    }
     fn monotonic_ms() -> u64 {
         static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        START.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+        START
+            .get_or_init(std::time::Instant::now)
+            .elapsed()
+            .as_millis() as u64
     }
     #[cfg(test)]
     mod tests {
@@ -448,7 +562,15 @@ pub mod process {
         fn stdout_request_and_event_are_rejected_as_responses() {
             let manager = SidecarProcessManager::new(ProcessConfig::python("missing.py"));
             manager.inner.lock().unwrap().state = SidecarState::Running;
-            let envelope = WireEnvelope { schema_version: CURRENT_SCHEMA_VERSION, message_type: MessageType::Command, request_id: "r".into(), sequence: 1, monotonic_time_ms: 1, operation: SidecarOperation::GetTelemetry, payload: serde_json::json!({}) };
+            let envelope = WireEnvelope {
+                schema_version: CURRENT_SCHEMA_VERSION,
+                message_type: MessageType::Command,
+                request_id: "r".into(),
+                sequence: 1,
+                monotonic_time_ms: 1,
+                operation: SidecarOperation::GetTelemetry,
+                payload: serde_json::json!({}),
+            };
             let line = serde_json::to_string(&envelope).unwrap();
             SidecarProcessManager::route_line(&manager.inner, &line);
             assert_eq!(manager.state(), SidecarState::Crashed);
@@ -466,12 +588,41 @@ pub struct SidecarDeviceAdapter {
     telemetry_sequence: u64,
 }
 impl SidecarDeviceAdapter {
-    pub fn new(config: console_contracts::DeviceConfig, manager: process::SidecarProcessManager) -> Self {
-        Self { config, manager, capabilities: None, connected: false, telemetry_sequence: 0 }
+    pub fn new(
+        config: console_contracts::DeviceConfig,
+        manager: process::SidecarProcessManager,
+    ) -> Self {
+        Self {
+            config,
+            manager,
+            capabilities: None,
+            connected: false,
+            telemetry_sequence: 0,
+        }
     }
-    pub fn manager(&self) -> &process::SidecarProcessManager { &self.manager }
-    pub fn stop(&self) -> Result<(), device_adapter_api::AdapterError> { self.manager.request_timed(SidecarOperation::Stop, serde_json::json!({}), Duration::from_millis(500)).map(|_| ()).map_err(map_process_error) }
-    pub fn unlock(&self) -> Result<(), device_adapter_api::AdapterError> { self.manager.request_timed(SidecarOperation::Unlock, serde_json::json!({}), Duration::from_millis(500)).map(|_| ()).map_err(map_process_error) }
+    pub fn manager(&self) -> &process::SidecarProcessManager {
+        &self.manager
+    }
+    pub fn stop(&self) -> Result<(), device_adapter_api::AdapterError> {
+        self.manager
+            .request_timed(
+                SidecarOperation::Stop,
+                serde_json::json!({}),
+                Duration::from_millis(500),
+            )
+            .map(|_| ())
+            .map_err(map_process_error)
+    }
+    pub fn unlock(&self) -> Result<(), device_adapter_api::AdapterError> {
+        self.manager
+            .request_timed(
+                SidecarOperation::Unlock,
+                serde_json::json!({}),
+                Duration::from_millis(500),
+            )
+            .map(|_| ())
+            .map_err(map_process_error)
+    }
     pub fn close(&self) {
         // Ask the bridge to flush/close first; the process manager remains the
         // bounded fallback if the bridge is already crashed or unresponsive.
@@ -479,68 +630,218 @@ impl SidecarDeviceAdapter {
         self.manager.close();
     }
     pub fn shutdown_bounded(&mut self, timeout: Duration) {
-        self.manager.close_bounded(timeout.min(self.manager.shutdown_timeout()));
+        self.manager
+            .close_bounded(timeout.min(self.manager.shutdown_timeout()));
         self.connected = false;
         self.capabilities = None;
     }
-    fn command(&self, operation: SidecarOperation, payload: serde_json::Value) -> Result<WireEnvelope<serde_json::Value>, device_adapter_api::AdapterError> {
-        self.manager.request(operation, payload).map_err(map_process_error)
+    fn command(
+        &self,
+        operation: SidecarOperation,
+        payload: serde_json::Value,
+    ) -> Result<WireEnvelope<serde_json::Value>, device_adapter_api::AdapterError> {
+        self.manager
+            .request(operation, payload)
+            .map_err(map_process_error)
     }
-    fn capabilities_from(value: serde_json::Value, config: &console_contracts::DeviceConfig) -> Result<DeviceCapabilities, device_adapter_api::AdapterError> {
-        let obj = value.as_object().ok_or_else(|| invalid("capabilities payload must be an object"))?;
-        let number = |name: &str| obj.get(name).and_then(serde_json::Value::as_u64).ok_or_else(|| invalid(format!("capabilities missing {name}")));
-        let optional = |name: &str| obj.get(name).and_then(|v| if v.is_null() { None } else { v.as_u64() }).map(|v| v as u16);
+    fn capabilities_from(
+        value: serde_json::Value,
+        config: &console_contracts::DeviceConfig,
+    ) -> Result<DeviceCapabilities, device_adapter_api::AdapterError> {
+        let obj = value
+            .as_object()
+            .ok_or_else(|| invalid("capabilities payload must be an object"))?;
+        let number = |name: &str| {
+            obj.get(name)
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| invalid(format!("capabilities missing {name}")))
+        };
+        let optional = |name: &str| {
+            obj.get(name)
+                .and_then(|v| if v.is_null() { None } else { v.as_u64() })
+                .map(|v| v as u16)
+        };
         let vector = |name: &str, length: u16, available: bool| {
-            let range = obj.get(name).and_then(|v| v.get("range")).and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or(console_contracts::RawRange { min: 0, max: 255 });
-            console_contracts::VectorCapability { length, available, range }
+            let range = obj
+                .get(name)
+                .and_then(|v| v.get("range"))
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or(console_contracts::RawRange { min: 0, max: 255 });
+            console_contracts::VectorCapability {
+                length,
+                available,
+                range,
+            }
         };
         let position_length = number("positionLength")? as u16;
         let speed_length = number("speedLength")? as u16;
         let current_length = number("currentLength")? as u16;
         let torque_command = optional("torqueCommandLength");
         let current_command = optional("currentCommandLength");
-        let supported_operations = obj.get("supportedOperations").and_then(|v| v.as_array()).map(|items| items.iter().filter_map(|v| serde_json::from_value(v.clone()).ok()).collect()).unwrap_or_default();
-        Ok(DeviceCapabilities { schema_version: CURRENT_SCHEMA_VERSION, device_id: config.device_id.clone(), model: config.model.clone(), hand: config.hand.clone(), transport: config.transport.clone(), joint_count: position_length, position: vector("position", position_length, true), speed: vector("speed", speed_length, true), current: vector("current", current_length, true), torque: vector("torque", torque_command.unwrap_or(0), torque_command.is_some()), touch: vector("touch", position_length, true), speed_command_length: number("speedCommandLength")? as u16, current_command_length: current_command, torque_command_length: torque_command, supported_operations })
+        let supported_operations = obj
+            .get("supportedOperations")
+            .and_then(|v| v.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(DeviceCapabilities {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            device_id: config.device_id.clone(),
+            model: config.model.clone(),
+            hand: config.hand.clone(),
+            transport: config.transport.clone(),
+            joint_count: position_length,
+            position: vector("position", position_length, true),
+            speed: vector("speed", speed_length, true),
+            current: vector("current", current_length, true),
+            torque: vector(
+                "torque",
+                torque_command.unwrap_or(0),
+                torque_command.is_some(),
+            ),
+            touch: vector("touch", position_length, true),
+            speed_command_length: number("speedCommandLength")? as u16,
+            current_command_length: current_command,
+            torque_command_length: torque_command,
+            supported_operations,
+        })
     }
 }
-fn invalid(message: impl Into<String>) -> device_adapter_api::AdapterError { device_adapter_api::AdapterError::InvalidCommand(message.into()) }
+fn invalid(message: impl Into<String>) -> device_adapter_api::AdapterError {
+    device_adapter_api::AdapterError::InvalidCommand(message.into())
+}
 fn map_process_error(error: process::ProcessError) -> device_adapter_api::AdapterError {
-    match error { process::ProcessError::Remote(code, message) if code == "UNSUPPORTED_CAPABILITY" => device_adapter_api::AdapterError::Unsupported(message), process::ProcessError::Remote(code, _message) if code == "NOT_CONNECTED" => device_adapter_api::AdapterError::NotConnected, process::ProcessError::Timeout => device_adapter_api::AdapterError::Transport("sidecar request timed out".into()), process::ProcessError::Remote(code, message) => device_adapter_api::AdapterError::Transport(format!("{code}: {message}")), other => device_adapter_api::AdapterError::Transport(other.to_string()) }
+    match error {
+        process::ProcessError::Remote(code, message) if code == "UNSUPPORTED_CAPABILITY" => {
+            device_adapter_api::AdapterError::Unsupported(message)
+        }
+        process::ProcessError::Remote(code, _message) if code == "NOT_CONNECTED" => {
+            device_adapter_api::AdapterError::NotConnected
+        }
+        process::ProcessError::Timeout => {
+            device_adapter_api::AdapterError::Transport("sidecar request timed out".into())
+        }
+        process::ProcessError::Remote(code, message) => {
+            device_adapter_api::AdapterError::Transport(format!("{code}: {message}"))
+        }
+        other => device_adapter_api::AdapterError::Transport(other.to_string()),
+    }
 }
 impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
-    fn id(&self) -> &str { &self.config.device_id }
+    fn id(&self) -> &str {
+        &self.config.device_id
+    }
     fn connect(&mut self) -> device_adapter_api::AdapterResult<DeviceCapabilities> {
         self.manager.start().map_err(map_process_error)?;
-        let transport = serde_json::to_value(&self.config.transport).map_err(|e| invalid(e.to_string()))?;
+        let transport =
+            serde_json::to_value(&self.config.transport).map_err(|e| invalid(e.to_string()))?;
         let payload = serde_json::json!({"deviceId": self.config.device_id, "model": self.config.model, "hand": self.config.hand, "transport": transport, "mode": if matches!(self.config.transport, console_contracts::Transport::Can { ref channel } if channel == "fake") { "fake" } else { "real" }});
         self.command(SidecarOperation::Connect, payload)?;
         let result = self.command(SidecarOperation::Capabilities, serde_json::json!({}))?;
         let capabilities = Self::capabilities_from(result.payload, &self.config)?;
-        self.capabilities = Some(capabilities.clone()); self.connected = true; Ok(capabilities)
+        self.capabilities = Some(capabilities.clone());
+        self.connected = true;
+        Ok(capabilities)
     }
-    fn disconnect(&mut self) -> device_adapter_api::AdapterResult<()> { if self.connected { self.command(SidecarOperation::Disconnect, serde_json::json!({}))?; } self.connected = false; self.capabilities = None; Ok(()) }
-    fn is_connected(&self) -> bool { self.connected }
-    fn capabilities(&self) -> Option<&DeviceCapabilities> { self.capabilities.as_ref() }
-    fn send_joint_target(&mut self, command: &console_contracts::JointTargetCommand) -> device_adapter_api::AdapterResult<()> {
-        if !self.connected { return Err(device_adapter_api::AdapterError::NotConnected); }
-        let length = self.capabilities.as_ref().map(|c| c.position.length as usize).ok_or(device_adapter_api::AdapterError::NotConnected)?;
-        let raw = normalized_to_raw(&command.positions, length).map_err(device_adapter_api::AdapterError::InvalidCommand)?;
-        self.command(SidecarOperation::SetPosition, serde_json::json!({"positions": raw}))?; Ok(())
+    fn disconnect(&mut self) -> device_adapter_api::AdapterResult<()> {
+        if self.connected {
+            self.command(SidecarOperation::Disconnect, serde_json::json!({}))?;
+        }
+        self.connected = false;
+        self.capabilities = None;
+        Ok(())
     }
-    fn read_telemetry(&mut self, monotonic_time_ms: u64) -> device_adapter_api::AdapterResult<console_contracts::TelemetrySnapshot> {
-        if !self.connected { return Err(device_adapter_api::AdapterError::NotConnected); }
-        let payload = self.command(SidecarOperation::GetTelemetry, serde_json::json!({}))?.payload;
-        let get = |name: &str| -> Result<Vec<u8>, device_adapter_api::AdapterError> { payload.get(name).and_then(|v| v.as_array()).ok_or_else(|| invalid(format!("telemetry missing {name}"))).and_then(|values| values.iter().map(|v| v.as_u64().map(|n| n as u8).ok_or_else(|| invalid(format!("telemetry {name} contains non-byte")))).collect()) };
-        let raw_position = get("position")?; let positions = raw_to_normalized(&raw_position); let raw_current = get("current")?; let raw_speed = get("speed")?; let raw_touch = get("touch")?;
+    fn is_connected(&self) -> bool {
+        self.connected
+    }
+    fn capabilities(&self) -> Option<&DeviceCapabilities> {
+        self.capabilities.as_ref()
+    }
+    fn send_joint_target(
+        &mut self,
+        command: &console_contracts::JointTargetCommand,
+    ) -> device_adapter_api::AdapterResult<()> {
+        if !self.connected {
+            return Err(device_adapter_api::AdapterError::NotConnected);
+        }
+        let length = self
+            .capabilities
+            .as_ref()
+            .map(|c| c.position.length as usize)
+            .ok_or(device_adapter_api::AdapterError::NotConnected)?;
+        let raw = normalized_to_raw(&command.positions, length)
+            .map_err(device_adapter_api::AdapterError::InvalidCommand)?;
+        self.command(
+            SidecarOperation::SetPosition,
+            serde_json::json!({"positions": raw}),
+        )?;
+        Ok(())
+    }
+    fn read_telemetry(
+        &mut self,
+        monotonic_time_ms: u64,
+    ) -> device_adapter_api::AdapterResult<console_contracts::TelemetrySnapshot> {
+        if !self.connected {
+            return Err(device_adapter_api::AdapterError::NotConnected);
+        }
+        let payload = self
+            .command(SidecarOperation::GetTelemetry, serde_json::json!({}))?
+            .payload;
+        let get = |name: &str| -> Result<Vec<u8>, device_adapter_api::AdapterError> {
+            payload
+                .get(name)
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| invalid(format!("telemetry missing {name}")))
+                .and_then(|values| {
+                    values
+                        .iter()
+                        .map(|v| {
+                            v.as_u64().map(|n| n as u8).ok_or_else(|| {
+                                invalid(format!("telemetry {name} contains non-byte"))
+                            })
+                        })
+                        .collect()
+                })
+        };
+        let raw_position = get("position")?;
+        let positions = raw_to_normalized(&raw_position);
+        let raw_current = get("current")?;
+        let raw_speed = get("speed")?;
+        let raw_touch = get("touch")?;
         self.telemetry_sequence = self.telemetry_sequence.saturating_add(1);
-        Ok(console_contracts::TelemetrySnapshot { schema_version: CURRENT_SCHEMA_VERSION, device_id: self.config.device_id.clone(), sequence: self.telemetry_sequence, monotonic_time_ms, positions, raw_position, raw_current, raw_speed, raw_touch, connected: true })
+        Ok(console_contracts::TelemetrySnapshot {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            device_id: self.config.device_id.clone(),
+            sequence: self.telemetry_sequence,
+            monotonic_time_ms,
+            positions,
+            raw_position,
+            raw_current,
+            raw_speed,
+            raw_touch,
+            connected: true,
+        })
     }
-    fn stop(&mut self) -> device_adapter_api::AdapterResult<()> { SidecarDeviceAdapter::stop(self) }
-    fn unlock(&mut self) -> device_adapter_api::AdapterResult<()> { SidecarDeviceAdapter::unlock(self) }
-    fn shutdown(&mut self) -> device_adapter_api::AdapterResult<()> { let timeout = self.manager.shutdown_timeout(); self.shutdown_bounded(timeout); Ok(()) }
+    fn stop(&mut self) -> device_adapter_api::AdapterResult<()> {
+        SidecarDeviceAdapter::stop(self)
+    }
+    fn unlock(&mut self) -> device_adapter_api::AdapterResult<()> {
+        SidecarDeviceAdapter::unlock(self)
+    }
+    fn shutdown(&mut self) -> device_adapter_api::AdapterResult<()> {
+        let timeout = self.manager.shutdown_timeout();
+        self.shutdown_bounded(timeout);
+        Ok(())
+    }
 }
 impl Drop for SidecarDeviceAdapter {
-    fn drop(&mut self) { self.shutdown_bounded(Duration::from_secs(2)); }
+    fn drop(&mut self) {
+        self.shutdown_bounded(Duration::from_secs(2));
+    }
 }
 
 #[cfg(test)]
@@ -671,10 +972,13 @@ mod tests {
             final_command: true,
         };
         device_adapter_api::DeviceAdapter::send_joint_target(&mut adapter, &command).unwrap();
-        let telemetry = device_adapter_api::DeviceAdapter::read_telemetry(&mut adapter, 42).unwrap();
+        let telemetry =
+            device_adapter_api::DeviceAdapter::read_telemetry(&mut adapter, 42).unwrap();
         assert_eq!(telemetry.positions, command.positions);
         adapter.stop().unwrap();
-        assert!(device_adapter_api::DeviceAdapter::send_joint_target(&mut adapter, &command).is_err());
+        assert!(
+            device_adapter_api::DeviceAdapter::send_joint_target(&mut adapter, &command).is_err()
+        );
         adapter.unlock().unwrap();
         device_adapter_api::DeviceAdapter::send_joint_target(&mut adapter, &command).unwrap();
         device_adapter_api::DeviceAdapter::disconnect(&mut adapter).unwrap();
@@ -682,7 +986,8 @@ mod tests {
     }
     #[test]
     fn fake_process_bounded_protocol_close() {
-        let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sidecar/linkerhand-bridge/main.py");
+        let script = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../sidecar/linkerhand-bridge/main.py");
         let manager = process::SidecarProcessManager::new(process::ProcessConfig::fake(script));
         manager.start().unwrap();
         let started = std::time::Instant::now();

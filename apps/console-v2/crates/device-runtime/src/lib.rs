@@ -102,13 +102,25 @@ impl DeviceRuntime {
             .map_err(Into::into)
     }
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
-        self.adapter.as_mut().ok_or(RuntimeError::NoAdapter)?.stop().map_err(Into::into)
+        self.adapter
+            .as_mut()
+            .ok_or(RuntimeError::NoAdapter)?
+            .stop()
+            .map_err(Into::into)
     }
     pub fn unlock(&mut self) -> Result<(), RuntimeError> {
-        self.adapter.as_mut().ok_or(RuntimeError::NoAdapter)?.unlock().map_err(Into::into)
+        self.adapter
+            .as_mut()
+            .ok_or(RuntimeError::NoAdapter)?
+            .unlock()
+            .map_err(Into::into)
     }
     pub fn shutdown(&mut self) -> Result<(), RuntimeError> {
-        self.adapter.as_mut().ok_or(RuntimeError::NoAdapter)?.shutdown().map_err(Into::into)
+        self.adapter
+            .as_mut()
+            .ok_or(RuntimeError::NoAdapter)?
+            .shutdown()
+            .map_err(Into::into)
     }
 }
 #[cfg(test)]
