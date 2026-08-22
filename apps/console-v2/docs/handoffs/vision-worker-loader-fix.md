@@ -27,6 +27,8 @@ V2 现在使用 Vite `worker.format: 'iife'` 输出独立 classic worker chunk�
 
 由于 Vite dev 默认将 `?worker` wrapper 标为 module worker，装配路径使用显式 `?worker&classic` 标记，并由 Vite 配置插件将该 wrapper 和 `worker_file` 请求改为 classic。Worker 不再运行时导入 ESM `@mediapipe/tasks-vision`，而是通过 `importScripts` 加载随包的官方 `vision_bundle.js` UMD 资产；构建将该资产写入 `dist/vision/vision_bundle.js`，开发服务器提供相同本地路径。这样 dev 和 production 均实际创建 classic Worker，官方 Emscripten `ModuleFactory` 路径保持可用，未使用 eval 或 CSP 放宽。
 
+Vite 对带有 `import type` 的 dev worker 源会在末尾注入空 `export {};`。该语句对 classic worker 非法，因此插件仅在精确的 `/workers/vision-worker/index.ts?worker_file&type=classic` 响应上移除末尾空导出，不处理其他文件或任意 export。浏览器验证该响应无 `import`/`export`，构建契约同时检查精确路径和变换规则。
+
 ## 验证
 
 - `pnpm typecheck`

@@ -12,6 +12,13 @@ const classicVisionWorkerPlugin = {
   // the worker source is classic-safe and imports the official UMD bundle.
   enforce: 'post' as const,
   transform(code: string, id: string) {
+    if (id.includes('/workers/vision-worker/index.ts?worker_file&type=classic')) {
+      // Type-only imports make esbuild preserve an empty module marker. A
+      // classic worker cannot parse it, so remove only this exact trailing
+      // marker from this one worker_file response.
+      const transformed = code.replace(/\n?export\s*\{\s*\};\s*$/, '\n');
+      return transformed === code ? undefined : { code: transformed, map: null };
+    }
     if (!id.includes('/workers/vision-worker/index.ts?worker&classic')) return;
     const transformed = code
       .replace('?worker_file&type=module', '?worker_file&type=classic')

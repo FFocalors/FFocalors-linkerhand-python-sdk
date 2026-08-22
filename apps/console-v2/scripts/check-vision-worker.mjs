@@ -7,6 +7,8 @@ const viteConfig = await readFile(resolve(root, 'vite.config.ts'), 'utf8');
 const runtime = await readFile(resolve(root, 'frontend/shared/vision-runtime/runtime.ts'), 'utf8');
 const composition = await readFile(resolve(root, 'frontend/app/composition.ts'), 'utf8');
 if (!viteConfig.includes("format: 'iife'")) throw new Error('Vision worker must use Vite classic IIFE output for MediaPipe Emscripten loaders.');
+if (!viteConfig.includes('index.ts?worker_file&type=classic')) throw new Error('Vite config must target only the vision classic worker_file response.');
+if (!viteConfig.includes('export\\s*\\{\\s*\\};')) throw new Error('Vite config must remove only the trailing empty export from the classic worker response.');
 if (!composition.includes("from '../workers/vision-worker/index?worker&classic'")) throw new Error('App composition must import the Vite classic ?worker constructor.');
 if (!composition.includes('new VisionWorker()')) throw new Error('App composition does not instantiate the Vite worker constructor.');
 if (!composition.includes('workerFactory: () => new VisionWorker()')) throw new Error('App composition must inject the Vite worker constructor into VisionRuntime.');
