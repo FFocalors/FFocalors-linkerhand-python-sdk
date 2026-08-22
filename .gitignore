@@ -4,3 +4,13 @@ __pycache__/
 *.pyc
 *.pyo
 *.log
+
+# Temporary / test artifacts
+*.tmp
+*_test.tmp
+
+# Experiment / practice reports (not part of repo versioning)
+实验报告.md
+实验报告_完整版.md
+灵伴巧手_具身智能家庭辅助机械手实践报告.docx
+artifacts/ppt-report/report_source.md
