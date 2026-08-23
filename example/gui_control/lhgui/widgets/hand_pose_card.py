@@ -124,16 +124,8 @@ class HandPoseCard(QWidget):
         from lhgui.utils.style_utils import add_card_shadow
         add_card_shadow(self, blur=16, offset=1)
 
-        if not self.pose_view.is_supported():
-            for item in self.summary_cards:
-                item.hide()
-            err_lbl = QLabel("当前型号不支持实时姿态图")
-            err_lbl.setStyleSheet("color:#E5484D; font-weight:600; font-size:12px;")
-            err_lbl.setAlignment(Qt.AlignCenter)
-            layout.addWidget(err_lbl)
-
     def _on_state(self, state: list):
-        if not state or not self.pose_view.is_supported():
+        if not state:
             return
         vals = list(state)[:6]
 
