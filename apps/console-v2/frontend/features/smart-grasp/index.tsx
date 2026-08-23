@@ -214,7 +214,6 @@ export function SmartGrasp({
     <div className="stack">
       <div className="page-heading">
         <div>
-          <p className="eyebrow">工作台 / 智能抓取</p>
           <h1>智能抓取</h1>
           <p className="muted">自适应抓取通过关节负载分析实现柔性接触锁定。</p>
         </div>

@@ -168,7 +168,7 @@ export function Settings({ model, transport, controller, themePort, version = '2
   const transportHint = useMemo(() => draft.transport.type === 'can' ? '由运行时选择 CAN channel；不会在此页面直接打开硬件。' : '串口只在保存后交给运行时；格式示例 COM3。', [draft.transport.type]);
 
   return <div className="stack settings-feature">
-    <div className="page-heading"><div><p className="eyebrow">系统 / 设置</p><h1>设置</h1><p>保存的是设备配置草稿；硬件状态仍以运行时返回为准。</p></div><div className="settings-heading-status"><Badge tone={!wired ? 'amber' : dirty ? 'amber' : status === 'error' ? 'red' : 'green'}>{!wired ? '未接线' : statusLabel}</Badge><button className="button button-primary" disabled={!wired || editingDisabled || status === 'loading'} onClick={() => void save()}>保存设置</button></div></div>
+    <div className="page-heading"><div><h1>设置</h1><p>保存的是设备配置草稿；硬件状态仍以运行时返回为准。</p></div><div className="settings-heading-status"><Badge tone={!wired ? 'amber' : dirty ? 'amber' : status === 'error' ? 'red' : 'green'}>{!wired ? '未接线' : statusLabel}</Badge><button className="button button-primary" disabled={!wired || editingDisabled || status === 'loading'} onClick={() => void save()}>保存设置</button></div></div>
     {!wired && <div className="settings-notice" role="status">当前页面未注入 SettingsController，仅展示已知配置；保存、自检和摄像头枚举已禁用。</div>}
     {message && <div className={`settings-message ${status === 'error' ? 'is-error' : ''}`} role={status === 'error' ? 'alert' : 'status'}>{message}</div>}
     <div className="settings-grid">
