@@ -1821,6 +1821,7 @@ dependencies = [
  "serde_json",
  "sidecar-client",
  "tauri",
+ "tauri-build",
  "tokio",
 ]
 

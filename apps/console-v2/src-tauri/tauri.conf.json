@@ -4,7 +4,7 @@
   "version": "2.0.0-rc.1",
   "identifier": "com.linkerhand.console",
   "build": {
-    "beforeDevCommand": "pnpm dev --host 127.0.0.1",
+    "beforeDevCommand": "pnpm dev --host 127.0.0.1 --port 1420",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-build.ps1",
     "frontendDist": "../dist"

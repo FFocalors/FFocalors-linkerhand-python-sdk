@@ -18,6 +18,7 @@
     "check:boundaries": "node scripts/check-boundaries.mjs",
     "check:vision-assets": "node scripts/check-vision-assets.mjs",
     "check:vision-worker": "node scripts/check-vision-worker.mjs",
+    "check:native-windows": "node scripts/check-native-windows.mjs",
     "vision:download": "node scripts/download-vision-assets.mjs",
     "test:sidecar:smoke": "python scripts/smoke-sidecar.py",
     "bundle:inventory": "node scripts/create-bundle-inventory.mjs"
