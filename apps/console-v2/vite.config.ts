@@ -20,5 +20,6 @@ const classicVisionWorkerPlugin = {
 export default defineConfig({
   plugins: [react(), classicVisionWorkerPlugin],
   resolve: { preserveSymlinks: true },
+  optimizeDeps: { noDiscovery: true, include: [] },
   test: { environment: 'jsdom', setupFiles: './frontend/test-setup.ts', globals: true },
 });

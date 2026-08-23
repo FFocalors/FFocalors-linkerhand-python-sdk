@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { JointTargetCommand } from '../shared/contracts';
 import { mockRuntime } from '../shared/contracts/mock-runtime';
-import { createRpsActionController, createVisionProposalController, O6_RPS_POSES } from './controllers';
+import { createRpsActionController, createVisionProposalController, O6_RPS_POSES, O6_RPS_SCISSORS_STAGES } from './controllers';
 
 describe('application motion controllers', () => {
   it('keeps vision proposals continuous so the actor can latest-win at 20Hz', async () => {
@@ -20,8 +20,12 @@ describe('application motion controllers', () => {
     const controller = createRpsActionController(runtime, await mockRuntime.device.getCapabilities(), true);
     expect(await controller.authorize()).toBe(true);
     for (const move of ['rock', 'paper', 'scissors'] as const) expect((await controller.dispatch({ move, round: 1, reason: 'rps-test' })).status).toBe('executed');
-    expect(commands).toHaveLength(3);
-    expect(commands.every(command => command.source === 'rockPaperScissors' && command.finalCommand && command.positions.length === 6)).toBe(true);
-    expect(commands.map(command => command.positions)).toEqual(Object.values(O6_RPS_POSES).map(values => values.map(value => value / 255)));
+    expect(commands).toHaveLength(4);
+    const expected = [
+      ...Object.values(O6_RPS_POSES).slice(0, 2).map(values => values.map(value => value / 255)),
+      O6_RPS_SCISSORS_STAGES[0][0].map(value => value / 255),
+      O6_RPS_SCISSORS_STAGES[1][0].map(value => value / 255),
+    ];
+    expect(commands.map(command => command.positions)).toEqual(expected);
   });
 });

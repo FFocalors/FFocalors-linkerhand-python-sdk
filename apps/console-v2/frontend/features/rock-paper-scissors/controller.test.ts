@@ -44,12 +44,12 @@ describe('RPS deterministic controller', () => {
     expect(controller.beginRound()).toBe(true); expect(controller.snapshot().countdown).toBe(3); scheduler.runNext(); expect(controller.snapshot().countdown).toBe(2); scheduler.runNext(); expect(controller.snapshot().countdown).toBe(1); scheduler.runNext(); expect(controller.snapshot().phase).toBe('capture'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('invalid'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('reveal'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('score'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('ready'); expect(controller.snapshot().score).toEqual({ player: 0, machine: 0, draws: 0 }); expect(phases).toEqual(expect.arrayContaining(['countdown', 'capture', 'invalid', 'reveal', 'score', 'ready']));
   });
 
-  it('recognizes a stable gesture and scores exactly once', async () => {
-    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler, random: () => 0 }); await ready(controller, runtime); controller.beginRound(); scheduler.runNext(); scheduler.runNext(); scheduler.runNext(); runtime.emit(paperResult()); runtime.emit(paperResult()); expect(controller.snapshot().phase).toBe('capture'); runtime.emit(paperResult()); expect(controller.snapshot().phase).toBe('recognized'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('reveal'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('score'); const score = controller.snapshot().score; scheduler.runNext(); expect(controller.snapshot().phase).toBe('ready'); expect(controller.snapshot().score).toEqual(score); expect(score).toEqual({ player: 1, machine: 0, draws: 0 });
+  it('locks the first recognized gesture at the reveal moment and scores exactly once', async () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler, random: () => 0 }); await ready(controller, runtime); controller.beginRound(); scheduler.runNext(); scheduler.runNext(); scheduler.runNext(); expect(controller.snapshot().phase).toBe('capture'); runtime.emit(paperResult()); expect(controller.snapshot().phase).toBe('recognized'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('reveal'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('score'); const score = controller.snapshot().score; scheduler.runNext(); expect(controller.snapshot().phase).toBe('ready'); expect(controller.snapshot().score).toEqual(score); expect(score).toEqual({ player: 1, machine: 0, draws: 0 });
   });
 
-  it('does not dispatch before explicit O6 authorization and supports action tests only after it', async () => {
-    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const calls: string[] = []; const action: RpsActionController = { authorize: async () => { calls.push('authorize'); return true; }, dispatch: async request => { calls.push(`${request.reason}:${request.move}`); return { status: 'executed' }; }, cancel: async reason => { calls.push(`cancel:${reason}`); } }; const controller = new RpsGameController({ runtime, capabilities: capabilities('O6'), actionController: action, scheduler }); await ready(controller, runtime); expect(await controller.testAction('rock')).toBe(false); expect(controller.beginRound()).toBe(false); await controller.authorizeHardware(); await controller.testAction('rock'); expect(calls).toContain('rps-test:rock'); expect(controller.beginRound()).toBe(true); controller.lock(); expect(await controller.testAction('paper')).toBe(false); expect(calls).toContain('cancel:locked');
+  it('does not dispatch before explicit O6 authorization, still allows play, and supports action tests after it', async () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const calls: string[] = []; const action: RpsActionController = { authorize: async () => { calls.push('authorize'); return true; }, dispatch: async request => { calls.push(`${request.reason}:${request.move}`); return { status: 'executed' }; }, cancel: async reason => { calls.push(`cancel:${reason}`); } }; const controller = new RpsGameController({ runtime, capabilities: capabilities('O6'), actionController: action, scheduler }); await ready(controller, runtime); expect(await controller.testAction('rock')).toBe(false); expect(controller.beginRound()).toBe(true); expect(calls).not.toContain('rps-reveal:rock'); controller.stopRound(); expect(controller.snapshot().phase).toBe('cameraReady'); await controller.authorizeHardware(); expect(await controller.testAction('rock')).toBe(true); expect(calls).toContain('rps-test:rock'); controller.lock(); expect(await controller.testAction('paper')).toBe(false); expect(calls).toContain('cancel:locked');
   });
 
   it('never exposes action dispatch for non-O6 even when a controller is present', async () => { const runtime = new FakeRuntime(); const action: RpsActionController = { authorize: async () => true, dispatch: vi.fn(async () => ({ status: 'executed' as const })), cancel: async () => undefined }; const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), actionController: action }); await ready(controller, runtime); expect(await controller.testAction('scissors')).toBe(false); expect(action.dispatch).not.toHaveBeenCalled(); });
@@ -74,4 +74,55 @@ describe('RPS deterministic controller', () => {
   it('reports permission/busy start errors without opening a second session', async () => { const runtime = new FakeRuntime(); runtime.startError = Object.assign(new Error('busy'), { code: 'VISION_BUSY' }); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7') }); controller.attach(fakeVideo); await controller.startCamera(); expect(controller.snapshot().cameraError?.code).toBe('VISION_BUSY'); expect(runtime.starts).toBe(1); });
 
   it('does not revive a start promise after stop', async () => { const runtime = new FakeRuntime(); runtime.startGate = new Promise(resolve => { runtime.resolveStart = resolve; }); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7') }); controller.attach(fakeVideo); const start = controller.startCamera(); await Promise.resolve(); const stop = controller.stop(); runtime.resolveStart(); await start; await stop; expect(controller.snapshot().phase).toBe('idle'); expect(runtime.stops).toBe(1); });
+
+  it('switches round mode via setRoundMode', () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler });
+    expect(controller.snapshot().roundMode).toBe('unlimited');
+    controller.setRoundMode('best_of_3');
+    expect(controller.snapshot().roundMode).toBe('best_of_3');
+    controller.setRoundMode('best_of_5');
+    expect(controller.snapshot().roundMode).toBe('best_of_5');
+  });
+
+  it('stops an in-progress round back to cameraReady while preserving the score', async () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler, random: () => 0 }); await ready(controller, runtime);
+    controller.beginRound();
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    runtime.emit(paperResult());
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    expect(controller.snapshot().phase).toBe('ready');
+    controller.stopRound();
+    expect(controller.snapshot().phase).toBe('cameraReady');
+    expect(controller.snapshot().score.player).toBe(1);
+    expect(controller.snapshot().machineMove).toBeNull();
+  });
+
+  it('auto-starts the next round after the configured interval instead of waiting for a click', async () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler, random: () => 0 }); await ready(controller, runtime);
+    controller.beginRound();
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    runtime.emit(paperResult());
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    expect(controller.snapshot().phase).toBe('ready');
+    scheduler.runNext();
+    expect(controller.snapshot().phase).toBe('countdown');
+    expect(controller.snapshot().round).toBe(2);
+  });
+
+  it('ends a best-of-3 match after two player wins and exposes the winner', async () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler, random: () => 0, roundMode: 'best_of_3' }); await ready(controller, runtime);
+    const playRound = () => {
+      controller.beginRound();
+      scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+      runtime.emit(paperResult());
+      scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    };
+    playRound();
+    expect(controller.snapshot().phase).toBe('ready');
+    expect(controller.snapshot().score.player).toBe(1);
+    playRound();
+    expect(controller.snapshot().phase).toBe('matchOver');
+    expect(controller.snapshot().matchWinner).toBe('player');
+    expect(controller.snapshot().score.player).toBe(2);
+  });
 });

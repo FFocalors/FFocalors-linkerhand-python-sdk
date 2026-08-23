@@ -1,13 +1,13 @@
-import { classifyResult, StableMoveWindow } from './classifier';
-import { createInitialState, machineMove, outcomeFor, scoreFor } from './game';
-import type { RpsActionController, RpsCapabilities, RpsInvalidReason, RpsMove, RpsScheduler, RpsState, RpsVisionRuntime } from './types';
+import { classifyResult } from './classifier';
+import { chooseMachineGesture, createInitialState, outcomeFor, scoreFor, updatePlayerProfile } from './game';
+import type { RpsActionController, RpsCapabilities, RpsInvalidReason, RpsMove, RpsOutcome, RpsRoundMode, RpsScheduler, RpsState, RpsStrategy, RpsVisionRuntime } from './types';
 import type { VisionLandmarkResult, VisionRuntimeSnapshot } from '../../shared/vision-runtime';
 
 const realScheduler: RpsScheduler = { setTimeout: (callback, delay) => window.setTimeout(callback, delay), clearTimeout: handle => window.clearTimeout(handle) };
 const defaultRandom = () => Math.random();
-const ACTIVE_PHASES = new Set<RpsState['phase']>(['countdown', 'capture', 'recognized', 'invalid', 'reveal', 'score']);
+const ACTIVE_PHASES = new Set<RpsState['phase']>(['countdown', 'capture', 'recognized', 'invalid', 'reveal', 'score', 'matchOver']);
 
-export type RpsControllerOptions = { runtime: RpsVisionRuntime; capabilities: RpsCapabilities; actionController?: RpsActionController; scheduler?: RpsScheduler; random?: () => number; countdownMs?: number; captureMs?: number; revealMs?: number; scoreMs?: number };
+export type RpsControllerOptions = { runtime: RpsVisionRuntime; capabilities: RpsCapabilities; actionController?: RpsActionController; scheduler?: RpsScheduler; random?: () => number; roundMode?: RpsRoundMode; autoAdvanceMs?: number; countdownMs?: number; captureMs?: number; revealMs?: number; scoreMs?: number };
 export type RpsControllerListener = (state: RpsState) => void;
 
 export class RpsGameController {
@@ -20,7 +20,7 @@ export class RpsGameController {
   private readonly captureMs: number;
   private readonly revealMs: number;
   private readonly scoreMs: number;
-  private readonly stable = new StableMoveWindow();
+  private readonly autoAdvanceMs: number;
   private state: RpsState = createInitialState();
   private readonly listeners = new Set<RpsControllerListener>();
   private readonly timers = new Set<number>();
@@ -36,9 +36,9 @@ export class RpsGameController {
   constructor(options: RpsControllerOptions) {
     this.runtime = options.runtime; this.capabilities = options.capabilities; this.actionController = options.actionController;
     this.scheduler = options.scheduler ?? realScheduler; this.random = options.random ?? defaultRandom;
-    this.countdownMs = options.countdownMs ?? 1000; this.captureMs = options.captureMs ?? 1400; this.revealMs = options.revealMs ?? 280; this.scoreMs = options.scoreMs ?? 420;
+    this.countdownMs = options.countdownMs ?? 1000; this.captureMs = options.captureMs ?? 700; this.revealMs = options.revealMs ?? 280; this.scoreMs = options.scoreMs ?? 420; this.autoAdvanceMs = options.autoAdvanceMs ?? 3000;
     const hardware = this.hardwareAvailable() ? 'idle' : 'disabled';
-    this.state = { ...this.state, action: { status: hardware, detail: hardware === 'disabled' ? '仅 O6 且接入动作控制器时可控制机械手' : null } };
+    this.state = { ...this.state, action: { status: hardware, detail: hardware === 'disabled' ? '仅 O6 且接入动作控制器时可控制机械手' : null }, roundMode: options.roundMode ?? 'unlimited' };
   }
 
   subscribe(listener: RpsControllerListener): () => void { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
@@ -76,38 +76,63 @@ export class RpsGameController {
     } catch (error) { if (this.isCurrent(token)) this.emit({ action: { status: 'error', detail: error instanceof Error ? error.message : '授权失败' } }); return false; }
   }
 
+  setStrategy(strategy: RpsStrategy): void {
+    this.emit({ strategy });
+  }
+
+  setRoundMode(roundMode: RpsRoundMode): void {
+    if (this.disposed || this.state.roundMode === roundMode) return;
+    const matchWinner = this.matchCompleteFor(roundMode) ? this.state.score.player > this.state.score.machine ? 'player' : 'machine' : null;
+    this.emit({ roundMode, matchWinner });
+  }
+
+  resetProfile(): void {
+    this.emit({ profile: createInitialState().profile, chain: null });
+  }
+
   beginRound(): boolean {
     if (this.disposed || (this.state.phase !== 'cameraReady' && this.state.phase !== 'ready')) return false;
-    if (this.hardwareAvailable() && !this.state.hardwareAuthorized) return false;
-    this.generation += 1; this.clearTimers(); this.stable.reset(); this.lastInvalidReason = null;
-    this.emit({ phase: 'countdown', countdown: 3, playerMove: null, machineMove: null, outcome: null, invalidReason: null, round: this.state.round + 1, stableFrames: 0 });
+    if (this.matchComplete()) { this.emit({ phase: 'matchOver', matchWinner: this.state.score.player > this.state.score.machine ? 'player' : 'machine', countdown: null, machineMove: null, playerMove: null, outcome: null }); return false; }
+    this.generation += 1; this.clearTimers(); this.lastInvalidReason = null;
+    const nextRound = this.state.round + 1;
+    const { machineGesture, chain } = chooseMachineGesture(this.state.profile, this.state.strategy, this.random);
+    this.emit({ phase: 'countdown', countdown: 3, playerMove: null, machineMove: machineGesture, outcome: null, invalidReason: null, round: nextRound, stableFrames: 0, chain });
     this.schedule(() => this.countdownTick(3), this.countdownMs); return true;
+  }
+
+  /** 停止当前对局（保留比分），回到可重新开始的状态；取消任何进行中的机械手动作。 */
+  stopRound(): void {
+    const active = ['countdown', 'capture', 'recognized', 'invalid', 'reveal', 'score', 'ready', 'matchOver'] as const;
+    if (this.disposed || !active.includes(this.state.phase as typeof active[number])) return;
+    this.generation += 1; this.clearTimers();
+    const token = this.generation; void this.cancelAction('stopped', token).catch(() => undefined);
+    this.emit({ phase: this.state.cameraState === 'running' ? 'cameraReady' : 'idle', countdown: null, playerMove: null, machineMove: null, outcome: null, invalidReason: null, matchWinner: null });
   }
 
   retry(): void {
     if (this.state.phase !== 'invalid' && this.state.phase !== 'ready') return;
-    this.generation += 1; this.clearTimers(); this.stable.reset();
+    this.generation += 1; this.clearTimers();
     const token = this.generation; void this.cancelAction('reset', token, false).catch(() => undefined);
     this.emit({ phase: this.state.cameraState === 'running' ? 'cameraReady' : 'idle', countdown: null, playerMove: null, machineMove: null, outcome: null, invalidReason: null, hardwareAuthorized: false, action: this.hardwareAvailable() ? { status: 'idle', detail: null } : this.state.action });
   }
 
   reset(): void {
-    this.generation += 1; this.clearTimers(); this.stable.reset();
+    this.generation += 1; this.clearTimers();
     const token = this.generation; void this.cancelAction('reset', token, false).catch(() => undefined);
     const cameraState = this.state.cameraState;
     const action = this.hardwareAvailable() ? { status: 'idle' as const, detail: null } : this.state.action;
-    this.emit({ ...createInitialState(), cameraState, phase: cameraState === 'running' ? 'cameraReady' : 'idle', action });
+    this.emit({ ...createInitialState(), cameraState, phase: cameraState === 'running' ? 'cameraReady' : 'idle', action, roundMode: this.state.roundMode });
   }
 
   lock(): void {
-    this.generation += 1; this.clearTimers(); this.stable.reset();
+    this.generation += 1; this.clearTimers();
     const token = this.generation; const ownedByRps = this.runtime.snapshot().owner === 'rps';
     this.emit({ hardwareAuthorized: false, phase: ownedByRps ? 'idle' : this.state.cameraState === 'running' ? 'cameraReady' : 'idle', cameraState: ownedByRps ? 'stopping' : this.state.cameraState, countdown: null, playerMove: null, machineMove: null, outcome: null });
     void this.cancelAction('locked', token).then(async () => { if (ownedByRps && this.runtime.snapshot().owner === 'rps') await this.runtime.stop(); }).catch(() => undefined);
   }
 
   async stop(reason: 'stopped' | 'unmounted' = 'stopped'): Promise<void> {
-    this.generation += 1; this.clearTimers(); this.stable.reset();
+    this.generation += 1; this.clearTimers();
     const token = this.generation; const ownedByRps = this.runtime.snapshot().owner === 'rps';
     this.emit({ phase: 'idle', countdown: null, cameraState: 'idle', hardwareAuthorized: false, playerMove: null, machineMove: null, outcome: null });
     await this.cancelAction(reason, token);
@@ -118,6 +143,13 @@ export class RpsGameController {
     if (!this.hardwareAvailable() || !this.state.hardwareAuthorized || this.state.cameraState !== 'running' || (this.state.phase !== 'cameraReady' && this.state.phase !== 'ready')) return false;
     const result = await this.dispatch(move, 'rps-test');
     return result?.status === 'executed';
+  }
+
+  async revokeHardware(): Promise<void> {
+    if (!this.actionController || this.disposed) return;
+    const token = this.generation;
+    this.emit({ hardwareAuthorized: false });
+    await this.cancelAction('stopped', token);
   }
 
   async dispose(): Promise<void> {
@@ -137,14 +169,14 @@ export class RpsGameController {
     if (snapshot.state === 'running' && snapshot.owner === 'rps' && this.startGeneration !== null && this.startGeneration !== this.generation) { void this.runtime.stop().catch(() => undefined); return; }
     if (snapshot.state === 'running' && snapshot.owner !== 'rps') {
       const wasActive = this.state.cameraState === 'running' || ACTIVE_PHASES.has(this.state.phase) || this.state.hardwareAuthorized;
-      if (wasActive) { this.generation += 1; this.clearTimers(); this.stable.reset(); const token = this.generation; this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` }, countdown: null, hardwareAuthorized: false, playerMove: null, machineMove: null, outcome: null, stableFrames: 0 }); void this.cancelAction('stopped', token).catch(() => undefined); }
+      if (wasActive) { this.generation += 1; this.clearTimers(); const token = this.generation; this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` }, countdown: null, hardwareAuthorized: false, playerMove: null, machineMove: null, outcome: null, stableFrames: 0 }); void this.cancelAction('stopped', token).catch(() => undefined); }
       else this.emit({ cameraState: 'idle', phase: 'idle', cameraError: { code: 'VISION_BUSY', message: `视觉输入当前由 ${snapshot.owner ?? '其他功能'} 占用` } });
       return;
     }
     const leavingRunning = snapshot.state !== 'running' && (this.state.cameraState === 'running' || ACTIVE_PHASES.has(this.state.phase) || this.state.hardwareAuthorized);
     const cameraError = snapshot.lastError ? { code: snapshot.lastError.code, message: snapshot.lastError.message } : null;
     if (leavingRunning) {
-      this.generation += 1; this.clearTimers(); this.stable.reset();
+      this.generation += 1; this.clearTimers();
       const token = this.generation;
       this.emit({ phase: 'idle', countdown: null, cameraState: snapshot.state, cameraError, playerMove: null, machineMove: null, outcome: null, hardwareAuthorized: false, stableFrames: 0 });
       void this.cancelAction('stopped', token).catch(() => undefined);
@@ -155,22 +187,68 @@ export class RpsGameController {
   }
 
   private onResult(result: VisionLandmarkResult): void {
+    this.emit({ lastHand: result.hands[0] ?? null });
     if (this.state.phase !== 'capture') return;
+    // 系统出拳瞬间：capture 第一帧有效识别即锁定，避免用户看到机器手势后临时变招
     const classification = classifyResult(result);
-    if (classification.move === null) this.lastInvalidReason = classification.reason;
-    const stable = this.stable.push(classification); this.emit({ stableFrames: this.stable.frames });
-    if (stable) { this.clearTimers(); this.emit({ phase: 'recognized', playerMove: stable.move, invalidReason: null }); this.schedule(() => this.reveal(), this.revealMs); }
+    if (classification.move === null) { this.lastInvalidReason = classification.reason; return; }
+    this.clearTimers();
+    this.emit({ phase: 'recognized', playerMove: classification.move, invalidReason: null, stableFrames: 1 });
+    this.schedule(() => this.reveal(), this.revealMs);
   }
 
-  private finishInvalid(reason: RpsInvalidReason): void { if (this.state.phase !== 'capture') return; this.stable.reset(); this.emit({ phase: 'invalid', invalidReason: this.lastInvalidReason ?? reason, stableFrames: 0 }); this.schedule(() => this.reveal(), this.revealMs); }
+  private finishInvalid(reason: RpsInvalidReason): void { if (this.state.phase !== 'capture') return; this.emit({ phase: 'invalid', invalidReason: this.lastInvalidReason ?? reason, stableFrames: 0 }); this.schedule(() => this.reveal(), this.revealMs); }
   private reveal(): void {
     if (this.state.phase !== 'recognized' && this.state.phase !== 'invalid') return;
-    const player = this.state.playerMove; const machine = player ? machineMove(this.random) : null; const outcome = player && machine ? outcomeFor(player, machine) : null; const nextScore = outcome ? scoreFor(this.state.score, outcome) : this.state.score;
-    this.emit({ phase: 'reveal', machineMove: machine, outcome });
+    const player = this.state.playerMove;
+    const machine = this.state.machineMove;
+    let outcome: RpsOutcome = null;
+    let judgeResult: string = 'invalid';
+    if (player && machine) {
+      if (player === machine) {
+        outcome = 'draw';
+        judgeResult = 'draw';
+      } else if (
+        (player === 'rock' && machine === 'scissors') ||
+        (player === 'scissors' && machine === 'paper') ||
+        (player === 'paper' && machine === 'rock')
+      ) {
+        outcome = 'win';
+        judgeResult = 'human';
+      } else {
+        outcome = 'lose';
+        judgeResult = 'machine';
+      }
+    }
+    const nextScore = outcome ? scoreFor(this.state.score, outcome) : this.state.score;
+    this.emit({ phase: 'reveal', outcome });
     if (machine && outcome && this.hardwareAvailable() && this.state.hardwareAuthorized) void this.dispatch(machine, 'rps-reveal').catch(() => undefined);
     this.schedule(() => this.emit({ phase: 'score', score: nextScore }), this.revealMs);
-    this.schedule(() => this.finishRound(), this.revealMs + this.scoreMs);
+    this.schedule(() => this.finishRound(player, machine, judgeResult), this.revealMs + this.scoreMs);
   }
+
+  private async finishRound(player: RpsMove | null, machine: RpsMove | null, judgeResult: string): Promise<void> {
+    if (this.state.phase !== 'score') return;
+    const human = player ?? this.state.playerMove;
+    const machineGesture = machine ?? this.state.machineMove ?? 'rock';
+    const updatedProfile = human ? updatePlayerProfile(this.state.profile, human, machineGesture, judgeResult, this.state.chain) : this.state.profile;
+    this.generation += 1; const token = this.generation;
+    const wasDispatching = this.state.action.status === 'dispatching';
+    if (this.matchCompleteFor(this.state.roundMode)) {
+      this.emit({ phase: 'matchOver', countdown: null, hardwareAuthorized: false, profile: updatedProfile, chain: null, matchWinner: this.state.score.player > this.state.score.machine ? 'player' : 'machine' });
+    } else {
+      this.emit({ phase: 'ready', countdown: null, hardwareAuthorized: false, profile: updatedProfile, chain: null, matchWinner: null });
+      this.schedule(() => { if (this.state.phase === 'ready') this.beginRound(); }, this.autoAdvanceMs);
+    }
+    await this.cancelAction('stopped', token, wasDispatching);
+  }
+
+  private matchCompleteFor(mode: RpsRoundMode): boolean {
+    if (mode === 'unlimited') return false;
+    const target = mode === 'best_of_3' ? 2 : 3;
+    return this.state.score.player >= target || this.state.score.machine >= target;
+  }
+  private matchComplete(): boolean { return this.matchCompleteFor(this.state.roundMode); }
 
   private async dispatch(move: RpsMove, reason: 'rps-reveal' | 'rps-test'): Promise<{ status: 'executed' | 'cancelled' | 'error'; message?: string } | null> {
     if (!this.actionController || this.dispatchInFlight) return null;
@@ -184,13 +262,6 @@ export class RpsGameController {
       if (this.isCurrent(token)) this.emit({ action: { status: 'error', detail: error instanceof Error ? error.message : '动作请求失败' } });
       return null;
     } finally { this.dispatchInFlight = false; }
-  }
-
-  private async finishRound(): Promise<void> {
-    if (this.state.phase !== 'score') return;
-    this.generation += 1; const token = this.generation;
-    this.emit({ phase: 'ready', countdown: null, hardwareAuthorized: false });
-    await this.cancelAction('stopped', token, this.state.action.status === 'dispatching');
   }
 
   private async cancelAction(reason: 'locked' | 'stopped' | 'unmounted' | 'reset', token: number, updateStatus = true): Promise<void> {

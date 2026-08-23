@@ -33,12 +33,17 @@ const O6_RPS_POSES: Record<RpsActionRequest['move'], readonly number[]> = {
   paper: [250, 250, 250, 250, 250, 250],
   scissors: [92, 87, 255, 255, 0, 0],
 };
+const O6_RPS_SCISSORS_STAGES: readonly [readonly number[], number][] = [
+  [[102, 167, 0, 0, 0, 0], 0],
+  [[102, 167, 255, 255, 0, 0], 360],
+];
 const normalized = (values: readonly number[]) => values.map(value => Math.max(0, Math.min(1, value / 255)));
 
 /** RPS owns one source only; authorization is deliberately per game. */
 export function createRpsActionController(runtime: ConsolePorts, capabilities: DeviceCapabilities, simulator: boolean): RpsActionController {
   let authorized = false;
   let sequence = 0;
+  let scissorsToken = 0;
   const canAct = capabilities.model === 'O6' && capabilities.supportedOperations.includes('setPosition');
   return {
     async authorize() {
@@ -49,6 +54,34 @@ export function createRpsActionController(runtime: ConsolePorts, capabilities: D
       if (!authorized || !canAct) return { status: 'error', message: '本局未授权或当前型号不支持猜拳动作' };
       const pose = O6_RPS_POSES[request.move];
       if (!pose || pose.length !== 6) return { status: 'error', message: 'O6 猜拳动作配置无效' };
+
+      if (request.move === 'scissors') {
+        const token = ++scissorsToken;
+        try {
+          await runtime.device.setJointTarget({
+            schemaVersion: 1,
+            commandId: `rps-${request.round}-${request.move}-thumb-${token}`,
+            source: 'rockPaperScissors',
+            positions: normalized(O6_RPS_SCISSORS_STAGES[0][0]),
+            durationMs: null,
+            finalCommand: false,
+          });
+          await new Promise(resolve => window.setTimeout(resolve, O6_RPS_SCISSORS_STAGES[1][1]));
+          if (token !== scissorsToken) return { status: 'cancelled' };
+          await runtime.device.setJointTarget({
+            schemaVersion: 1,
+            commandId: `rps-${request.round}-${request.move}-extend-${token}`,
+            source: 'rockPaperScissors',
+            positions: normalized(O6_RPS_SCISSORS_STAGES[1][0]),
+            durationMs: null,
+            finalCommand: true,
+          });
+          return { status: 'executed' };
+        } catch (error) {
+          return { status: 'error', message: error instanceof Error ? error.message : '猜拳动作下发失败' };
+        }
+      }
+
       const command: JointTargetCommand = {
         schemaVersion: 1,
         commandId: `rps-${request.round}-${request.move}-${++sequence}`,
@@ -66,10 +99,11 @@ export function createRpsActionController(runtime: ConsolePorts, capabilities: D
     },
     async cancel(reason) {
       authorized = false;
+      scissorsToken += 1;
       if (!simulator) await tauriRuntimeExtras.motionCancelSource('rockPaperScissors', reason);
     },
     snapshot: () => ({ status: authorized ? 'authorized' : 'idle', detail: authorized ? '本局已授权' : undefined }),
   };
 }
 
-export { O6_RPS_POSES };
+export { O6_RPS_POSES, O6_RPS_SCISSORS_STAGES };
