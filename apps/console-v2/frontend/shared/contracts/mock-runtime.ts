@@ -15,7 +15,7 @@ export const mockRuntime: ConsolePorts = {
     async stopAll() { locked = true; logs.unshift({ schemaVersion: 1, id: String(Date.now()), monotonicTimeMs: Date.now(), level: 'warn', event: 'motion.stopped', message: '全部动作已停止，控制已锁定', fields: {} }); }, async unlock() { locked = false; logs.unshift({ schemaVersion: 1, id: String(Date.now()), monotonicTimeMs: Date.now(), level: 'info', event: 'motion.unlocked', message: '控制已恢复', fields: {} }); }
   },
   motion: { async getOperation() { return { schemaVersion: 1, operationId: 'motion', kind: 'motion', state: locked ? 'locked' : 'idle', progress: 0, detail: null }; }, async runAction() {}, async pause() {} },
-  telemetry: { async read() { return snapshot(); }, subscribe(listener) { const id = window.setInterval(() => listener(snapshot()), 1800); return () => window.clearInterval(id); } },
+  telemetry: { async read() { return snapshot(); }, subscribe(listener) { const id = window.setInterval(() => listener(snapshot()), 400); return () => window.clearInterval(id); } },
   actions: { async list() { return []; }, async delete() {} },
   grasp: { async listPresets() { return [{ id: 'soft', name: '柔软物体', description: '低力度包络抓取' }, { id: 'cube', name: '方形物体', description: '稳定的平行夹持' }, { id: 'precision', name: '精细拾取', description: '指尖精确定位' }]; }, async runPreset() {} },
   vision: { async propose() { return [{ schemaVersion: 1, id: 'pose-1', label: '拿起蓝色杯子', confidence: .94, positions: [.56, .45, .66, .5, .58, .5] }, { schemaVersion: 1, id: 'pose-2', label: '向前伸手', confidence: .81, positions: [.51, .48, .58, .52, .5, .5] }]; }, async sync() {} },

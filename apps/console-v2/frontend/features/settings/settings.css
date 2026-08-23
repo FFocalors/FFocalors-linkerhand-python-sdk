@@ -1,46 +1,46 @@
 .settings-feature { max-width: 1080px; }
-.settings-heading-status { display: flex; align-items: center; gap: 12px; }
-.settings-notice, .settings-message { border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line)); border-radius: 9px; padding: 10px 13px; color: var(--amber); background: var(--amber-soft); font-size: 11px; }
+.settings-heading-status { display: flex; align-items: center; gap: 10px; }
+.settings-notice, .settings-message { border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line)); border-radius: 7px; padding: 7px 9px; color: var(--amber); background: var(--amber-soft); font-size: 10px; }
 .settings-message { border-color: color-mix(in srgb, var(--blue) 35%, var(--line)); color: var(--blue); background: var(--blue-soft); }
 .settings-message.is-error { border-color: color-mix(in srgb, var(--danger) 55%, var(--line)); color: var(--danger); background: var(--danger-soft); }
-.settings-grid { display: grid; grid-template-columns: 1.12fr .88fr; gap: 18px; }
+.settings-grid { display: grid; grid-template-columns: 1.12fr .88fr; gap: 10px; }
 .settings-grid .card { min-width: 0; }
-.settings-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; margin-top: 20px; }
-.settings-fields > label, .settings-two-fields label, .advanced-content > label, .camera-controls > label { display: flex; flex-direction: column; gap: 6px; color: var(--text); font-size: 11px; font-weight: 700; }
-.settings-fields select, .settings-fields input, .camera-controls select, .advanced-content input[type=number] { width: 100%; min-height: 35px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-2); color: var(--text); padding: 7px 9px; font-size: 11px; }
+.settings-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 10px; }
+.settings-fields > label, .settings-two-fields label, .advanced-content > label, .camera-controls > label { display: flex; flex-direction: column; gap: 5px; color: var(--text); font-size: 10px; font-weight: 700; }
+.settings-fields select, .settings-fields input, .camera-controls select, .advanced-content input[type=number] { width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--text); padding: 5px 7px; font-size: 10px; }
 .settings-fields fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
-.settings-fields legend { color: var(--text); font-size: 11px; font-weight: 700; margin-bottom: 7px; }
-.settings-options { display: flex; gap: 9px; min-height: 35px; align-items: center; }
-.settings-options label, .checkbox-row { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 11px; font-weight: 600; }
+.settings-fields legend { color: var(--text); font-size: 10px; font-weight: 700; margin-bottom: 6px; }
+.settings-options { display: flex; gap: 7px; min-height: 32px; align-items: center; }
+.settings-options label, .checkbox-row { display: flex; align-items: center; gap: 5px; color: var(--text); font-size: 10px; font-weight: 600; }
 .settings-options input, .checkbox-row input { accent-color: var(--blue); }
-.transport-switch { display: flex; min-height: 35px; }
-.transport-switch button { flex: 1; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 11px; font-weight: 700; }
-.transport-switch button:first-child { border-radius: 7px 0 0 7px; }
-.transport-switch button:last-child { border-radius: 0 7px 7px 0; border-left: 0; }
+.transport-switch { display: flex; min-height: 32px; }
+.transport-switch button { flex: 1; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 10px; font-weight: 700; }
+.transport-switch button:first-child { border-radius: 6px 0 0 6px; }
+.transport-switch button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
 .transport-switch button.selected { color: var(--blue); background: var(--blue-soft); border-color: color-mix(in srgb, var(--blue) 45%, var(--line)); }
-.settings-two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; grid-column: span 2; }
-.settings-hint { grid-column: span 2; margin: -1px 0 0; line-height: 1.5; }
-.field-error { color: var(--danger); font-size: 10px; font-weight: 500; }
-.camera-controls { display: flex; align-items: flex-end; gap: 12px; margin-top: 20px; }
+.settings-two-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; grid-column: span 2; }
+.settings-hint { grid-column: span 2; margin: -1px 0 0; line-height: 1.45; }
+.field-error { color: var(--danger); font-size: 9px; font-weight: 500; }
+.camera-controls { display: flex; align-items: flex-end; gap: 10px; margin-top: 10px; }
 .camera-controls label { flex: 1; }
 .camera-controls select { min-width: 0; }
-.camera-empty { border: 1px dashed var(--line); border-radius: 7px; margin: 14px 0 0; padding: 11px; line-height: 1.5; }
-.camera-error { border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--line)); border-radius: 7px; margin: 14px 0 0; padding: 11px; color: var(--danger); background: var(--danger-soft); line-height: 1.5; font-size: 11px; }
-.theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 20px; }
-.theme-options label { display: grid; place-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 7px; padding: 11px 5px; color: var(--muted); font-size: 11px; cursor: pointer; }
+.camera-empty { border: 1px dashed var(--line); border-radius: 6px; margin: 10px 0 0; padding: 9px; line-height: 1.45; }
+.camera-error { border: 1px solid color-mix(in srgb, var(--danger) 55%, var(--line)); border-radius: 6px; margin: 10px 0 0; padding: 9px; color: var(--danger); background: var(--danger-soft); line-height: 1.45; font-size: 10px; }
+.theme-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 10px; }
+.theme-options label { display: grid; place-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 4px; color: var(--muted); font-size: 10px; cursor: pointer; }
 .theme-options label.selected { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 45%, var(--line)); background: var(--blue-soft); }
 .theme-options input { position: absolute; opacity: 0; }
-.check-actions { display: flex; gap: 9px; margin-top: 20px; }
-.settings-grid .muted { line-height: 1.5; }
+.check-actions { display: flex; gap: 8px; margin-top: 10px; }
+.settings-grid .muted { line-height: 1.45; }
 .settings-advanced { padding: 0; overflow: hidden; }
-.advanced-toggle { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; background: transparent; color: var(--text); padding: 17px 21px; text-align: left; }
-.advanced-toggle span:first-child { display: flex; flex-direction: column; gap: 4px; }
-.advanced-toggle strong { font-size: 13px; }
-.advanced-toggle small { color: var(--muted); font-size: 10px; }
-.advanced-toggle > span:last-child { color: var(--blue); font-size: 11px; font-weight: 700; }
-.advanced-content { border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; padding: 18px 21px 21px; }
+.advanced-toggle { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; background: transparent; color: var(--text); padding: 12px 14px; text-align: left; }
+.advanced-toggle span:first-child { display: flex; flex-direction: column; gap: 3px; }
+.advanced-toggle strong { font-size: 12px; }
+.advanced-toggle small { color: var(--muted); font-size: 9px; }
+.advanced-toggle > span:last-child { color: var(--blue); font-size: 10px; font-weight: 700; }
+.advanced-content { border-top: 1px solid var(--line); display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; padding: 12px 14px; }
 .advanced-content .checkbox-row { align-self: center; }
 .advanced-content .checkbox-row .muted { margin-left: 4px; font-weight: 400; }
-.settings-footer-note { margin: -5px 0 0; }
+.settings-footer-note { margin: -4px 0 0; }
 @media (max-width: 950px) { .settings-grid { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .settings-feature *, .settings-feature *::before, .settings-feature *::after { animation: none !important; transition: none !important; } }

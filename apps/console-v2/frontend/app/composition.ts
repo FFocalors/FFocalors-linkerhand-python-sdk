@@ -53,7 +53,13 @@ export function createDeviceController(runtime: ConsolePorts, simulator: boolean
     setJointTarget: (command: JointTargetCommand) => runtime.device.setJointTarget(command),
     setSpeed: command => extras ? extras.setSpeed(command) : Promise.resolve(),
     setTorque: command => extras ? extras.setTorque(command) : Promise.resolve(),
-    startQuickAction: async (id) => { if (actionExtras) await actionExtras.play(id, { speed: 1, loopCount: 0 }); else await runtime.motion.runAction(id); operations.emit({ schemaVersion: 1, operationId: id, kind: 'quick-action', state: 'running', progress: 0, detail: '动作引擎执行中' }); },
+    startQuickAction: async (id) => {
+      if (actionExtras) { await actionExtras.play(id, { speed: 1, loopCount: 0 }); return; }
+      await runtime.motion.runAction(id);
+      operations.emit({ schemaVersion: 1, operationId: id, kind: 'quick-action', state: 'running', progress: 0, detail: '动作引擎执行中' });
+      // Simulator completes a quick action shortly after starting so the UI resets.
+      window.setTimeout(() => operations.emit({ schemaVersion: 1, operationId: id, kind: 'quick-action', state: 'completed', progress: 1, detail: '动作执行完成' }), 900);
+    },
     stopQuickAction: async () => { if (actionExtras) await actionExtras.stop(); else await runtime.motion.pause(); operations.emit({ schemaVersion: 1, operationId: 'quick-action', kind: 'quick-action', state: 'cancelled', progress: 0, detail: '已停止' }); },
     startLoop: async (id) => { if (actionExtras) await actionExtras.play(id, { speed: 1, loopCount: null }); else await runtime.motion.runAction(id); operations.emit({ schemaVersion: 1, operationId: id, kind: 'loop', state: 'running', progress: 0, detail: '循环由 actor 执行，直到明确停止' }); },
     stopLoop: async () => { if (actionExtras) await actionExtras.stop(); else await runtime.motion.pause(); operations.emit({ schemaVersion: 1, operationId: 'loop', kind: 'loop', state: 'cancelled', progress: 0, detail: '已停止' }); },

@@ -1,0 +1,81 @@
+# Console V2 集成交接
+
+这是一份给下一位 Agent 的快速入口。详细开发规则见 [`DEVELOPMENT.md`](DEVELOPMENT.md)，旧版 PyQt 功能等价迁移基线见 [`LEGACY_FEATURES.md`](LEGACY_FEATURES.md)，模块边界见 [`MODULES.md`](MODULES.md)，历史模块交接见 [`handoffs/README.md`](handoffs/README.md)。
+
+## 当前集成基线
+
+- 工作树：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`
+- 分支：`codex/v2-rewrite`
+- 当前 HEAD：`244387d9e5eb74f5308e5a2a4d61798339d43721`
+- 版本：`2.0.0-rc.1`
+- Console 根：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2\apps\console-v2`
+- 最近变更：补齐 Windows Common Controls v6 manifest 检查/嵌入；未改公共 DTO 或 sidecar wire contract。
+
+旧版 worktree `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 有 dirty GUI 修改。它不是 V2 的工作目录，不能清理或重置。
+
+## 一分钟接手
+
+```powershell
+Set-Location 'E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2\apps\console-v2'
+git status --short --branch
+git log -1 --oneline --decorate
+pnpm install --frozen-lockfile
+pnpm check:boundaries
+pnpm check:contracts
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+如果依赖未安装，先完成 `pnpm install --frozen-lockfile`。如果目标是 sidecar/Windows 包，再按 [`DEVELOPMENT.md`](DEVELOPMENT.md) 安装 Python 依赖并执行 fake smoke；不要因没有 O6/PCAN 就伪造硬件通过记录。
+
+## 当前状态
+
+已集成并可继续开发：
+
+- Rust contracts、runtime、simulator、motion/telemetry、actions/grasp、sidecar-client、app facade。
+- Tauri actor/channel assembly、browser simulator 和 release sidecar path selection。
+- Device control、actions、smart grasp、diagnostics、settings、vision、RPS UI features。
+- Python strict NDJSON bridge，fake connect/telemetry/close smoke，离线 Vision assets 和 classic Worker 检查。
+- Windows x64 RC 的 Tauri/NSIS、PyInstaller sidecar、portable 打包脚本和 bundle inventory。
+
+当前不要声称已经完成：
+
+- O6 Windows PCAN 真实连接/读写/stop-unlock/重连验收。
+- 干净 Windows 机器上的离线 NSIS 安装验收。
+- 当前 HEAD 的完整浏览器 camera/Worker/Tauri 交互复验（旧 handoff 的结果需按当前树重跑）。
+- V2.0 正式发布。
+
+## 下一步优先级
+
+1. 先用本文件“一分钟接手”命令建立当前 HEAD 的可重复基线，保存失败命令和环境信息。
+2. 若继续做软件开发，优先补齐集成测试/浏览器 QA 中尚未在当前 HEAD 复验的路径，保持 `MODULES.md` 的边界和 frozen contract。
+3. 若进入发布准备，重跑真实 sidecar smoke、`pnpm build:windows`、`pnpm build:portable`，检查产物 inventory，并在 clean Windows 机器安装验证。
+4. 准备硬件验收时，只使用 O6 + PCAN 的专用测试窗口；记录设备型号、手型、PCAN channel、驱动、SDK 根和每个操作结果。正式版 gate 仍是 O6 PCAN 实机验收。
+
+## 风险和限制
+
+- `stop` 是软件队列屏障/写锁，不是物理急停。
+- fake/simulator/NDJSON smoke 不覆盖 PCAN 驱动、真实 SDK、供电、线缆和设备安全风险。
+- `pnpm build` 的离线资源和 Worker 静态检查不等于真实摄像头权限、WASM、Tauri webview 初始化成功。
+- `build:windows` 依赖 Windows x64、Rust MSVC target、Tauri/WebView2 环境和 sidecar 构建依赖；portable 脚本依赖 real release exe、sidecar binary 和 bundle inventory。
+- 生成文件和构建输出（`node_modules`、`target`、`dist`、PyInstaller 输出、`src-tauri/binaries`、`artifacts`）不应作为业务代码提交。
+
+## 开工前核验
+
+- [ ] 当前路径是 `linkerhand-python-sdk-v2\apps\console-v2`，不是旧版 worktree。
+- [ ] `git status --short --branch` 的已有修改已被识别；不覆盖其他 Agent 的改动。
+- [ ] 当前分支和 HEAD 与本文件一致；若已变化，先更新本交接基线。
+- [ ] 变更范围对应一个模块/Port/assembly seam，并先阅读相关 handoff、ADR、contract 文档。
+- [ ] 若改公共 DTO，已准备 Rust source → generator → TypeScript projection → Python/sidecar/UI consumers 的同步计划。
+- [ ] 若涉及硬件或打包，已明确哪些证据是 fake/static、哪些需要真实设备或 clean machine。
+
+## 交付清单
+
+- [ ] 代码/文档变更范围、公共契约变化和分支/基线已写明。
+- [ ] 运行了与变更匹配的 Rust、Python、frontend、boundary、contract、asset、build 检查，并记录真实输出。
+- [ ] 失败项、未运行项和环境原因没有被写成通过。
+- [ ] 真实硬件证据包含 O6 PCAN 的设备和连接信息；没有硬件时明确写“未验证”。
+- [ ] 更新 `docs/handoffs/<scope>.md`，并保留可复制的下一入口。
+- [ ] 提交前确认没有把旧版 dirty worktree、生成产物或无关公共契约改动带入。
+- [ ] 除非用户明确要求，交接完成后不自动创建 commit。

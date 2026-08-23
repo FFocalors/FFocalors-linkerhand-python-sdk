@@ -60,7 +60,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
   const status = state?.cameraError ? `摄像头：${state.cameraError.message}` : !runtime ? '等待应用注入共享 VisionRuntime' : state?.phase === 'countdown' ? `倒计时 ${state.countdown ?? ''}` : state?.phase === 'capture' ? '请保持手势稳定' : state?.phase === 'recognized' ? '已识别，准备揭晓' : state?.phase === 'invalid' ? INVALID_LABELS[state.invalidReason ?? 'unknown'] : state?.phase === 'reveal' ? '揭晓结果' : state?.phase === 'score' ? '正在记分' : state?.phase === 'ready' ? '可以开始下一局' : cameraRunning ? '摄像头已就绪' : '请先开启摄像头';
 
   return <div className="stack rps-feature">
-    <div className="page-heading"><div><p className="eyebrow">互动实验 / 猜拳互动</p><h1>猜拳互动</h1><p>摄像头识别你的手势，机械手只在 O6 且获得本局授权后响应。</p></div><Badge tone={hardwareEligible ? 'green' : 'amber'}>{hardwareEligible ? 'O6 动作需授权' : '预览模式'}</Badge></div>
+    <div className="page-heading"><div><p className="eyebrow">互动实验 / 猜拳互动</p><h1>猜拳互动</h1><p className="muted">摄像头识别你的手势，机械手只在 O6 且获得本局授权后响应。</p></div><Badge tone={hardwareEligible ? 'green' : 'amber'}>{hardwareEligible ? 'O6 动作需授权' : '预览模式'}</Badge></div>
     <Card>
       <div className="rps-toolbar"><div><strong>一局流程</strong><span className="muted">开启摄像头 → 倒计时 → 稳定识别 → 揭晓与记分</span></div><span className={`rps-state rps-state-${state?.phase ?? 'idle'}`} aria-live="polite">{status}</span></div>
       <div className="rps-board">

@@ -7,6 +7,16 @@
 
 [中文](README_CN.md)  |  [English](README.md)
 
+## Console V2 开发入口
+
+V2 集成工作树、开发命令、模块边界和下一 Agent 接手信息见：
+
+- [Console V2 项目总览（开发/交接/模块边界整合）](apps/console-v2/docs/PROJECT_SUMMARY.md)
+- [Console V2 开发进程](apps/console-v2/docs/DEVELOPMENT.md)
+- [Console V2 集成交接](apps/console-v2/docs/HANDOFF.md)
+- [旧版 PyQt 功能基线（V2 迁移参考）](apps/console-v2/docs/LEGACY_FEATURES.md)
+- [模块交接记录与模板](apps/console-v2/docs/handoffs/README.md)
+
 ## 注意
 - 请确保灵巧手未开启其他控制，如linker_hand_sdk_ros、动捕手套控制和其他控制灵巧手的topic。以免冲突。
 - 请将固定灵巧手，以免灵巧手在运动时跌落。
