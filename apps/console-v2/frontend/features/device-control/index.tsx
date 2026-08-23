@@ -403,12 +403,18 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     rig.group.rotation.y = -0.35;
     rig.group.scale.setScalar(1.35);
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    renderer.setPixelRatio(window.devicePixelRatio || 1);
-    renderer.setClearColor(0x000000, 0);
+    let renderer: THREE.WebGLRenderer | null = null;
+    try {
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      renderer.setPixelRatio(window.devicePixelRatio || 1);
+      renderer.setClearColor(0x000000, 0);
+    } catch (error) {
+      // WebGL 不可用（如测试环境/旧浏览器）：静默降级，不阻塞页面
+      renderer = null;
+    }
 
     const resize = () => {
-      if (disposed || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
+      if (disposed || !renderer || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
       renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
       camera.aspect = canvas.clientWidth / canvas.clientHeight;
       camera.updateProjectionMatrix();
@@ -418,7 +424,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     observer.observe(canvas);
 
     const animate = () => {
-      if (disposed) return;
+      if (disposed || !renderer) return;
       updateTwinHand(rig, valuesRef.current);
       rig.group.rotation.y += 0.004;
       renderer.render(scene, camera);
@@ -430,7 +436,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
       disposed = true;
       cancelAnimationFrame(raf);
       observer.disconnect();
-      renderer.dispose();
+      renderer?.dispose();
       scene.traverse(obj => {
         if (obj instanceof THREE.Mesh) {
           obj.geometry.dispose();
