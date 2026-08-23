@@ -3,32 +3,130 @@ import type { Landmark, HandLandmark } from '../../shared/vision-runtime';
 export type Gesture = 'open' | 'fist' | 'unknown';
 export type CalibrationPhase = 'idle' | 'open' | 'fist' | 'complete';
 export type MapperSettings = { deadZone: number; emaAlpha: number; maxDeltaPerFrame: number };
-export type CalibrationSnapshot = { phase: CalibrationPhase; openSamples: number; fistSamples: number; complete: boolean; openReference: number[] | null; fistReference: number[] | null };
+export type CalibrationSnapshot = { phase: CalibrationPhase; openSamples: number; fistSamples: number; complete: boolean; openReference: number[] | null; fistReference: number[] | null; openPose: number[] | null; fistPose: number[] | null };
 
-export const DEFAULT_MAPPER_SETTINGS: MapperSettings = { deadZone: 0.025, emaAlpha: 0.35, maxDeltaPerFrame: 0.12 };
-export const MIN_STABLE_GESTURE_CONFIDENCE = 0.7;
-const FINGER_GROUPS = [[1, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12], [13, 14, 15, 16], [17, 18, 19, 20]] as const;
+export const DEFAULT_MAPPER_SETTINGS: MapperSettings = { deadZone: 0.02, emaAlpha: 0.35, maxDeltaPerFrame: 0.12 };
+export const MIN_STABLE_GESTURE_CONFIDENCE = 0.5;
+
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-const distance = (a: Landmark, b: Landmark): number => Math.hypot(a.x - b.x, a.y - b.y, (a.z - b.z) * 0.25);
 
-function fingerScore(landmarks: Landmark[], group: readonly number[]): number {
+function dist3(a: Landmark, b: Landmark): number {
+  return Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+function angleAt(a: Landmark, b: Landmark, c: Landmark): number {
+  const ba = { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+  const bc = { x: c.x - b.x, y: c.y - b.y, z: c.z - b.z };
+  const dot = ba.x * bc.x + ba.y * bc.y + ba.z * bc.z;
+  const normBA = Math.hypot(ba.x, ba.y, ba.z);
+  const normBC = Math.hypot(bc.x, bc.y, bc.z);
+  if (normBA < 1e-8 || normBC < 1e-8) return Math.PI;
+  return Math.acos(Math.max(-1, Math.min(1, dot / (normBA * normBC))));
+}
+
+function jointBend(straight: number, bent: number, angle: number): number {
+  return clamp01((straight - angle) / (straight - bent));
+}
+
+function mean(values: Landmark[]): Landmark {
+  const n = values.length;
+  return {
+    x: values.reduce((s, v) => s + v.x, 0) / n,
+    y: values.reduce((s, v) => s + v.y, 0) / n,
+    z: values.reduce((s, v) => s + v.z, 0) / n,
+  };
+}
+
+function fingerCurl(
+  wrist: Landmark,
+  mcp: Landmark,
+  pip: Landmark,
+  dip: Landmark,
+  tip: Landmark,
+  palmCenter: Landmark,
+): number {
+  const a1 = angleAt(wrist, mcp, pip);
+  const a2 = angleAt(mcp, pip, dip);
+  const a3 = angleAt(pip, dip, tip);
+  const proximal = 0.45 * jointBend(2.65, 1.05, a1) + 0.55 * jointBend(2.85, 1.0, a2);
+  const distal = 0.55 * jointBend(2.85, 1.0, a2) + 0.45 * jointBend(2.85, 1.0, a3);
+  const tipDist = dist3(tip, palmCenter);
+  const mcpDist = dist3(mcp, palmCenter);
+  const chainLen = dist3(mcp, pip) + dist3(pip, dip) + dist3(dip, tip);
+  const tipAux = chainLen > 1e-6 ? 1 - clamp01((tipDist - mcpDist) / (chainLen * 0.75)) : 0;
+  return clamp01(0.45 * proximal + 0.35 * distal + 0.2 * tipAux);
+}
+
+function thumbFeatures(
+  wrist: Landmark,
+  cmc: Landmark,
+  mcp: Landmark,
+  ip: Landmark,
+  tip: Landmark,
+  palmCenter: Landmark,
+  palmScale: number,
+): { bend: number; swing: number } {
+  const angleBend = clamp01(
+    0.55 * jointBend(2.55, 1.05, angleAt(cmc, mcp, ip)) +
+    0.45 * jointBend(2.85, 1.0, angleAt(mcp, ip, tip)),
+  );
+
+  const tipPalmDist = dist3(tip, palmCenter) / palmScale;
+  const palmAux = clamp01((1.15 - tipPalmDist) / (1.15 - 0.35));
+  const tipBaseDist = Math.min(
+    dist3(tip, mcp),
+    dist3(tip, { x: (palmCenter.x + wrist.x) / 2, y: (palmCenter.y + wrist.y) / 2, z: (palmCenter.z + wrist.z) / 2 }),
+  ) / palmScale;
+  const baseAux = clamp01((1.05 - tipBaseDist) / (1.05 - 0.30));
+
+  const chainLen = dist3(cmc, mcp) + dist3(mcp, ip) + dist3(ip, tip);
+  const tipDist = dist3(tip, palmCenter);
+  const mcpDist = dist3(mcp, palmCenter);
+  const tipAux = chainLen > 1e-6 ? 1 - clamp01((tipDist - mcpDist) / (chainLen * 0.75)) : 0;
+  const opposition = Math.max(tipAux, palmAux, baseAux);
+
+  const bendLinear = clamp01(0.5 * angleBend + 0.34 * opposition + 0.16 * Math.max(angleBend, opposition));
+  const bend = clamp01(Math.pow(bendLinear, 0.62));
+
+  const swingRaw = dist3(tip, { x: palmCenter.x, y: palmCenter.y, z: palmCenter.z }) / palmScale;
+  const swing = clamp01((swingRaw - 0.25) / 0.85);
+
+  return { bend, swing };
+}
+
+export function extractContinuousPose(landmarks: Landmark[]): number[] | null {
+  if (landmarks.length !== 21) return null;
+
   const wrist = landmarks[0];
-  const pip = landmarks[group[1]];
-  const tip = landmarks[group[3]];
-  if (!wrist || !pip || !tip) return 0;
-  const extension = distance(tip, wrist) - distance(pip, wrist);
-  return clamp01((extension + 0.035) / 0.19);
+  const palmCenter = mean([wrist, landmarks[5], landmarks[9], landmarks[13], landmarks[17]]);
+  const palmScale = Math.max(dist3(landmarks[5], landmarks[17]), dist3(wrist, landmarks[9]), 1e-6);
+
+  const index = fingerCurl(wrist, landmarks[5], landmarks[6], landmarks[7], landmarks[8], palmCenter);
+  const middle = fingerCurl(wrist, landmarks[9], landmarks[10], landmarks[11], landmarks[12], palmCenter);
+  const ring = fingerCurl(wrist, landmarks[13], landmarks[14], landmarks[15], landmarks[16], palmCenter);
+  const little = fingerCurl(wrist, landmarks[17], landmarks[18], landmarks[19], landmarks[20], palmCenter);
+
+  const thumb = thumbFeatures(wrist, landmarks[1], landmarks[2], landmarks[3], landmarks[4], palmCenter, palmScale);
+
+  return [
+    clamp01(1 - thumb.bend),
+    clamp01(thumb.swing),
+    clamp01(1 - index),
+    clamp01(1 - middle),
+    clamp01(1 - ring),
+    clamp01(1 - little),
+  ];
 }
 
 export function landmarkFeatures(landmarks: Landmark[]): number[] {
   if (landmarks.length !== 21) return [0, 0, 0, 0, 0, 0];
-  const fingers = FINGER_GROUPS.map(group => fingerScore(landmarks, group));
-  return [...fingers, fingers.reduce((sum, value) => sum + value, 0) / fingers.length];
+  const raw = extractContinuousPose(landmarks);
+  return raw ?? [0, 0, 0, 0, 0, 0];
 }
 
 export function classifyGesture(hand: HandLandmark): { gesture: Gesture; confidence: number; openness: number } {
   const features = landmarkFeatures(hand.landmarks);
-  const openness = features.slice(0, 5).reduce((sum, value) => sum + value, 0) / 5;
+  const openness = features.slice(2).reduce((sum, value) => sum + value, 0) / 4;
   const margin = Math.abs(openness - 0.5) * 2;
   const confidence = clamp01(hand.confidence * (0.55 + margin * 0.45));
   if (openness >= 0.65) return { gesture: 'open', confidence, openness };
@@ -63,28 +161,48 @@ export class SessionCalibration {
   private openReference: number[] | null = null;
   private fistReference: number[] | null = null;
   private readonly requiredSamples: number;
+  private lastAcceptTime = 0;
+  private readonly minSampleIntervalMs = 500;
 
   constructor(requiredSamples = 3) { this.requiredSamples = Math.max(1, requiredSamples); }
-  begin(): void { this.phase = 'open'; this.open = []; this.fist = []; this.openReference = null; this.fistReference = null; }
-  accept(gesture: Gesture, landmarks: Landmark[]): void {
+  begin(): void { this.phase = 'open'; this.open = []; this.fist = []; this.openReference = null; this.fistReference = null; this.lastAcceptTime = 0; }
+  accept(landmarks: Landmark[]): void {
     if (this.phase !== 'open' && this.phase !== 'fist') return;
-    if (gesture !== this.phase) return;
-    const sample = landmarkFeatures(landmarks);
-    if (this.phase === 'open') {
-      this.open.push(sample);
+    const now = performance.now();
+    if (now - this.lastAcceptTime < this.minSampleIntervalMs) return;
+    this.lastAcceptTime = now;
+    const features = landmarkFeatures(landmarks);
+    // features 已按 O6 语义：curl 相关维度 0=弯曲, 1=伸直；因此 openness 高=伸直, 低=弯曲
+    const openness = features.slice(2).reduce((sum, value) => sum + value, 0) / 4;
+    if (this.phase === 'open' && openness >= 0.55) {
+      this.open.push(features);
       if (this.open.length >= this.requiredSamples) { this.openReference = average(this.open); this.phase = 'fist'; }
-    } else {
-      this.fist.push(sample);
+    } else if (this.phase === 'fist' && openness <= 0.45) {
+      this.fist.push(features);
       if (this.fist.length >= this.requiredSamples) { this.fistReference = average(this.fist); this.phase = 'complete'; }
     }
   }
-  snapshot(): CalibrationSnapshot { return { phase: this.phase, openSamples: this.open.length, fistSamples: this.fist.length, complete: this.phase === 'complete', openReference: this.openReference ? [...this.openReference] : null, fistReference: this.fistReference ? [...this.fistReference] : null }; }
+  snapshot(): CalibrationSnapshot {
+    const openPose = this.openReference ? this.openReference.map(v => clamp01(v)) : null;
+    const fistPose = this.fistReference ? this.fistReference.map(v => clamp01(v)) : null;
+    return {
+      phase: this.phase,
+      openSamples: this.open.length,
+      fistSamples: this.fist.length,
+      complete: this.phase === 'complete',
+      openReference: this.openReference ? [...this.openReference] : null,
+      fistReference: this.fistReference ? [...this.fistReference] : null,
+      openPose,
+      fistPose,
+    };
+  }
 }
 
 function average(samples: number[][]): number[] { return samples[0].map((_, index) => samples.reduce((sum, sample) => sum + sample[index], 0) / samples.length); }
 
 export function mapLandmarksToO6(landmarks: Landmark[], calibration?: CalibrationSnapshot): number[] {
-  const raw = landmarkFeatures(landmarks);
+  const raw = extractContinuousPose(landmarks);
+  if (!raw) return [0, 0, 0, 0, 0, 0];
   if (!calibration?.complete || !calibration.openReference || !calibration.fistReference) return raw.map(clamp01);
   return raw.map((value, index) => {
     const low = calibration.fistReference![index];

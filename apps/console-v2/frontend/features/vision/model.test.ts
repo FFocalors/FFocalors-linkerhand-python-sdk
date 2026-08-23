@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { classifyGesture, FIST_HAND_LANDMARK_FIXTURE, GestureStabilizer, mapLandmarksToO6, OPEN_HAND_LANDMARK_FIXTURE, PoseMapper, SessionCalibration } from './model';
 
 const hand = (landmarks: typeof OPEN_HAND_LANDMARK_FIXTURE, confidence = 0.95) => ({ handedness: 'left' as const, confidence, landmarks });
@@ -21,13 +21,18 @@ describe('vision gesture model', () => {
   it('completes session calibration from open then fist samples', () => {
     const calibration = new SessionCalibration(2);
     calibration.begin();
-    calibration.accept('open', OPEN_HAND_LANDMARK_FIXTURE);
-    calibration.accept('open', OPEN_HAND_LANDMARK_FIXTURE);
+    let now = 0;
+    const spy = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    calibration.accept(OPEN_HAND_LANDMARK_FIXTURE);
+    now += 600;
+    calibration.accept(OPEN_HAND_LANDMARK_FIXTURE);
     expect(calibration.snapshot().phase).toBe('fist');
-    calibration.accept('fist', FIST_HAND_LANDMARK_FIXTURE);
-    calibration.accept('fist', FIST_HAND_LANDMARK_FIXTURE);
+    calibration.accept(FIST_HAND_LANDMARK_FIXTURE);
+    now += 600;
+    calibration.accept(FIST_HAND_LANDMARK_FIXTURE);
     expect(calibration.snapshot().complete).toBe(true);
     expect(mapLandmarksToO6(OPEN_HAND_LANDMARK_FIXTURE, calibration.snapshot())).toHaveLength(6);
+    spy.mockRestore();
   });
 
   it('keeps mapped vectors normalized and rate limited', () => {
