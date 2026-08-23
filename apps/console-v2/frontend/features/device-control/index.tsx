@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChangeEvent, ReactNode } from 'react';
+import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, JointTargetCommand, OperationSnapshot, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
 import { Badge, Card } from '../../shared/ui';
+import { Pencil, Trash2, X } from 'lucide-react';
 
 /** Feature-local controller seam. The runtime adapter can implement this without changing shared contracts. */
 export interface DeviceControlController {
@@ -156,7 +157,22 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
   const rafRef = useRef<number | undefined>(undefined);
   const pausedRef = useRef(false);
   const [paused, setPaused] = useState(false);
+  const [visibleJoints, setVisibleJoints] = useState<Set<number>>(() => new Set(Array.from({ length: jointCount }, (_, i) => i)));
   useEffect(() => { pausedRef.current = paused; }, [paused]);
+  useEffect(() => { setVisibleJoints(new Set(Array.from({ length: jointCount }, (_, i) => i))); }, [jointCount]);
+
+  const toggleJoint = useCallback((index: number) => {
+    setVisibleJoints(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        if (next.size <= 1) return prev; // keep at least one visible
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  }, []);
 
   const draw = useCallback(() => {
     rafRef.current = undefined;
@@ -199,6 +215,7 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
       return;
     }
     for (let j = 0; j < jointCount; j += 1) {
+      if (!visibleJoints.has(j)) continue;
       context.strokeStyle = CURVE_COLORS[j % CURVE_COLORS.length];
       context.lineWidth = 1.6;
       context.beginPath();
@@ -210,7 +227,7 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
       }
       context.stroke();
     }
-  }, [jointCount]);
+  }, [jointCount, visibleJoints]);
 
   const scheduleDraw = useCallback(() => {
     if (rafRef.current === undefined && document.visibilityState !== 'hidden') rafRef.current = requestAnimationFrame(draw);
@@ -234,7 +251,7 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
 
   return <Card className="joint-curve-card">
     <div className="card-header"><div><h2>实时关节曲线</h2><span className="muted">最近 {CURVE_MAX_POINTS} 个采样点 · 0–255</span></div><div className="heading-actions"><Badge tone={telemetry ? 'green' : 'amber'}>{telemetry ? '实时采样' : '遥测未接入'}</Badge><button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>清空</button></div></div>
-    <div className="joint-curve-legend">{Array.from({ length: jointCount }, (_, index) => <span className="curve-legend-item" key={index}><i style={{ background: CURVE_COLORS[index % CURVE_COLORS.length] }} />{jointName(index, jointCount)}</span>)}</div>
+    <div className="joint-curve-legend">{Array.from({ length: jointCount }, (_, index) => <button key={index} className={`curve-legend-item ${visibleJoints.has(index) ? '' : 'curve-legend-hidden'}`} onClick={() => toggleJoint(index)} title={visibleJoints.has(index) ? `点击隐藏 ${jointName(index, jointCount)}` : `点击显示 ${jointName(index, jointCount)}`}><i style={{ background: visibleJoints.has(index) ? CURVE_COLORS[index % CURVE_COLORS.length] : 'transparent' }} />{jointName(index, jointCount)}</button>)}</div>
     <div className="joint-curve-plot"><canvas ref={canvasRef} className="joint-curve-canvas" aria-label="6 关节实时位置曲线" /></div>
   </Card>;
 }
@@ -255,6 +272,8 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const [submittingLoop, setSubmittingLoop] = useState<string>();
   const [customPresets, setCustomPresets] = useState<DeviceControlQuickAction[]>([]);
   const [presetName, setPresetName] = useState('');
+  const [editingPresetId, setEditingPresetId] = useState<string>();
+  const [editingPresetName, setEditingPresetName] = useState('');
   const valuesRef = useRef(values);
   const dragging = useRef(new Set<number>());
   const pendingVector = useRef<number[]>(values);
@@ -319,6 +338,24 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     setCustomPresets(prev => [...prev, newPreset]);
     setPresetName('');
   }, [presetName, controller, isLocked, connection.state, values, jointCount]);
+  const startEditPreset = useCallback((preset: DeviceControlQuickAction) => {
+    setEditingPresetId(preset.id);
+    setEditingPresetName(preset.label);
+  }, []);
+  const saveEditPreset = useCallback((presetId: string) => {
+    if (!editingPresetName.trim()) return;
+    setCustomPresets(prev => prev.map(p => p.id === presetId ? { ...p, label: editingPresetName.trim(), positions: toVector(values, jointCount) } : p));
+    setEditingPresetId(undefined);
+    setEditingPresetName('');
+  }, [editingPresetName, values, jointCount]);
+  const cancelEditPreset = useCallback(() => {
+    setEditingPresetId(undefined);
+    setEditingPresetName('');
+  }, []);
+  const deletePreset = useCallback((presetId: string) => {
+    if (submittingQuickAction === presetId) return;
+    setCustomPresets(prev => prev.filter(p => p.id !== presetId));
+  }, [submittingQuickAction]);
   const connect = () => controller && runController(controller.connect);
   const disconnect = () => controller && runController(controller.disconnect);
   const reconnect = () => controller && runController(controller.reconnect);
@@ -363,9 +400,6 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
             <span className="muted">·</span>
             <span>J{jointCount}</span>
           </div>
-          <div className="device-twin-readouts">
-            {Array.from({ length: jointCount }, (_, index) => <div className="twin-readout" key={index}><span>{jointName(index, jointCount)}</span><strong>{live?.rawPosition[index] ?? '--'}</strong></div>)}
-          </div>
         </Card>
         <JointCurveChart telemetry={telemetry} jointCount={jointCount} />
       </div>
@@ -380,12 +414,17 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
           {connection.lastError && <p className="permission-note" style={{ marginTop: 8 }}>{connection.lastError.message}</p>}
         </Card>
         <div className="control-twin">
-          <Card className="joint-target-card">
-            <div className="card-header"><div><h2>关节目标</h2><span className="muted">归一化 · 0–100%</span></div><Badge>{jointCount} 关节</Badge></div>
-            {jointCount === 0 && <p className="muted">当前能力未报告关节，控制不可用。</p>}
-            <div className="joint-list joint-list-single">{Array.from({ length: jointCount }, (_, index) => <JointSlider key={index} index={index} label={jointName(index, jointCount)} value={values[index] ?? 0} disabled={!controller || isLocked || connection.state !== 'connected'} onBegin={beginJoint} onInput={changeJoint} onFinish={finishJoint} />)}</div>
-            <details open={rawOpen} onToggle={event => setRawOpen(event.currentTarget.open)}><summary className="button button-ghost" style={{ cursor: 'pointer' }}>高级诊断：原始值估算</summary><div className="grid grid-3" style={{ marginTop: 8 }}><span className="muted">raw 估算：{values.map(value => Math.round(value * (capabilities.position.range.max - capabilities.position.range.min) + capabilities.position.range.min)).join(', ') || '—'}</span><span className="muted">范围：{capabilities.position.range.min}–{capabilities.position.range.max}</span><span className="muted">遥测 raw：{live?.rawPosition.join(', ') || '—'}</span></div></details>
-          </Card>
+          <div className="joint-target-column">
+            <Card className="joint-target-card">
+              <div className="card-header"><div><h2>关节目标</h2><span className="muted">归一化 · 0–100%</span></div><Badge>{jointCount} 关节</Badge></div>
+              {jointCount === 0 && <p className="muted">当前能力未报告关节，控制不可用。</p>}
+              <div className="joint-list joint-list-single">{Array.from({ length: jointCount }, (_, index) => <JointSlider key={index} index={index} label={jointName(index, jointCount)} value={values[index] ?? 0} disabled={!controller || isLocked || connection.state !== 'connected'} onBegin={beginJoint} onInput={changeJoint} onFinish={finishJoint} />)}</div>
+              <details open={rawOpen} onToggle={event => setRawOpen(event.currentTarget.open)}><summary className="button button-ghost" style={{ cursor: 'pointer' }}>高级诊断：原始值估算</summary><div className="grid grid-3" style={{ marginTop: 8 }}><span className="muted">raw 估算：{values.map(value => Math.round(value * (capabilities.position.range.max - capabilities.position.range.min) + capabilities.position.range.min)).join(', ') || '—'}</span><span className="muted">范围：{capabilities.position.range.min}–{capabilities.position.range.max}</span><span className="muted">遥测 raw：{live?.rawPosition.join(', ') || '—'}</span></div></details>
+            </Card>
+            <div className="device-twin-readouts">
+              {Array.from({ length: jointCount }, (_, index) => <div className="twin-readout" key={index}><span>{jointName(index, jointCount)}</span><strong>{live?.rawPosition[index] ?? '--'}</strong></div>)}
+            </div>
+          </div>
         <Card className="preset-actions-card">
           <div className="card-header"><div><h2>快捷动作</h2><span className="muted">内置预设由设备控制器执行</span></div></div>
           <div className="preset-actions-scroll">
@@ -429,12 +468,39 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                 <input className="input" value={presetName} onChange={event => setPresetName(event.target.value)} placeholder="输入预设名称" disabled={!controller || isLocked || connection.state !== 'connected'} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveCustomPreset(); } }} />
                 <button className="button button-secondary" onClick={saveCustomPreset} disabled={!presetName.trim() || !controller || isLocked || connection.state !== 'connected'}>保存当前为预设</button>
               </div>
-              {customPresets.length === 0 && <p className="muted" style={{ marginTop: 4 }}>暂无自定义预设，调整关节后点击“保存当前为预设”</p>}
-              <div className="grid grid-3" style={{ marginTop: 8 }}>
+              {customPresets.length === 0 && <p className="muted" style={{ marginTop: 4 }}>暂无自定义预设，调整关节后点击\u201c保存当前为预设\u201d</p>}
+              <div className="custom-preset-list" style={{ marginTop: 8 }}>
                 {customPresets.map(preset => (
-                  <button className="button button-ghost" key={preset.id} disabled={!controller || isLocked || busy || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(preset.id); void applyPreset(preset).finally(() => setSubmittingQuickAction(undefined)); }}>
-                    {isQuickActionRunning(preset) ? `${preset.label} · 执行中` : preset.label}
-                  </button>
+                  <div className={`custom-preset-chip ${editingPresetId === preset.id ? 'custom-preset-editing' : ''}`} key={preset.id}>
+                    {editingPresetId === preset.id ? (
+                      <>
+                        <input
+                          className="input preset-edit-input"
+                          value={editingPresetName}
+                          onChange={event => setEditingPresetName(event.target.value)}
+                          onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                            if (event.key === 'Enter') { event.preventDefault(); saveEditPreset(preset.id); }
+                            if (event.key === 'Escape') { event.preventDefault(); cancelEditPreset(); }
+                          }}
+                          autoFocus
+                        />
+                        <button className="icon-button preset-action-btn" onClick={() => saveEditPreset(preset.id)} title="保存" aria-label="保存"><Pencil size={12} /></button>
+                        <button className="icon-button preset-action-btn" onClick={cancelEditPreset} title="取消" aria-label="取消"><X size={12} /></button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          className="button button-preset-custom"
+                          disabled={!controller || isLocked || busy || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)}
+                          onClick={() => { setSubmittingQuickAction(preset.id); void applyPreset(preset).finally(() => setSubmittingQuickAction(undefined)); }}
+                        >
+                          {isQuickActionRunning(preset) ? `${preset.label} \u00b7 执行中` : preset.label}
+                        </button>
+                        <button className="icon-button preset-action-btn" onClick={() => startEditPreset(preset)} title="编辑名称并覆盖当前位置" aria-label="编辑"><Pencil size={12} /></button>
+                        <button className="icon-button preset-action-btn preset-action-delete" onClick={() => deletePreset(preset.id)} title="删除预设" aria-label="删除"><Trash2 size={12} /></button>
+                      </>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>

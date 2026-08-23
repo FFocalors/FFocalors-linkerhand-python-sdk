@@ -88,19 +88,92 @@ function actionController(runtime: ConsolePorts, simulator: boolean): ActionCont
 }
 
 function graspController(runtime: ConsolePorts, simulator: boolean): GraspController {
-  let state: GraspControllerState = { phase: 'idle', tactileAvailable: false, rawTouch: null, degraded: false };
+  let state: GraspControllerState = {
+    phase: 'idle',
+    tactileAvailable: false,
+    rawTouch: null,
+    degraded: false,
+    calibrated: false,
+    joints: Array.from({ length: 6 }, (_, i) => ({
+      index: i,
+      name: ['拇指弯曲', '拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小指弯曲'][i] ?? `J${i + 1}`,
+      state: 'idle' as import('../features/smart-grasp').GraspJointState,
+      contactScore: 0,
+      load: 0,
+      loadMax: 255,
+    })),
+    jointCount: 6,
+  };
   const listeners = stateListeners<GraspControllerState>();
-  const set = (next: GraspControllerState) => { state = next; listeners.emit(state); };
+  const set = (next: Partial<GraspControllerState>) => { state = { ...state, ...next }; listeners.emit(state); };
   const extras = simulator ? undefined : tauriRuntimeExtras.grasp;
   return {
-    async calibrate() { if (extras) { await extras.calibrate(); return; } set({ ...state, phase: 'calibrating' }); },
-    async completeCalibration() { if (extras) { await extras.completeCalibration(); return; } set({ ...state, phase: 'ready' }); },
-    async approach() { if (extras) { await extras.approach(); return; } set({ ...state, phase: 'approach' }); },
-    async startGrasp(_presetId, degraded) { if (extras) { await extras.startGrasp(degraded); return; } set({ ...state, phase: 'grasping', degraded }); },
-    async release() { if (extras) { await extras.release(); return; } set({ ...state, phase: 'releasing' }); },
-    async abort() { if (extras) { await extras.abort(); return; } set({ ...state, phase: 'aborted' }); },
+    async calibrate() {
+      if (extras) { await extras.calibrate(); return; }
+      // Simulate calibration: transition through calibrating → calibrated
+      set({ phase: 'calibrating' });
+      await new Promise(r => setTimeout(r, 1200));
+      set({ phase: 'calibrated', calibrated: true });
+    },
+    async approach() {
+      if (extras) { await extras.approach(); return; }
+      set({ phase: 'approaching' });
+      await new Promise(r => setTimeout(r, 600));
+      // Move to ready for grasp
+    },
+    async startGrasp(_presetId, degraded) {
+      if (extras) { await extras.startGrasp(degraded); return; }
+      // 首次抓取强制要求先完成空载标定（标定结果仅会话内缓存）
+      if (!state.calibrated) {
+        set({ phase: 'failed', failure: { code: 'no_calibration', message: '未完成空载标定，请先执行标定后再开始抓取。' } });
+        return;
+      }
+      // Simulate full grasp flow: coarse → fine → preload → holding → success
+      set({ phase: 'closingCoarse', degraded });
+      // Update joints to closingCoarse
+      const coarseJoints = state.joints.map(j => ({ ...j, state: j.index === 1 ? 'frozen' as const : 'closingCoarse' as const, contactScore: 0, load: 20 + Math.floor(Math.random() * 15) }));
+      set({ joints: coarseJoints });
+      await new Promise(r => setTimeout(r, 800));
+
+      set({ phase: 'closingFine' });
+      const fineJoints = coarseJoints.map(j => ({ ...j, state: j.index === 1 ? 'frozen' as const : 'closingFine' as const, contactScore: 0.3 + Math.random() * 0.3, load: 40 + Math.floor(Math.random() * 20) }));
+      set({ joints: fineJoints });
+      await new Promise(r => setTimeout(r, 600));
+
+      // Simulate contacts
+      set({ phase: 'preloading' });
+      const preloadJoints = fineJoints.map(j => {
+        if (j.index === 1) return { ...j, state: 'frozen' as const };
+        const contacted = Math.random() > 0.3;
+        return {
+          ...j,
+          state: contacted ? 'contactConfirmed' as const : 'limitReached' as const,
+          contactScore: contacted ? 0.85 + Math.random() * 0.15 : 0,
+          load: contacted ? 80 + Math.floor(Math.random() * 40) : 30 + Math.floor(Math.random() * 10),
+        };
+      });
+      set({ joints: preloadJoints });
+      await new Promise(r => setTimeout(r, 400));
+
+      set({ phase: 'holding' });
+      await new Promise(r => setTimeout(r, 600));
+
+      set({ phase: 'success' });
+    },
+    async release() {
+      if (extras) { await extras.release(); return; }
+      // 释放 = 急停：立即回到张开姿态，无分步延迟
+      const resetJoints = state.joints.map(j => ({ ...j, state: 'idle' as const, contactScore: 0, load: 0 }));
+      set({ phase: 'idle', joints: resetJoints });
+    },
+    async abort() {
+      if (extras) { await extras.abort(); return; }
+      set({ phase: 'aborted' });
+      await new Promise(r => setTimeout(r, 300));
+      set({ phase: 'idle' });
+    },
     getState: async () => state,
-    subscribe(listener) { const remove = listeners.add(listener); const remote = extras?.subscribe(listener); return () => { remove(); remote?.(); }; },
+    subscribe(listener) { const remove = listeners.add(listener); const remote = extras?.subscribe((s: any) => listener(s as GraspControllerState)); return () => { remove(); remote?.(); }; },
   };
 }
 

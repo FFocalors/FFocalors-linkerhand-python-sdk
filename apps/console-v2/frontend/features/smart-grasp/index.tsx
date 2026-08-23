@@ -1,14 +1,55 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { GraspPort } from '../../shared/contracts';
-import { Badge, Card, EmptyState, Progress } from '../../shared/ui';
+import type { GraspPort, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
+import { Badge, Card } from '../../shared/ui';
 
-export type GraspPhase = 'idle' | 'calibrating' | 'ready' | 'approach' | 'grasping' | 'holding' | 'releasing' | 'aborted' | 'failed';
-export type GraspControllerState = { phase: GraspPhase; failure?: { code: string; message: string }; tactileAvailable: boolean; rawTouch?: number[] | null; degraded: boolean };
+// ── Phase & joint state types ──
 
-/** Feature-local seam for app-runtime. Phase changes and touch data are controller-owned. */
+export type GraspPhase =
+  | 'idle'
+  | 'calibrating'
+  | 'calibrated'
+  | 'approaching'
+  | 'closingCoarse'
+  | 'closingFine'
+  | 'preloading'
+  | 'holding'
+  | 'success'
+  | 'releasing'
+  | 'aborted'
+  | 'failed';
+
+export type GraspJointState =
+  | 'idle'
+  | 'closingCoarse'
+  | 'closingFine'
+  | 'contactCandidate'
+  | 'contactConfirmed'
+  | 'frozen'
+  | 'limitReached'
+  | 'error';
+
+export interface GraspJointInfo {
+  index: number;
+  name: string;
+  state: GraspJointState;
+  contactScore: number;
+  load: number;
+  loadMax: number;
+}
+
+export interface GraspControllerState {
+  phase: GraspPhase;
+  failure?: { code: string; message: string };
+  tactileAvailable: boolean;
+  rawTouch?: number[] | null;
+  degraded: boolean;
+  calibrated: boolean;
+  joints: GraspJointInfo[];
+  jointCount: number;
+}
+
 export interface GraspController {
   calibrate(): Promise<void>;
-  completeCalibration(): Promise<void>;
   approach(): Promise<void>;
   startGrasp(presetId: string, degraded: boolean): Promise<void>;
   release(): Promise<void>;
@@ -17,41 +58,346 @@ export interface GraspController {
   subscribe(listener: (state: GraspControllerState) => void): () => void;
 }
 
+// ── Joint name helpers ──
+
+const O6_JOINT_NAMES = ['拇指弯曲', '拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小指弯曲'];
+function jointName(index: number, count: number): string {
+  return count > 0 && index < O6_JOINT_NAMES.length ? O6_JOINT_NAMES[index] : `J${index + 1}`;
+}
+
+// ── Flow steps (6 stages, each maps to controller phases) ──
+
+interface FlowStep {
+  key: string;
+  label: string;
+  description: string;
+  phases: GraspPhase[];
+}
+
+const FLOW_STAGES: FlowStep[] = [
+  { key: 'calibrate', label: '空载标定', description: '全行程空载扫描', phases: ['calibrating', 'calibrated'] },
+  { key: 'approach', label: '预抓取定位', description: '移动到预抓取姿态', phases: ['approaching'] },
+  { key: 'coarse', label: '快速逼近', description: '大步长快速闭合', phases: ['closingCoarse'] },
+  { key: 'fine', label: '精细逼近', description: '小步长微动接触', phases: ['closingFine'] },
+  { key: 'preload', label: '预紧锁定', description: '施加预紧力锁定', phases: ['preloading'] },
+  { key: 'done', label: '保持完成', description: '验证稳定，抓取成功', phases: ['holding', 'success'] },
+];
+
+const PHASE_LABEL: Record<GraspPhase, string> = {
+  idle: '等待开始', calibrating: '空载标定中', calibrated: '标定完成',
+  approaching: '预抓取定位', closingCoarse: '快速逼近', closingFine: '精细逼近',
+  preloading: '预紧锁定', holding: '保持验证', success: '抓取成功',
+  releasing: '释放中', aborted: '已中止', failed: '失败',
+};
+
+const JOINT_STATE_LABEL: Record<GraspJointState, { label: string; tone: 'blue' | 'green' | 'amber' | 'red' }> = {
+  idle: { label: '待机', tone: 'blue' },
+  closingCoarse: { label: '快速闭合', tone: 'blue' },
+  closingFine: { label: '精细逼近', tone: 'blue' },
+  contactCandidate: { label: '疑似接触', tone: 'amber' },
+  contactConfirmed: { label: '已锁定', tone: 'green' },
+  frozen: { label: '冻结', tone: 'blue' },
+  limitReached: { label: '行程极限', tone: 'amber' },
+  error: { label: '异常', tone: 'red' },
+};
+
+const JOINT_CURVE_COLORS = ['#3568f2', '#208c60', '#a9680f', '#b65144', '#7450a7', '#0f9ba8'];
+
+// ── Default idle state ──
+
+function idleState(jointCount: number): GraspControllerState {
+  return {
+    phase: 'idle',
+    tactileAvailable: false,
+    rawTouch: null,
+    degraded: false,
+    calibrated: false,
+    joints: Array.from({ length: jointCount }, (_, i) => ({
+      index: i,
+      name: jointName(i, jointCount),
+      state: 'idle' as GraspJointState,
+      contactScore: 0,
+      load: 0,
+      loadMax: 255,
+    })),
+    jointCount,
+  };
+}
+
+// ── Component ──
+
 type Model = 'O6' | 'L6' | 'L7' | 'L10' | 'L20' | 'G20' | 'L21' | 'L25';
 const supportedModels: Model[] = ['O6', 'L6', 'L7', 'L10', 'L20'];
-const idleState: GraspControllerState = { phase: 'idle', tactileAvailable: false, rawTouch: null, degraded: false };
 
-export function SmartGrasp({ grasp, locked, tactileAvailable: _tactileAvailable, model = 'O6', controller }: { grasp: GraspPort; locked: boolean; tactileAvailable: boolean; model?: Model; controller?: GraspController }) {
+export function SmartGrasp({
+  grasp,
+  telemetry,
+  locked,
+  tactileAvailable: _tactileAvailable,
+  model = 'O6',
+  controller,
+  jointCount = 6,
+}: {
+  grasp: GraspPort;
+  telemetry?: TelemetryPort;
+  locked: boolean;
+  tactileAvailable: boolean;
+  model?: Model;
+  controller?: GraspController;
+  jointCount?: number;
+}) {
   const [presets, setPresets] = useState<{ id: string; name: string; description: string }[]>([]);
   const [selected, setSelected] = useState<string>();
-  const [degraded, setDegraded] = useState(false);
-  const [advanced, setAdvanced] = useState(false);
-  const [state, setState] = useState<GraspControllerState>(idleState);
+  const [degraded] = useState(false);
+  const [state, setState] = useState<GraspControllerState>(() => idleState(jointCount));
   const [error, setError] = useState<string>();
+  const [liveLoads, setLiveLoads] = useState<number[]>(() => Array(jointCount).fill(0));
+
   const available = supportedModels.includes(model);
-  useEffect(() => { void grasp.listPresets().then(setPresets).catch(() => setError('抓取预设暂时不可用，请检查运行时接线。')); }, [grasp]);
+
   useEffect(() => {
-    if (!controller) { setState(idleState); return; }
+    void grasp.listPresets().then(setPresets).catch(() => setError('抓取预设暂时不可用，请检查运行时接线。'));
+  }, [grasp]);
+
+  useEffect(() => {
+    if (!controller) { setState(idleState(jointCount)); return; }
     let mounted = true;
     void controller.getState().then(next => { if (mounted) setState(next); }).catch(() => setError('抓取控制器状态暂时不可用。'));
-    return () => { mounted = false; };
-  }, [controller]);
-  useEffect(() => controller ? controller.subscribe(setState) : undefined, [controller]);
-  const phaseLabel = useMemo(() => ({ idle: '等待开始', calibrating: '正在标定', ready: '已就绪', approach: '接近目标', grasping: '自适应抓取', holding: '保持中', releasing: '释放中', aborted: '已中止', failed: '失败' } satisfies Record<GraspPhase, string>)[state.phase], [state.phase]);
+    const unsub = controller.subscribe(s => { if (mounted) setState(s); });
+    return () => { mounted = false; unsub(); };
+  }, [controller, jointCount]);
+
+  useEffect(() => {
+    if (!telemetry) return;
+    const unsub = telemetry.subscribe((snapshot: TelemetrySnapshot) => {
+      if (snapshot.rawCurrent && snapshot.rawCurrent.length > 0) {
+        setLiveLoads(snapshot.rawCurrent.slice(0, jointCount));
+      }
+    });
+    return unsub;
+  }, [telemetry, jointCount]);
+
   const controllerReady = Boolean(controller);
-  const canRun = controllerReady && available && Boolean(selected) && !locked && (state.tactileAvailable || degraded);
-  const invoke = async (operation: () => Promise<void>, failure: string) => { try { await operation(); } catch { setError(failure); } };
-  const run = () => { if (!controller || !selected || !canRun) return; void invoke(() => controller.startGrasp(selected, degraded), '抓取未启动，请查看控制器失败原因。'); };
+  // 空载标定：可随时重新标定（仅空闲/已标定时可操作）
+  const canCalibrate = controllerReady && available && !locked && (state.phase === 'idle' || state.phase === 'calibrated');
+  // 预抓取定位：必须先完成标定（会话缓存）
+  const canApproach = controllerReady && available && !locked && state.calibrated && (state.phase === 'idle' || state.phase === 'calibrated');
+  // 开始抓取：首次必须标定，之后缓存标定可直接开始
+  const canGrasp = controllerReady && available && !locked && state.calibrated && Boolean(selected) && (state.phase === 'approaching' || state.phase === 'calibrated' || state.phase === 'idle');
+  const isRunning = state.phase !== 'idle' && state.phase !== 'calibrated' && state.phase !== 'success' && state.phase !== 'aborted' && state.phase !== 'failed';
+  const canAbort = controllerReady && isRunning;
+  // 释放 = 急停：任何运行/保持/成功状态均可立即回到张开姿态
+  const canRelease = controllerReady && (isRunning || state.phase === 'holding' || state.phase === 'success');
+
+  const invoke = async (operation: () => Promise<void>, failure: string) => {
+    setError(undefined);
+    try { await operation(); } catch { setError(failure); }
+  };
+
   const failureMessage = state.failure?.message ?? error;
-  const touch = state.rawTouch && state.rawTouch.length > 0 ? state.rawTouch : null;
-  return <div className="stack">
-    <div className="page-heading"><div><p className="eyebrow">动作编排 / 智能抓取</p><h1>智能抓取</h1><p>阶段和反馈均来自 GraspController；未接线时不会模拟动作。</p></div><Badge tone={!available ? 'red' : state.tactileAvailable ? 'green' : 'amber'}>{!available ? `${model} 暂不可用` : state.tactileAvailable ? '触觉反馈可用' : '暂无触觉数据'}</Badge></div>
-    {!controllerReady && <div className="permission-note" role="status">抓取控制器尚未接线；标定、接近、释放和中止已禁用。当前只展示运行时提供的预设。</div>}
-    {!available && <div className="permission-note" role="alert"><strong>{model} 不支持智能自适应抓取。</strong> 当前支持 O6、L6、L7、L10、L20；G20、L21、L25 仅可使用普通动作预设。</div>}
-    {controllerReady && !state.tactileAvailable && <Card><div className="card-header"><div><h2>触觉反馈不可用</h2><span className="muted">系统不会静默假装自适应成功。启用后将把降级选择传给 controller。</span></div><Badge tone="amber">降级模式</Badge></div><label><input type="checkbox" checked={degraded} onChange={event => setDegraded(event.target.checked)} /> 我确认以无触觉降级模式执行</label></Card>}
-    <Card><div className="card-header"><div><h2>操作流程</h2><span className="muted">当前阶段：{phaseLabel}</span></div><div className="heading-actions"><Badge tone={state.phase === 'failed' || state.phase === 'aborted' ? 'red' : state.phase === 'holding' ? 'green' : 'blue'}>{phaseLabel}</Badge>{controllerReady && state.phase !== 'idle' && state.phase !== 'ready' && state.phase !== 'aborted' && state.phase !== 'failed' && <button className="button button-ghost" onClick={() => void invoke(() => controller!.abort(), '中止请求失败，请立即使用顶部停止全部动作。')}>中止</button>}</div></div><Progress value={state.phase === 'idle' ? 0 : state.phase === 'calibrating' ? 18 : state.phase === 'ready' ? 35 : state.phase === 'approach' ? 55 : state.phase === 'grasping' ? 72 : state.phase === 'holding' ? 88 : state.phase === 'releasing' ? 65 : 0} /><div className="grid grid-5" style={{ marginTop: 10 }}><button className="button button-secondary" disabled={locked || !controllerReady || !available || state.phase !== 'idle'} onClick={() => void invoke(() => controller!.calibrate(), '标定启动失败。')}>1. 标定</button><button className="button button-secondary" disabled={locked || !controllerReady || state.phase !== 'calibrating'} onClick={() => void invoke(() => controller!.completeCalibration(), '标定完成失败。')}>2. 完成</button><button className="button button-secondary" disabled={locked || !controllerReady || state.phase !== 'ready'} onClick={() => void invoke(() => controller!.approach(), '接近阶段启动失败。')}>3. 接近</button><button className="button button-secondary" disabled={!canRun || state.phase !== 'approach'} onClick={run}>4. 抓取</button><button className="button button-ghost" disabled={!controllerReady || state.phase !== 'holding'} onClick={() => void invoke(() => controller!.release(), '释放请求失败。')}>释放</button></div></Card>
-    <div className="grid grid-3">{presets.length === 0 ? <Card><EmptyState title="没有可用抓取预设" detail="运行时通过 GraspPort 提供预设后会显示在这里。" /></Card> : presets.map(p => <Card className="preset" key={p.id}><div className="preset-icon">{p.id === 'soft' ? '◌' : p.id === 'cube' ? '◇' : '⌁'}</div><h2>{p.name}</h2><p className="muted">{p.description}</p><button className={`button ${selected === p.id ? 'button-primary' : 'button-secondary'}`} disabled={locked || !available || !controllerReady} onClick={() => setSelected(p.id)} aria-pressed={selected === p.id}>{selected === p.id ? '已选择' : '选择预设'} <span>→</span></button></Card>)}<Card className="tactile-card"><div className="card-header"><div><h2>触觉矩阵</h2><span className="muted">数据完全来自 controller.rawTouch</span></div><Badge tone={touch ? 'green' : 'amber'}>{touch ? '在线' : '暂无数据'}</Badge></div>{touch ? <div className="tactile-grid">{touch.map((value, index) => <i key={index} title={`触觉 ${index + 1}: ${value}`} style={{ opacity: Math.max(.15, Math.min(1, value / 255)) }} />)}</div> : <EmptyState title="暂无触觉数据" detail="等待运行时 telemetry 提供 rawTouch；不会使用伪造强度。" />}</Card></div>
-    {failureMessage && <div className="permission-note" role="alert">{failureMessage}</div>}
-    <Card><div className="card-header"><div><h2>高级参数</h2><span className="muted">EMA、死区、发送周期与 raw 阈值仅供诊断，不进入默认操作路径。</span></div><button className="button button-ghost" onClick={() => setAdvanced(value => !value)} aria-expanded={advanced}>{advanced ? '收起' : '展开'}</button></div>{advanced && <div className="grid grid-3"><label className="muted">发送周期<input value="由 controller 提供" readOnly /></label><label className="muted">步长限制<input value="由 profile 提供" readOnly /></label><label className="muted">接触阈值<input value="由 profile 提供" readOnly /></label></div>}</Card>
-  </div>;
+
+  // Determine active flow stage
+  const activeStageIndex = useMemo(() => {
+    if (state.phase === 'idle' || state.phase === 'aborted' || state.phase === 'failed') return -1;
+    if (state.phase === 'releasing') return FLOW_STAGES.findIndex(s => s.phases.includes('approaching'));
+    return FLOW_STAGES.findIndex(s => s.phases.includes(state.phase));
+  }, [state.phase]);
+
+  const displayJoints = useMemo(() => {
+    return state.joints.map(j => ({
+      ...j,
+      load: liveLoads[j.index] ?? j.load,
+    }));
+  }, [state.joints, liveLoads]);
+
+  return (
+    <div className="stack">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">工作台 / 智能抓取</p>
+          <h1>智能抓取</h1>
+          <p className="muted">自适应抓取通过关节负载分析实现柔性接触锁定。</p>
+        </div>
+        <div className="heading-actions">
+          <Badge tone={!available ? 'red' : state.calibrated ? 'green' : 'amber'}>
+            {!available ? `${model} 暂不可用` : state.calibrated ? '已标定 · 会话缓存' : '未标定 · 需先标定'}
+          </Badge>
+        </div>
+      </div>
+
+      {!state.calibrated && controllerReady && available && (
+        <div className="permission-note" role="status">
+          首次抓取需先完成空载标定；标定结果仅在本次会话内缓存，应用关闭后自动清除，不占用磁盘空间。
+        </div>
+      )}
+
+      {!controllerReady && (
+        <div className="permission-note" role="status">
+          抓取控制器尚未接线；标定、逼近、抓取和中止已禁用。
+        </div>
+      )}
+      {!available && (
+        <div className="permission-note" role="alert">
+          <strong>{model} 不支持智能自适应抓取。</strong> 当前支持 O6、L6、L7、L10、L20。
+        </div>
+      )}
+
+      {/* ── Flow visualization (compact) ── */}
+      <Card className="grasp-flow-card">
+        <div className="card-header">
+          <div>
+            <h2>抓取流程</h2>
+            <span className="muted">当前：{PHASE_LABEL[state.phase]}{state.calibrated ? ' · 基线已就绪' : ''}</span>
+          </div>
+          <div className="heading-actions">
+            <Badge tone={
+              state.phase === 'failed' || state.phase === 'aborted' ? 'red' :
+              state.phase === 'success' || state.phase === 'holding' ? 'green' : 'blue'
+            }>
+              {PHASE_LABEL[state.phase]}
+            </Badge>
+            {canAbort && (
+              <button className="button button-ghost" onClick={() => invoke(() => controller!.abort(), '中止请求失败')}>
+                中止
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="grasp-flow-stages">
+          {FLOW_STAGES.map((stage, i) => {
+            const isCurrent = i === activeStageIndex;
+            const isPast = activeStageIndex >= 0 && i < activeStageIndex;
+            const isActive = isCurrent || isPast;
+            return (
+              <div key={stage.key} className={`grasp-flow-stage ${isActive ? 'active' : ''} ${isCurrent ? 'current' : ''} ${isPast ? 'past' : ''}`}>
+                <div className="grasp-flow-stage-dot">
+                  {isPast ? '\u2713' : i + 1}
+                </div>
+                <div className="grasp-flow-stage-text">
+                  <strong>{stage.label}</strong>
+                  <span>{stage.description}</span>
+                </div>
+                {i < FLOW_STAGES.length - 1 && (
+                  <div className={`grasp-flow-stage-line ${isPast ? 'past' : ''}`} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="progress" style={{ marginTop: 8 }}>
+          <span style={{ width: `${Math.max(3, activeStageIndex >= 0 ? ((activeStageIndex + 1) / FLOW_STAGES.length) * 100 : 0)}%` }} />
+        </div>
+
+        <div className="grid grid-4" style={{ marginTop: 10 }}>
+          <button className="button button-calibrate" disabled={!canCalibrate}
+            onClick={() => invoke(() => controller!.calibrate(), '标定启动失败')}>
+            1. 空载标定
+          </button>
+          <button className="button button-approach" disabled={!canApproach}
+            onClick={() => invoke(() => controller!.approach(), '逼近启动失败')}>
+            2. 预抓取定位
+          </button>
+          <button className="button button-grasp-start" disabled={!canGrasp || !selected}
+            onClick={() => { if (!controller || !selected) return; void invoke(() => controller.startGrasp(selected, degraded), '抓取未启动'); }}>
+            3. 开始抓取
+          </button>
+          <button className="button button-release" disabled={!canRelease}
+            onClick={() => invoke(() => controller!.release(), '释放请求失败')}>
+            释放
+          </button>
+        </div>
+        <p className="muted" style={{ marginTop: 6, fontSize: '9px' }}>
+          释放为急停操作：点击后立即回到张开姿态，无需等待分步回退。
+        </p>
+      </Card>
+
+      {/* ── Bottom: presets + tactile (left) | joint loads (right) ── */}
+      <div className="grasp-bottom-grid">
+        <div className="grasp-left-col">
+          <Card className="grasp-preset-card">
+            <div className="card-header">
+              <div><h2>抓取预设</h2><span className="muted">选择目标物体的抓取策略</span></div>
+            </div>
+            {presets.length === 0 ? (
+              <p className="muted" style={{ padding: '12px 0', textAlign: 'center' }}>运行时通过 GraspPort 提供预设后会显示在这里。</p>
+            ) : (
+              <div className="grasp-preset-grid">
+                {presets.map(p => (
+                  <button key={p.id} className={`grasp-preset-btn ${selected === p.id ? 'selected' : ''}`}
+                    disabled={locked || !available || !controllerReady}
+                    onClick={() => setSelected(p.id)} aria-pressed={selected === p.id}>
+                    <span className="grasp-preset-icon">{p.id.includes('soft') ? '\u25cc' : p.id.includes('cube') ? '\u25c7' : '\u2301'}</span>
+                    <div className="grasp-preset-info">
+                      <strong>{p.name}</strong>
+                      <span>{p.description}</span>
+                    </div>
+                    {selected === p.id && <Badge tone="green">已选</Badge>}
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
+          <Card className="grasp-tactile-notice">
+            <div className="card-header">
+              <div><h2>触觉反馈</h2><span className="muted">{model} 型号不支持触觉传感器</span></div>
+              <Badge tone="amber">不可用</Badge>
+            </div>
+            <p className="muted" style={{ margin: '4px 0 0', fontSize: '9px' }}>自适应抓取通过关节负载（电流）分析实现接触检测，无需触觉传感器。</p>
+          </Card>
+        </div>
+
+        <Card className="grasp-load-card">
+          <div className="card-header">
+            <div><h2>关节实时负载</h2><span className="muted">raw current · 0–255</span></div>
+            <Badge tone={telemetry ? 'green' : 'amber'}>{telemetry ? '实时' : '无遥测'}</Badge>
+          </div>
+          <div className="grasp-load-list">
+            {displayJoints.map((joint, i) => (
+              <div key={joint.index} className="grasp-load-row">
+                <div className="grasp-load-header">
+                  <span className="grasp-load-name">
+                    <i style={{ background: JOINT_CURVE_COLORS[i % JOINT_CURVE_COLORS.length] }} />
+                    {joint.name}
+                  </span>
+                  <span className="grasp-load-state">
+                    <Badge tone={JOINT_STATE_LABEL[joint.state].tone}>{JOINT_STATE_LABEL[joint.state].label}</Badge>
+                  </span>
+                </div>
+                <div className="grasp-load-bar-wrap">
+                  <div className="grasp-load-bar">
+                    <span className="grasp-load-fill" style={{
+                      width: `${Math.min(100, (joint.load / joint.loadMax) * 100)}%`,
+                      background: joint.state === 'contactConfirmed' ? 'var(--green)'
+                        : joint.state === 'contactCandidate' ? 'var(--amber)'
+                        : joint.state === 'error' ? 'var(--danger)'
+                        : JOINT_CURVE_COLORS[i % JOINT_CURVE_COLORS.length],
+                    }} />
+                  </div>
+                  <span className="grasp-load-value">{joint.load}</span>
+                </div>
+                {joint.contactScore > 0 && (
+                  <div className="grasp-contact-score">
+                    <span className="muted">接触评分</span>
+                    <div className="grasp-score-bar"><span style={{ width: `${joint.contactScore * 100}%` }} /></div>
+                    <span>{Math.round(joint.contactScore * 100)}%</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {failureMessage && (
+        <div className="lock-banner" role="alert">
+          <span><strong>操作未完成</strong> {failureMessage}</span>
+          <button onClick={() => setError(undefined)}>关闭</button>
+        </div>
+      )}
+    </div>
+  );
 }
+
+export const README = '智能抓取：空载标定 → 快速逼近 → 精细逼近 → 锁定保持，通过关节负载分析实现自适应柔性抓取。';
