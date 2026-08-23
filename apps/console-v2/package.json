@@ -24,28 +24,30 @@
     "bundle:inventory": "node scripts/create-bundle-inventory.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.11.1",
     "@mediapipe/tasks-vision": "1.0.1",
+    "@tauri-apps/api": "^2.11.1",
     "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "three": "^0.185.1",
     "typescript": "5.9.3",
     "vite": "latest"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.8.4",
     "@testing-library/jest-dom": "latest",
     "@testing-library/react": "latest",
     "@testing-library/user-event": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "@types/three": "^0.185.4",
     "@typescript-eslint/parser": "latest",
     "eslint": "latest",
     "eslint-plugin-import": "latest",
     "eslint-plugin-react-hooks": "latest",
     "jsdom": "latest",
-    "vitest": "latest",
-    "@tauri-apps/cli": "^2.8.4"
+    "vitest": "latest"
   }
 }

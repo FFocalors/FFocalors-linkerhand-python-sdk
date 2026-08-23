@@ -3,6 +3,7 @@ import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, JointTargetCommand, OperationSnapshot, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
 import { Badge, Card } from '../../shared/ui';
 import { Pencil, Trash2, X } from 'lucide-react';
+import * as THREE from 'three';
 
 /** Feature-local controller seam. The runtime adapter can implement this without changing shared contracts. */
 export interface DeviceControlController {
@@ -121,86 +122,95 @@ function jointName(index: number, count: number): string {
   return count > 0 && index < O6_JOINT_NAMES.length ? O6_JOINT_NAMES[index] : `J${index + 1}`;
 }
 
-/** SDK 关节 → 侧视机械手绘制。O6 六关节：0 拇指弯曲(1=张开) 1 拇指横摆 2 食指 3 中指 4 无名指 5 小指。 */
-const TWIN_FINGER_SEGMENTS = [34, 27, 20];
-const TWIN_FINGER_COLORS = ['#3568f2', '#208c60', '#a9680f'];
-const TWIN_BEND_MAX = [1.15, 0.95, 0.85];
+// ---- Three.js 数字孪生机械手模型 ----
+type TwinSegment = { pivot: THREE.Group; maxBend: number };
+type TwinFinger = { root: THREE.Group; segments: TwinSegment[]; bendIndex: number };
+type TwinHandRig = { group: THREE.Group; fingers: TwinFinger[]; thumb: TwinFinger; thumbSwingPivot: THREE.Group };
 
-function drawLimbSegment(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, length: number, thickness: number, color: string): { x: number; y: number } {
-  const x2 = x + Math.cos(angle) * length;
-  const y2 = y + Math.sin(angle) * length;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = thickness;
-  ctx.lineCap = 'round';
-  ctx.beginPath();
-  ctx.moveTo(x, y);
-  ctx.lineTo(x2, y2);
-  ctx.stroke();
-  return { x: x2, y: y2 };
-}
-
-function drawTwinFinger(ctx: CanvasRenderingContext2D, x: number, y: number, bend: number, baseAngle: number, scale: number): void {
-  let angle = baseAngle;
-  let px = x;
-  let py = y;
-  TWIN_FINGER_SEGMENTS.forEach((length, index) => {
-    angle += (1 - bend) * TWIN_BEND_MAX[index];
-    const next = drawLimbSegment(ctx, px, py, angle, length * scale, (7 - index * 1.4) * scale, TWIN_FINGER_COLORS[index % TWIN_FINGER_COLORS.length]);
-    px = next.x;
-    py = next.y;
+function buildTwinFinger(material: THREE.Material, segmentLengths: number[], width: number, height: number, maxBends: number[]): TwinFinger {
+  const root = new THREE.Group();
+  const segments: TwinSegment[] = [];
+  let cursor = new THREE.Group();
+  root.add(cursor);
+  segmentLengths.forEach((length, i) => {
+    const pivot = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, length, height), material);
+    mesh.position.y = length / 2;
+    pivot.add(mesh);
+    cursor.add(pivot);
+    segments.push({ pivot, maxBend: maxBends[i] });
+    const next = new THREE.Group();
+    next.position.y = length;
+    pivot.add(next);
+    cursor = next;
   });
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath();
-  ctx.arc(px, py, 3.4 * scale, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = '#17202d';
-  ctx.lineWidth = 1;
-  ctx.stroke();
+  return { root, segments, bendIndex: -1 };
 }
 
-function drawTwinHand(ctx: CanvasRenderingContext2D, values: number[], width: number, height: number): void {
-  ctx.clearRect(0, 0, width, height);
-  const hasSignal = values.length > 0 && values.some(v => v > 0);
-  if (!hasSignal) {
-    ctx.font = '600 12px ui-monospace, SFMono-Regular, Consolas, monospace';
-    ctx.fillStyle = '#94a3b8';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('等待关节遥测…', width / 2, height / 2);
-    return;
-  }
-  const bend = (index: number) => Math.max(0, Math.min(1, values[index] ?? 0));
-  const scale = Math.max(0.5, Math.min(1, height / 260));
-  const palmW = 46 * scale;
-  const palmH = Math.min(height * 0.72, 240 * scale);
-  const palmX = width * 0.16 - palmW / 2;
-  const palmY = (height - palmH) / 2;
+/** 构建 O6 六关节机械手 3D 模型。关节索引：0 拇指弯曲 1 拇指横摆 2 食指 3 中指 4 无名指 5 小指。 */
+function buildTwinHand(): TwinHandRig {
+  const group = new THREE.Group();
+  const palmMat = new THREE.MeshStandardMaterial({ color: 0xc3d2ec, roughness: 0.55, metalness: 0.25 });
+  const boneMat = new THREE.MeshStandardMaterial({ color: 0xdfe7f2, roughness: 0.45, metalness: 0.35 });
+  const jointMat = new THREE.MeshStandardMaterial({ color: 0x3568f2, roughness: 0.35, metalness: 0.55 });
+  const tipMat = new THREE.MeshStandardMaterial({ color: 0xa9680f, roughness: 0.5, metalness: 0.3 });
 
-  // 手掌
-  ctx.fillStyle = '#d7e2f5';
-  ctx.strokeStyle = '#3568f2';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.roundRect(palmX, palmY, palmW, palmH, 10 * scale);
-  ctx.fill();
-  ctx.stroke();
-  // 腕部
-  ctx.fillStyle = '#c3d2ec';
-  ctx.beginPath();
-  ctx.roundRect(palmX + palmW / 2 - 12 * scale, palmY + palmH - 10 * scale, 24 * scale, 18 * scale, 6 * scale);
-  ctx.fill();
-  ctx.stroke();
+  // 手掌 + 腕部
+  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.13, 0.04), palmMat);
+  palm.position.y = 0;
+  group.add(palm);
+  const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.03, 0.075, 14), palmMat);
+  wrist.position.y = -0.1;
+  group.add(wrist);
 
-  // 四指从手掌右侧伸出
-  const fingerYs = [palmY + palmH * 0.22, palmY + palmH * 0.4, palmY + palmH * 0.58, palmY + palmH * 0.76];
-  const fingerBends = [bend(2), bend(3), bend(4), bend(5)];
-  fingerYs.forEach((fy, index) => drawTwinFinger(ctx, palmX + palmW, fy, fingerBends[index], 0, scale));
+  // 四指（食指/中指/无名指/小指）从手掌顶部伸出
+  const fingerConfigs = [
+    { x: -0.023, bendIndex: 2, lengths: [0.042, 0.038, 0.032] },
+    { x: -0.008, bendIndex: 3, lengths: [0.046, 0.042, 0.034] },
+    { x: 0.008, bendIndex: 4, lengths: [0.044, 0.04, 0.032] },
+    { x: 0.023, bendIndex: 5, lengths: [0.038, 0.034, 0.028] },
+  ] as const;
+  const fingers = fingerConfigs.map(cfg => {
+    const finger = buildTwinFinger(boneMat, [...cfg.lengths], 0.018, 0.018, [0.55, 0.6, 0.5]);
+    finger.root.position.set(cfg.x, 0.065, 0);
+    finger.bendIndex = cfg.bendIndex;
+    group.add(finger.root);
+    const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.011, 10, 8), jointMat);
+    knuckle.position.set(cfg.x, 0.065, 0);
+    group.add(knuckle);
+    return finger;
+  });
 
-  // 拇指从手掌顶部伸出，横摆控制根部摆角
-  const thumbSwing = bend(1);
-  const thumbBend = bend(0);
-  const thumbBase = -Math.PI / 2 + (thumbSwing - 0.5) * 0.5;
-  drawTwinFinger(ctx, palmX + palmW * 0.42, palmY + 4 * scale, thumbBend, thumbBase, scale * 0.92);
+  // 拇指：从手掌左侧伸出，横摆控制根部摆动，弯曲控制三段屈曲
+  const thumb = buildTwinFinger(boneMat, [0.034, 0.028, 0.024], 0.02, 0.02, [0.5, 0.55, 0.45]);
+  thumb.bendIndex = 0;
+  const thumbSwingPivot = new THREE.Group();
+  thumbSwingPivot.position.set(-0.052, 0.02, 0.002);
+  thumbSwingPivot.rotation.z = 0.9;
+  thumbSwingPivot.add(thumb.root);
+  group.add(thumbSwingPivot);
+  const thumbTip = new THREE.Mesh(new THREE.SphereGeometry(0.011, 10, 8), tipMat);
+  thumbTip.position.set(-0.052, 0.02, 0.002);
+  group.add(thumbTip);
+
+  return { group, fingers, thumb, thumbSwingPivot };
+}
+
+/** 用归一化关节值（0=完全弯曲, 1=完全张开）更新模型姿态。 */
+function updateTwinHand(rig: TwinHandRig, values: number[]): void {
+  const bendFactor = (index: number) => {
+    const v = Math.max(0, Math.min(1, values[index] ?? 0));
+    return 1 - v; // 1=张开 → 0 弯曲角；0=弯曲 → 最大弯曲角
+  };
+  rig.fingers.forEach(finger => {
+    const f = bendFactor(finger.bendIndex);
+    finger.segments.forEach(seg => { seg.pivot.rotation.x = f * seg.maxBend; });
+  });
+  const thumbBend = bendFactor(0);
+  rig.thumb.segments.forEach(seg => { seg.pivot.rotation.x = thumbBend * seg.maxBend; });
+  // 拇指横摆：1=张开(外摆) 0=闭合(贴掌)
+  const swing = Math.max(0, Math.min(1, values[1] ?? 0));
+  rig.thumbSwingPivot.rotation.z = 0.9 - swing * 0.75;
 }
 
 
@@ -369,24 +379,67 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const applyConnection = useCallback((snapshot: ConnectionSnapshot) => { connectionRef.current = snapshot; setConnection(snapshot); }, []);
   lockedRef.current = isLocked;
 
-  // 数字孪生：侧视机械手随关节值（遥测或滑块）实时绘制
+  // 数字孪生：Three.js 3D 机械手随关节值（遥测或滑块）实时运动
   useEffect(() => {
     const canvas = twinCanvasRef.current;
     if (!canvas) return;
-    const render = () => {
-      const ctx = canvas.getContext('2d');
-      if (!ctx || canvas.clientWidth === 0) return;
-      const width = canvas.clientWidth;
-      const height = canvas.clientHeight;
-      const ratio = window.devicePixelRatio || 1;
-      if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) { canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); }
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      drawTwinHand(ctx, valuesRef.current, width, height);
+    let disposed = false;
+    let raf = 0;
+
+    const rig = buildTwinHand();
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 10);
+    camera.position.set(0, 0.02, 0.42);
+    camera.lookAt(0, 0.01, 0);
+    scene.add(rig.group);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const key = new THREE.DirectionalLight(0xffffff, 1.1);
+    key.position.set(0.6, 0.9, 0.8);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x9eb5ff, 0.45);
+    fill.position.set(-0.6, -0.2, 0.4);
+    scene.add(fill);
+    rig.group.rotation.x = -0.35;
+    rig.group.rotation.y = -0.35;
+    rig.group.scale.setScalar(1.35);
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setClearColor(0x000000, 0);
+
+    const resize = () => {
+      if (disposed || canvas.clientWidth === 0 || canvas.clientHeight === 0) return;
+      renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+      camera.aspect = canvas.clientWidth / canvas.clientHeight;
+      camera.updateProjectionMatrix();
     };
-    render();
-    const observer = new ResizeObserver(render);
+    resize();
+    const observer = new ResizeObserver(resize);
     observer.observe(canvas);
-    return () => observer.disconnect();
+
+    const animate = () => {
+      if (disposed) return;
+      updateTwinHand(rig, valuesRef.current);
+      rig.group.rotation.y += 0.004;
+      renderer.render(scene, camera);
+      raf = requestAnimationFrame(animate);
+    };
+    raf = requestAnimationFrame(animate);
+
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+      renderer.dispose();
+      scene.traverse(obj => {
+        if (obj instanceof THREE.Mesh) {
+          obj.geometry.dispose();
+          const material = obj.material;
+          if (Array.isArray(material)) material.forEach(m => m.dispose());
+          else material.dispose();
+        }
+      });
+    };
   }, [values]);
 
   useEffect(() => { valuesRef.current = values; }, [values]);
