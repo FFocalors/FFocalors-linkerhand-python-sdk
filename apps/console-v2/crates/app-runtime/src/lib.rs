@@ -318,10 +318,19 @@ impl AppRuntime {
             .start_approach(now_ms, &current, &target)
             .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
-    pub fn grasp_start(&mut self, degraded: bool, _now_ms: u64) -> Result<(), AppRuntimeError> {
+    pub fn grasp_start(
+        &mut self,
+        preset_id: &str,
+        degraded: bool,
+        _now_ms: u64,
+    ) -> Result<(), AppRuntimeError> {
+        // P0: preset-specific closure parameters
+        if let Some(preset) = adaptive_grasp::GraspPreset::from_id(preset_id) {
+            self.grasp.set_preset(preset);
+        }
         let config = adaptive_grasp::GraspConfig {
             allow_degraded_without_tactile: degraded,
-            ..adaptive_grasp::GraspConfig::default()
+            ..self.grasp.config().clone()
         };
         self.grasp.set_config(config);
         self.grasp
@@ -482,9 +491,9 @@ impl ui::GraspPort for AppRuntime {
             },
         ]
     }
-    fn run_preset(&mut self, _id: &str) -> Result<(), AppRuntimeError> {
+    fn run_preset(&mut self, id: &str) -> Result<(), AppRuntimeError> {
         if self.grasp.is_available() {
-            Ok(())
+            self.grasp_start(id, false, 0)
         } else {
             Err(AppRuntimeError::Unsupported(
                 "该型号暂不支持智能自适应抓取。".into(),

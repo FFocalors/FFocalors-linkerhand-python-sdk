@@ -88,25 +88,57 @@ function actionController(runtime: ConsolePorts, simulator: boolean): ActionCont
 }
 
 function graspController(runtime: ConsolePorts, simulator: boolean): GraspController {
+  const JOINT_NAMES = ['拇指弯曲', '拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小指弯曲'];
+  const jointName = (i: number) => JOINT_NAMES[i] ?? `J${i + 1}`;
+  const makeJoints = (count: number) => Array.from({ length: count }, (_, i) => ({
+    index: i,
+    name: jointName(i),
+    state: 'idle' as import('../features/smart-grasp').GraspJointState,
+    contactScore: 0,
+    load: 0,
+    loadMax: 255,
+  }));
   let state: GraspControllerState = {
     phase: 'idle',
     tactileAvailable: false,
     rawTouch: null,
     degraded: false,
     calibrated: false,
-    joints: Array.from({ length: 6 }, (_, i) => ({
-      index: i,
-      name: ['拇指弯曲', '拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小指弯曲'][i] ?? `J${i + 1}`,
-      state: 'idle' as import('../features/smart-grasp').GraspJointState,
-      contactScore: 0,
-      load: 0,
-      loadMax: 255,
-    })),
+    joints: makeJoints(6),
     jointCount: 6,
   };
   const listeners = stateListeners<GraspControllerState>();
   const set = (next: Partial<GraspControllerState>) => { state = { ...state, ...next }; listeners.emit(state); };
   const extras = simulator ? undefined : tauriRuntimeExtras.grasp;
+  /** Map the Tauri wire state into the feature-local state (phase + joints). */
+  const mapRemote = (s: import('../shared/contracts/tauri-runtime').TauriGraspState): GraspControllerState => {
+    const phaseMap: Record<string, GraspControllerState['phase']> = {
+      idle: 'idle', calibrating: 'calibrating', ready: 'calibrated', approach: 'approaching',
+      closingCoarse: 'closingCoarse', closingFine: 'closingFine', preloading: 'preloading',
+      holding: 'holding', releasing: 'releasing', aborted: 'aborted', failed: 'failed',
+    };
+    const remoteJoints = s.joints ?? [];
+    const joints = remoteJoints.length > 0
+      ? remoteJoints.map(j => ({
+          index: j.index,
+          name: jointName(j.index),
+          state: j.state as GraspControllerState['joints'][number]['state'],
+          contactScore: j.contactScore,
+          load: 0,
+          loadMax: 255,
+        }))
+      : makeJoints(Math.max(remoteJoints.length, 6));
+    return {
+      phase: phaseMap[s.phase] ?? 'idle',
+      failure: s.failure,
+      tactileAvailable: s.tactileAvailable,
+      rawTouch: s.rawTouch ?? null,
+      degraded: s.degraded,
+      calibrated: phaseMap[s.phase] === 'calibrated' || phaseMap[s.phase] === 'holding' || phaseMap[s.phase] === 'approaching' || phaseMap[s.phase] === 'closingCoarse' || phaseMap[s.phase] === 'closingFine' || phaseMap[s.phase] === 'preloading',
+      joints,
+      jointCount: joints.length,
+    };
+  };
   return {
     async calibrate() {
       if (extras) { await extras.calibrate(); return; }
@@ -119,24 +151,27 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
       if (extras) { await extras.approach(); return; }
       set({ phase: 'approaching' });
       await new Promise(r => setTimeout(r, 600));
-      // Move to ready for grasp
     },
-    async startGrasp(_presetId, degraded) {
-      if (extras) { await extras.startGrasp(degraded); return; }
+    async startGrasp(presetId, degraded) {
+      if (extras) { await extras.startGrasp(presetId, degraded); return; }
       // 首次抓取强制要求先完成空载标定（标定结果仅会话内缓存）
       if (!state.calibrated) {
         set({ phase: 'failed', failure: { code: 'no_calibration', message: '未完成空载标定，请先执行标定后再开始抓取。' } });
         return;
       }
+      // P0: preset-aware simulation — soft contacts easily, precision needs
+      // strict scoring (mirrors the Rust GraspConfig preset parameters).
+      const preset = presetId || 'cube';
+      const contactRate = preset === 'soft' ? 0.85 : preset === 'precision' ? 0.45 : 0.7;
+      const fineLoad = preset === 'soft' ? 40 : preset === 'precision' ? 70 : 55;
       // Simulate full grasp flow: coarse → fine → preload → holding → success
       set({ phase: 'closingCoarse', degraded });
-      // Update joints to closingCoarse
-      const coarseJoints = state.joints.map(j => ({ ...j, state: j.index === 1 ? 'frozen' as const : 'closingCoarse' as const, contactScore: 0, load: 20 + Math.floor(Math.random() * 15) }));
+      const coarseJoints = state.joints.map(j => ({ ...j, state: j.index === 1 ? 'frozen' as const : 'closingCoarse' as const, contactScore: 0, load: 15 + Math.floor(Math.random() * 12) }));
       set({ joints: coarseJoints });
       await new Promise(r => setTimeout(r, 800));
 
       set({ phase: 'closingFine' });
-      const fineJoints = coarseJoints.map(j => ({ ...j, state: j.index === 1 ? 'frozen' as const : 'closingFine' as const, contactScore: 0.3 + Math.random() * 0.3, load: 40 + Math.floor(Math.random() * 20) }));
+      const fineJoints = coarseJoints.map(j => ({ ...j, state: j.index === 1 ? 'frozen' as const : 'closingFine' as const, contactScore: 0.3 + Math.random() * 0.3, load: fineLoad + Math.floor(Math.random() * 18) }));
       set({ joints: fineJoints });
       await new Promise(r => setTimeout(r, 600));
 
@@ -144,12 +179,12 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
       set({ phase: 'preloading' });
       const preloadJoints = fineJoints.map(j => {
         if (j.index === 1) return { ...j, state: 'frozen' as const };
-        const contacted = Math.random() > 0.3;
+        const contacted = Math.random() < contactRate;
         return {
           ...j,
           state: contacted ? 'contactConfirmed' as const : 'limitReached' as const,
           contactScore: contacted ? 0.85 + Math.random() * 0.15 : 0,
-          load: contacted ? 80 + Math.floor(Math.random() * 40) : 30 + Math.floor(Math.random() * 10),
+          load: contacted ? 70 + Math.floor(Math.random() * 35) : 25 + Math.floor(Math.random() * 10),
         };
       });
       set({ joints: preloadJoints });
@@ -173,7 +208,11 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
       set({ phase: 'idle' });
     },
     getState: async () => state,
-    subscribe(listener) { const remove = listeners.add(listener); const remote = extras?.subscribe((s: any) => listener(s as GraspControllerState)); return () => { remove(); remote?.(); }; },
+    subscribe(listener) {
+      const remove = listeners.add(listener);
+      const remote = extras?.subscribe((s: import('../shared/contracts/tauri-runtime').TauriGraspState) => listener(mapRemote(s)));
+      return () => { remove(); remote?.(); };
+    },
   };
 }
 

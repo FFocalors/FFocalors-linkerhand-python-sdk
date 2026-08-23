@@ -3,7 +3,9 @@ import type { AppError, ConsolePorts, DeviceCapabilities, DeviceConfig, JointTar
 
 /** Runtime wire events stay feature-agnostic; app composition maps them to feature-local state. */
 export type TauriActionState = { state: 'idle' | 'recording' | 'recordingPaused' | 'playing' | 'paused' | 'completed' | 'cancelled' | 'error'; actionId?: string; progress: number; detail?: string };
-export type TauriGraspState = { phase: 'idle' | 'calibrating' | 'ready' | 'approach' | 'grasping' | 'holding' | 'releasing' | 'aborted' | 'failed'; failure?: { code: string; message: string }; tactileAvailable: boolean; rawTouch?: number[] | null; degraded: boolean };
+export type TauriGraspPhase = 'idle' | 'calibrating' | 'ready' | 'approach' | 'closingCoarse' | 'closingFine' | 'preloading' | 'holding' | 'releasing' | 'aborted' | 'failed';
+export type TauriGraspJointState = 'idle' | 'closingCoarse' | 'closingFine' | 'contactCandidate' | 'contactConfirmed' | 'frozen' | 'limitReached' | 'error';
+export type TauriGraspState = { phase: TauriGraspPhase; failure?: { code: string; message: string }; tactileAvailable: boolean; rawTouch?: number[] | null; degraded: boolean; joints?: { index: number; state: TauriGraspJointState; contactScore: number }[] };
 
 const unsupported = (code: string, message: string): AppError => ({ code, message, retryable: false, details: null });
 const unavailable = (name: string): Promise<never> => Promise.reject(unsupported('UNSUPPORTED', `${name} is not available in the runtime adapter`));
@@ -36,7 +38,7 @@ export const tauriRuntimeExtras = {
     subscribe: (listener: (value: TauriActionState) => void) => subscribeChannel('action_subscribe', 'action_unsubscribe', listener),
   },
   grasp: {
-    calibrate: () => invoke<void>('grasp_calibrate'), completeCalibration: () => invoke<void>('grasp_complete_calibration'), approach: () => invoke<void>('grasp_approach'), startGrasp: (degraded: boolean) => invoke<void>('grasp_start', { degraded }), release: () => invoke<void>('grasp_release'), abort: () => invoke<void>('grasp_abort'),
+    calibrate: () => invoke<void>('grasp_calibrate'), completeCalibration: () => invoke<void>('grasp_complete_calibration'), approach: () => invoke<void>('grasp_approach'), startGrasp: (preset: string, degraded: boolean) => invoke<void>('grasp_start', { preset, degraded }), release: () => invoke<void>('grasp_release'), abort: () => invoke<void>('grasp_abort'),
     subscribe: (listener: (value: TauriGraspState) => void) => subscribeChannel('grasp_subscribe', 'grasp_unsubscribe', listener),
   },
 };
@@ -75,7 +77,7 @@ export const tauriRuntime: ConsolePorts = {
     },
   },
   actions: { list: () => invoke('action_list'), delete: (id: string) => invoke<void>('action_delete', { id }) },
-  grasp: { listPresets: () => invoke('grasp_presets'), runPreset: () => invoke<void>('grasp_start', { degraded: false }) },
+  grasp: { listPresets: () => invoke('grasp_presets'), runPreset: () => invoke<void>('grasp_start', { preset: 'cube', degraded: false }) },
   vision: { propose: () => unavailable('vision proposals'), sync: () => unavailable('vision sync') },
   logs: { list: (limit = 20) => invoke('logs_list', { limit: Math.min(limit, 512) }) },
 };

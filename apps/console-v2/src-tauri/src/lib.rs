@@ -53,6 +53,15 @@ struct GraspStateEvent {
     tactile_available: bool,
     raw_touch: Option<Vec<u8>>,
     degraded: bool,
+    /// Per-joint adaptive states for the UI (idle/coarse/fine/candidate/confirmed/frozen/limit/error).
+    joints: Vec<GraspJointEvent>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GraspJointEvent {
+    index: usize,
+    state: String,
+    contact_score: f32,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct GraspFailure {
@@ -174,6 +183,7 @@ enum ActorRequest {
         reply: Reply<()>,
     },
     GraspStart {
+        preset: String,
         degraded: bool,
         reply: Reply<()>,
     },
@@ -591,10 +601,10 @@ impl RuntimeActor {
                         .map_err(map_error),
                 );
             }
-            ActorRequest::GraspStart { degraded, reply } => {
+            ActorRequest::GraspStart { preset, degraded, reply } => {
                 let _ = reply.send(
                     self.runtime
-                        .grasp_start(degraded, now_ms())
+                        .grasp_start(&preset, degraded, now_ms())
                         .map_err(map_error),
                 );
             }
@@ -697,13 +707,16 @@ impl RuntimeActor {
             .retain(|channel| channel.send(value.clone()).is_ok());
     }
     fn broadcast_grasp(&mut self) {
+        use adaptive_grasp::GraspJointState;
         use adaptive_grasp::GraspState;
         let phase = match self.runtime.grasp.state() {
             GraspState::Idle => "idle",
             GraspState::Calibrating => "calibrating",
             GraspState::Ready => "ready",
             GraspState::Approaching => "approach",
-            GraspState::Grasping => "grasping",
+            GraspState::ClosingCoarse | GraspState::Grasping => "closingCoarse",
+            GraspState::ClosingFine => "closingFine",
+            GraspState::Preloading => "preloading",
             GraspState::Holding => "holding",
             GraspState::Releasing => "releasing",
             GraspState::Aborted => "aborted",
@@ -714,12 +727,36 @@ impl RuntimeActor {
             code: format!("{reason:?}"),
             message: reason.operator_message().into(),
         });
+        let joints = self
+            .runtime
+            .grasp
+            .joint_states()
+            .iter()
+            .zip(self.runtime.grasp.contact_scores().iter())
+            .enumerate()
+            .map(|(index, (state, score))| GraspJointEvent {
+                index,
+                state: match state {
+                    GraspJointState::Idle => "idle",
+                    GraspJointState::ClosingCoarse => "closingCoarse",
+                    GraspJointState::ClosingFine => "closingFine",
+                    GraspJointState::ContactCandidate => "contactCandidate",
+                    GraspJointState::ContactConfirmed => "contactConfirmed",
+                    GraspJointState::Frozen => "frozen",
+                    GraspJointState::LimitReached => "limitReached",
+                    GraspJointState::Error => "error",
+                }
+                .into(),
+                contact_score: *score as f32,
+            })
+            .collect();
         let value = GraspStateEvent {
             phase: phase.into(),
             failure,
             tactile_available: telemetry.is_some_and(|t| !t.raw_touch.is_empty()),
             raw_touch: telemetry.map(|t| t.raw_touch.clone()),
             degraded: self.runtime.grasp.degraded(),
+            joints,
         };
         self.grasp_channels
             .retain(|channel| channel.send(value.clone()).is_ok());
@@ -1322,9 +1359,11 @@ mod commands {
     #[tauri::command]
     pub async fn grasp_start(
         state: tauri::State<'_, RuntimeState>,
+        preset: String,
         degraded: bool,
     ) -> Result<(), AppError> {
         dispatch(state.0.clone(), |reply| ActorRequest::GraspStart {
+            preset,
             degraded,
             reply,
         })
@@ -1984,6 +2023,7 @@ mod tests {
             .unwrap();
         runtime
             .block_on(dispatch(handle.clone(), |reply| ActorRequest::GraspStart {
+                preset: "cube".into(),
                 degraded: true,
                 reply,
             }))
@@ -1991,7 +2031,7 @@ mod tests {
         let state = events_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         assert!(matches!(
             state.phase.as_str(),
-            "calibrating" | "ready" | "approach" | "grasping"
+            "calibrating" | "ready" | "approach" | "closingCoarse"
         ));
         std::thread::sleep(Duration::from_millis(120));
         let grasp_writes = writes.lock().unwrap().clone();
