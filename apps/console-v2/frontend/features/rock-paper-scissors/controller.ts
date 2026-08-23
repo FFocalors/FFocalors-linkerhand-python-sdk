@@ -44,7 +44,7 @@ export class RpsGameController {
   subscribe(listener: RpsControllerListener): () => void { this.listeners.add(listener); listener(this.state); return () => this.listeners.delete(listener); }
   snapshot(): RpsState { return this.state; }
 
-  attach(video: HTMLVideoElement): void {
+  attach(video: HTMLVideoElement | null): void {
     this.unsubscribeRuntime?.(); this.unsubscribeResults?.(); this.video = video;
     this.unsubscribeRuntime = this.runtime.subscribe(snapshot => this.onRuntime(snapshot));
     this.unsubscribeResults = this.runtime.onResult(result => this.onResult(result));

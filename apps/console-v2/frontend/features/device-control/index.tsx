@@ -121,6 +121,89 @@ function jointName(index: number, count: number): string {
   return count > 0 && index < O6_JOINT_NAMES.length ? O6_JOINT_NAMES[index] : `J${index + 1}`;
 }
 
+/** SDK 关节 → 侧视机械手绘制。O6 六关节：0 拇指弯曲(1=张开) 1 拇指横摆 2 食指 3 中指 4 无名指 5 小指。 */
+const TWIN_FINGER_SEGMENTS = [34, 27, 20];
+const TWIN_FINGER_COLORS = ['#3568f2', '#208c60', '#a9680f'];
+const TWIN_BEND_MAX = [1.15, 0.95, 0.85];
+
+function drawLimbSegment(ctx: CanvasRenderingContext2D, x: number, y: number, angle: number, length: number, thickness: number, color: string): { x: number; y: number } {
+  const x2 = x + Math.cos(angle) * length;
+  const y2 = y + Math.sin(angle) * length;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = thickness;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  return { x: x2, y: y2 };
+}
+
+function drawTwinFinger(ctx: CanvasRenderingContext2D, x: number, y: number, bend: number, baseAngle: number, scale: number): void {
+  let angle = baseAngle;
+  let px = x;
+  let py = y;
+  TWIN_FINGER_SEGMENTS.forEach((length, index) => {
+    angle += (1 - bend) * TWIN_BEND_MAX[index];
+    const next = drawLimbSegment(ctx, px, py, angle, length * scale, (7 - index * 1.4) * scale, TWIN_FINGER_COLORS[index % TWIN_FINGER_COLORS.length]);
+    px = next.x;
+    py = next.y;
+  });
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.arc(px, py, 3.4 * scale, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = '#17202d';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+}
+
+function drawTwinHand(ctx: CanvasRenderingContext2D, values: number[], width: number, height: number): void {
+  ctx.clearRect(0, 0, width, height);
+  const hasSignal = values.length > 0 && values.some(v => v > 0);
+  if (!hasSignal) {
+    ctx.font = '600 12px ui-monospace, SFMono-Regular, Consolas, monospace';
+    ctx.fillStyle = '#94a3b8';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('等待关节遥测…', width / 2, height / 2);
+    return;
+  }
+  const bend = (index: number) => Math.max(0, Math.min(1, values[index] ?? 0));
+  const scale = Math.max(0.5, Math.min(1, height / 260));
+  const palmW = 46 * scale;
+  const palmH = Math.min(height * 0.72, 240 * scale);
+  const palmX = width * 0.16 - palmW / 2;
+  const palmY = (height - palmH) / 2;
+
+  // 手掌
+  ctx.fillStyle = '#d7e2f5';
+  ctx.strokeStyle = '#3568f2';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(palmX, palmY, palmW, palmH, 10 * scale);
+  ctx.fill();
+  ctx.stroke();
+  // 腕部
+  ctx.fillStyle = '#c3d2ec';
+  ctx.beginPath();
+  ctx.roundRect(palmX + palmW / 2 - 12 * scale, palmY + palmH - 10 * scale, 24 * scale, 18 * scale, 6 * scale);
+  ctx.fill();
+  ctx.stroke();
+
+  // 四指从手掌右侧伸出
+  const fingerYs = [palmY + palmH * 0.22, palmY + palmH * 0.4, palmY + palmH * 0.58, palmY + palmH * 0.76];
+  const fingerBends = [bend(2), bend(3), bend(4), bend(5)];
+  fingerYs.forEach((fy, index) => drawTwinFinger(ctx, palmX + palmW, fy, fingerBends[index], 0, scale));
+
+  // 拇指从手掌顶部伸出，横摆控制根部摆角
+  const thumbSwing = bend(1);
+  const thumbBend = bend(0);
+  const thumbBase = -Math.PI / 2 + (thumbSwing - 0.5) * 0.5;
+  drawTwinFinger(ctx, palmX + palmW * 0.42, palmY + 4 * scale, thumbBend, thumbBase, scale * 0.92);
+}
+
+
 interface JointSliderProps {
   index: number;
   value: number;
@@ -285,6 +368,26 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const twinCanvasRef = useRef<HTMLCanvasElement>(null);
   const applyConnection = useCallback((snapshot: ConnectionSnapshot) => { connectionRef.current = snapshot; setConnection(snapshot); }, []);
   lockedRef.current = isLocked;
+
+  // 数字孪生：侧视机械手随关节值（遥测或滑块）实时绘制
+  useEffect(() => {
+    const canvas = twinCanvasRef.current;
+    if (!canvas) return;
+    const render = () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx || canvas.clientWidth === 0) return;
+      const width = canvas.clientWidth;
+      const height = canvas.clientHeight;
+      const ratio = window.devicePixelRatio || 1;
+      if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) { canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); }
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      drawTwinHand(ctx, valuesRef.current, width, height);
+    };
+    render();
+    const observer = new ResizeObserver(render);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [values]);
 
   useEffect(() => { valuesRef.current = values; }, [values]);
   useEffect(() => { connectionRef.current = connection; }, [connection]);
