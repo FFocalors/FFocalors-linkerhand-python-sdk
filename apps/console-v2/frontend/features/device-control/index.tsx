@@ -4,6 +4,8 @@ import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, 
 import { Badge, Card } from '../../shared/ui';
 import { Pencil, Trash2, X } from 'lucide-react';
 import * as THREE from 'three';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { HAND_MODEL, O6_DRIVE_RULES, sdkNormalizedToJointAngles } from './handModel';
 
 /** Feature-local controller seam. The runtime adapter can implement this without changing shared contracts. */
 export interface DeviceControlController {
@@ -122,95 +124,76 @@ function jointName(index: number, count: number): string {
   return count > 0 && index < O6_JOINT_NAMES.length ? O6_JOINT_NAMES[index] : `J${index + 1}`;
 }
 
-// ---- Three.js 数字孪生机械手模型 ----
-type TwinSegment = { pivot: THREE.Group; maxBend: number };
-type TwinFinger = { root: THREE.Group; segments: TwinSegment[]; bendIndex: number };
-type TwinHandRig = { group: THREE.Group; fingers: TwinFinger[]; thumb: TwinFinger; thumbSwingPivot: THREE.Group };
+// ---- Three.js STL 数字孪生机械手模型 ----
+type StlRig = {
+  group: THREE.Group;
+  pivots: Record<string, THREE.Group>;
+  loaded: boolean;
+};
 
-function buildTwinFinger(material: THREE.Material, segmentLengths: number[], width: number, height: number, maxBends: number[]): TwinFinger {
-  const root = new THREE.Group();
-  const segments: TwinSegment[] = [];
-  let cursor = new THREE.Group();
-  root.add(cursor);
-  segmentLengths.forEach((length, i) => {
-    const pivot = new THREE.Group();
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, length, height), material);
-    mesh.position.y = length / 2;
-    pivot.add(mesh);
-    cursor.add(pivot);
-    segments.push({ pivot, maxBend: maxBends[i] });
-    const next = new THREE.Group();
-    next.position.y = length;
-    pivot.add(next);
-    cursor = next;
-  });
-  return { root, segments, bendIndex: -1 };
-}
-
-/** 构建 O6 六关节机械手 3D 模型。关节索引：0 拇指弯曲 1 拇指横摆 2 食指 3 中指 4 无名指 5 小指。 */
-function buildTwinHand(): TwinHandRig {
+/** 异步加载 STL 网格并按 URDF 关节层次组装场景图。 */
+async function buildTwinHand(): Promise<StlRig> {
   const group = new THREE.Group();
-  const palmMat = new THREE.MeshStandardMaterial({ color: 0xc3d2ec, roughness: 0.55, metalness: 0.25 });
-  const boneMat = new THREE.MeshStandardMaterial({ color: 0xdfe7f2, roughness: 0.45, metalness: 0.35 });
-  const jointMat = new THREE.MeshStandardMaterial({ color: 0x3568f2, roughness: 0.35, metalness: 0.55 });
-  const tipMat = new THREE.MeshStandardMaterial({ color: 0xa9680f, roughness: 0.5, metalness: 0.3 });
+  const loader = new STLLoader();
+  const geometryMap = new Map<string, THREE.BufferGeometry>();
+  await Promise.all(
+    Object.entries(HAND_MODEL.links).map(([name, url]) =>
+      loader.loadAsync(url).then((geometry) => {
+        geometryMap.set(name, geometry);
+      }).catch(() => undefined)
+    )
+  );
 
-  // 手掌 + 腕部
-  const palm = new THREE.Mesh(new THREE.BoxGeometry(0.085, 0.13, 0.04), palmMat);
-  palm.position.y = 0;
-  group.add(palm);
-  const wrist = new THREE.Mesh(new THREE.CylinderGeometry(0.026, 0.03, 0.075, 14), palmMat);
-  wrist.position.y = -0.1;
-  group.add(wrist);
+  const baseMat = new THREE.MeshStandardMaterial({ color: 0x9aa7bd, roughness: 0.55, metalness: 0.5 });
+  const thumbMat = new THREE.MeshStandardMaterial({ color: 0xd0d8e8, roughness: 0.45, metalness: 0.35 });
+  const fingerMat = new THREE.MeshStandardMaterial({ color: 0xdfe7f2, roughness: 0.45, metalness: 0.35 });
 
-  // 四指（食指/中指/无名指/小指）从手掌顶部伸出
-  const fingerConfigs = [
-    { x: -0.023, bendIndex: 2, lengths: [0.042, 0.038, 0.032] },
-    { x: -0.008, bendIndex: 3, lengths: [0.046, 0.042, 0.034] },
-    { x: 0.008, bendIndex: 4, lengths: [0.044, 0.04, 0.032] },
-    { x: 0.023, bendIndex: 5, lengths: [0.038, 0.034, 0.028] },
-  ] as const;
-  const fingers = fingerConfigs.map(cfg => {
-    const finger = buildTwinFinger(boneMat, [...cfg.lengths], 0.018, 0.018, [0.55, 0.6, 0.5]);
-    finger.root.position.set(cfg.x, 0.065, 0);
-    finger.bendIndex = cfg.bendIndex;
-    group.add(finger.root);
-    const knuckle = new THREE.Mesh(new THREE.SphereGeometry(0.011, 10, 8), jointMat);
-    knuckle.position.set(cfg.x, 0.065, 0);
-    group.add(knuckle);
-    return finger;
-  });
+  const baseGeom = geometryMap.get(HAND_MODEL.baseLink);
+  if (baseGeom) {
+    group.add(new THREE.Mesh(baseGeom, baseMat));
+  }
 
-  // 拇指：从手掌左侧伸出，横摆控制根部摆动，弯曲控制三段屈曲
-  const thumb = buildTwinFinger(boneMat, [0.034, 0.028, 0.024], 0.02, 0.02, [0.5, 0.55, 0.45]);
-  thumb.bendIndex = 0;
-  const thumbSwingPivot = new THREE.Group();
-  thumbSwingPivot.position.set(-0.052, 0.02, 0.002);
-  thumbSwingPivot.rotation.z = 0.9;
-  thumbSwingPivot.add(thumb.root);
-  group.add(thumbSwingPivot);
-  const thumbTip = new THREE.Mesh(new THREE.SphereGeometry(0.011, 10, 8), tipMat);
-  thumbTip.position.set(-0.052, 0.02, 0.002);
-  group.add(thumbTip);
+  const linkNode: Record<string, THREE.Object3D> = { [HAND_MODEL.baseLink]: group };
+  const pivots: Record<string, THREE.Group> = {};
 
-  return { group, fingers, thumb, thumbSwingPivot };
+  for (const joint of HAND_MODEL.joints) {
+    const pivot = new THREE.Group();
+    pivot.name = joint.name;
+    pivot.position.set(joint.origin[0], joint.origin[1], joint.origin[2]);
+    pivot.rotation.set(joint.rpy[0], joint.rpy[1], joint.rpy[2], 'XYZ');
+    pivot.userData.baseQuat = pivot.quaternion.clone();
+    pivot.userData.axis = joint.axis.slice() as [number, number, number];
+
+    const parent = joint.parent === HAND_MODEL.baseLink ? group : linkNode[joint.parent] ?? group;
+    parent.add(pivot);
+
+    const geom = geometryMap.get(joint.child);
+    if (geom) {
+      const material = joint.child.startsWith('thumb_') ? thumbMat : joint.child === HAND_MODEL.baseLink ? baseMat : fingerMat;
+      pivot.add(new THREE.Mesh(geom, material));
+    }
+
+    linkNode[joint.child] = pivot;
+    pivots[joint.name] = pivot;
+  }
+
+  return { group, pivots, loaded: true };
 }
 
-/** 用归一化关节值（0=完全弯曲, 1=完全张开）更新模型姿态。 */
-function updateTwinHand(rig: TwinHandRig, values: number[]): void {
-  const bendFactor = (index: number) => {
-    const v = Math.max(0, Math.min(1, values[index] ?? 0));
-    return 1 - v; // 1=张开 → 0 弯曲角；0=弯曲 → 最大弯曲角
-  };
-  rig.fingers.forEach(finger => {
-    const f = bendFactor(finger.bendIndex);
-    finger.segments.forEach(seg => { seg.pivot.rotation.x = f * seg.maxBend; });
-  });
-  const thumbBend = bendFactor(0);
-  rig.thumb.segments.forEach(seg => { seg.pivot.rotation.x = thumbBend * seg.maxBend; });
-  // 拇指横摆：1=张开(外摆) 0=闭合(贴掌)
-  const swing = Math.max(0, Math.min(1, values[1] ?? 0));
-  rig.thumbSwingPivot.rotation.z = 0.9 - swing * 0.75;
+/** 用 SDK 归一化关节值更新 STL 机械手姿态。 */
+function updateTwinHand(rig: StlRig, values: number[]): void {
+  if (!rig.loaded) return;
+  const angles = sdkNormalizedToJointAngles(values, O6_DRIVE_RULES, HAND_MODEL);
+  const axisVec = new THREE.Vector3();
+  const angleQ = new THREE.Quaternion();
+  for (const [jointName, angle] of Object.entries(angles)) {
+    const pivot = rig.pivots[jointName];
+    if (!pivot) continue;
+    const { baseQuat, axis } = pivot.userData as { baseQuat: THREE.Quaternion; axis: [number, number, number] };
+    axisVec.set(axis[0], axis[1], axis[2]).normalize();
+    angleQ.setFromAxisAngle(axisVec, angle);
+    pivot.quaternion.copy(baseQuat.clone().multiply(angleQ));
+  }
 }
 
 
@@ -351,7 +334,7 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
 
 export function DeviceControl({ device, telemetry, config, capabilities, locked = false, controller, quickActions = [{ id: 'safe-position', label: '回到安全位', detail: '由设备控制器执行' }], loops = [], onNavigateToDiagnostics }: DeviceControlProps) {
   const jointCount = Math.max(0, capabilities.jointCount);
-  const [values, setValues] = useState<number[]>(() => toVector([], jointCount));
+  const [values, setValues] = useState<number[]>(() => Array.from({ length: jointCount }, () => 250 / 255));
   const [live, setLive] = useState<TelemetrySnapshot>();
   const [connection, setConnection] = useState<ConnectionSnapshot>({ schemaVersion: capabilities.schemaVersion, deviceId: capabilities.deviceId, state: 'disconnected', attempt: 0, lastError: null });
   const [safetyLocked, setSafetyLocked] = useState(false);
@@ -376,33 +359,29 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const lockedRef = useRef(locked || safetyLocked);
   const isLocked = locked || safetyLocked;
   const twinCanvasRef = useRef<HTMLCanvasElement>(null);
+  const [twinReady, setTwinReady] = useState(false);
+  const [autoSpinOn, setAutoSpinOn] = useState(false);
+  const fittedDistRef = useRef(0);
+  const centerRef = useRef(new THREE.Vector3());
+  const yawRef = useRef(0);
+  const tiltRef = useRef(-Math.PI / 2);
+  const distanceRef = useRef(0);
+  const draggingRef = useRef(false);
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null);
+  const twinControlsRef = useRef<{ reset(): void } | null>(null);
   const applyConnection = useCallback((snapshot: ConnectionSnapshot) => { connectionRef.current = snapshot; setConnection(snapshot); }, []);
   lockedRef.current = isLocked;
 
-  // 数字孪生：Three.js 3D 机械手随关节值（遥测或滑块）实时运动
+  // 数字孪生：Three.js STL 机械手随关节值（遥测或滑块）实时运动
   useEffect(() => {
     const canvas = twinCanvasRef.current;
     if (!canvas) return;
     let disposed = false;
     let raf = 0;
 
-    const rig = buildTwinHand();
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(40, 1, 0.01, 10);
+    const camera = new THREE.PerspectiveCamera(40, 1, 0.001, 10);
     camera.position.set(0, 0.02, 0.42);
-    camera.lookAt(0, 0.01, 0);
-    scene.add(rig.group);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
-    const key = new THREE.DirectionalLight(0xffffff, 1.1);
-    key.position.set(0.6, 0.9, 0.8);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0x9eb5ff, 0.45);
-    fill.position.set(-0.6, -0.2, 0.4);
-    scene.add(fill);
-    rig.group.rotation.x = -0.35;
-    rig.group.rotation.y = -0.35;
-    rig.group.scale.setScalar(1.35);
-
     let renderer: THREE.WebGLRenderer | null = null;
     try {
       renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
@@ -423,17 +402,155 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     const observer = new ResizeObserver(resize);
     observer.observe(canvas);
 
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const key = new THREE.DirectionalLight(0xffffff, 1.1);
+    key.position.set(0.6, 0.9, 0.8);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0x9eb5ff, 0.45);
+    fill.position.set(-0.6, -0.2, 0.4);
+    scene.add(fill);
+
+    let rig: StlRig | null = null;
+    let autoSpin = false;
+    let lastClickTime = 0;
+
     const animate = () => {
       if (disposed || !renderer) return;
-      updateTwinHand(rig, valuesRef.current);
-      rig.group.rotation.y += 0.004;
+      if (rig) {
+        updateTwinHand(rig, valuesRef.current);
+      }
+      if (autoSpin && rig) {
+        yawRef.current += 0.005;
+        rig.group.rotation.set(tiltRef.current, yawRef.current, 0, 'YXZ');
+      }
       renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
     };
+
+    setTwinReady(false);
+    void buildTwinHand().then(loadedRig => {
+      if (disposed) return;
+      rig = loadedRig;
+      scene.add(rig.group);
+
+      // 1) Apply the upright orientation FIRST so the bounding box matches the visible model
+      yawRef.current = 0;
+      tiltRef.current = -Math.PI / 2;
+      rig.group.rotation.set(tiltRef.current, yawRef.current, 0, 'YXZ');
+
+      // 2) Now compute the box over the rotated model
+      const box = new THREE.Box3().setFromObject(rig.group);
+      const size = box.getSize(new THREE.Vector3());
+      const maxDim = Math.max(size.x, size.y, size.z);
+      // 防御：若网格未加载/包围盒为空，退回已知良好的相机位置，避免 NaN
+      if (!Number.isFinite(maxDim) || maxDim <= 0) {
+        camera.position.set(0, 0.02, 0.42);
+        camera.lookAt(0, 0.01, 0);
+        centerRef.current.set(0, 0.01, 0);
+        setTwinReady(true);
+        return;
+      }
+      const center = box.getCenter(new THREE.Vector3());
+      centerRef.current.copy(center);
+      const fovRad = THREE.MathUtils.degToRad(40);
+      const fittedDist = maxDim / (2 * Math.tan(fovRad / 2)) * 1.5;
+
+      camera.position.set(center.x, center.y, center.z + fittedDist);
+      camera.lookAt(center);
+
+      fittedDistRef.current = fittedDist;
+      distanceRef.current = fittedDist;
+
+      twinControlsRef.current = {
+        reset: () => {
+          const dist = fittedDistRef.current;
+          const c = centerRef.current;
+          if (dist <= 0) return;
+          yawRef.current = 0;
+          tiltRef.current = -Math.PI / 2;
+          distanceRef.current = dist;
+          autoSpin = false;
+          setAutoSpinOn(false);
+          if (rig) {
+            rig.group.rotation.set(tiltRef.current, yawRef.current, 0, 'YXZ');
+          }
+          camera.position.set(c.x, c.y, c.z + dist);
+          camera.lookAt(c);
+        },
+      };
+      setTwinReady(true);
+    }).catch(error => {
+      console.error('Failed to load STL hand model:', error);
+      setTwinReady(true);
+    });
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!draggingRef.current || !rig) return;
+      const last = lastPointerRef.current;
+      if (!last) return;
+      const dx = event.clientX - last.x;
+      const dy = event.clientY - last.y;
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+      yawRef.current += dx * 0.01;
+      tiltRef.current = Math.max(-Math.PI / 2 - 0.9, Math.min(-Math.PI / 2 + 0.9, tiltRef.current + dy * 0.01));
+      rig.group.rotation.set(tiltRef.current, yawRef.current, 0, 'YXZ');
+    };
+
+    const onPointerUp = () => {
+      draggingRef.current = false;
+      lastPointerRef.current = null;
+    };
+
+    const onPointerCancel = () => {
+      draggingRef.current = false;
+      lastPointerRef.current = null;
+    };
+
+    function onWheel(event: Event) {
+      if (!rig) return;
+      event.preventDefault();
+      const wheelEvent = event as WheelEvent;
+      const fitted = fittedDistRef.current;
+      if (fitted <= 0) return;
+      const minDist = fitted * 0.5;
+      const maxDist = fitted * 2;
+      const nextDist = Math.max(minDist, Math.min(maxDist, distanceRef.current * (wheelEvent.deltaY > 0 ? 1.1 : 0.9)));
+      distanceRef.current = nextDist;
+      const c = centerRef.current;
+      camera.position.set(c.x, c.y, c.z + nextDist);
+      camera.lookAt(c);
+    }
+
+    canvas.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (!rig) return;
+      const now = Date.now();
+      const isDoubleClick = now - lastClickTime < 400;
+      lastClickTime = isDoubleClick ? 0 : now;
+      if (isDoubleClick) {
+        autoSpin = true;
+        setAutoSpinOn(true);
+        draggingRef.current = false;
+        lastPointerRef.current = null;
+        return;
+      }
+      autoSpin = false;
+      setAutoSpinOn(false);
+      draggingRef.current = true;
+      lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    });
+    canvas.addEventListener('wheel', onWheel, { passive: false } as any);
+    window.addEventListener('pointermove', onPointerMove as EventListener);
+    window.addEventListener('pointerup', onPointerUp as EventListener);
+    window.addEventListener('pointercancel', onPointerCancel as EventListener);
+
     raf = requestAnimationFrame(animate);
 
     return () => {
       disposed = true;
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
+      canvas.removeEventListener('wheel', onWheel, { passive: false } as any);
       cancelAnimationFrame(raf);
       observer.disconnect();
       renderer?.dispose();
@@ -446,7 +563,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
         }
       });
     };
-  }, [values]);
+  }, []);
 
   useEffect(() => { valuesRef.current = values; }, [values]);
   useEffect(() => { connectionRef.current = connection; }, [connection]);
@@ -551,9 +668,25 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
       <div className="device-twin-column">
         <Card className="device-twin-stage">
           <canvas ref={twinCanvasRef} className="device-twin-canvas" aria-label="数字孪生视图" />
+          {!twinReady && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', zIndex: 1 }}>
+              <span style={{ background: 'rgba(15,23,42,0.7)', color: '#e2e8f0', padding: '6px 14px', borderRadius: 6, fontSize: 13 }}>加载模型…</span>
+            </div>
+          )}
           <div className="device-twin-overlay">
             <span className="device-twin-badge">DIGITAL TWIN · {config.model}</span>
           </div>
+          <button
+            className="device-twin-reset"
+            onClick={() => twinControlsRef.current?.reset()}
+            aria-label="复位视角"
+            title="复位视角"
+          >
+            复位视角
+          </button>
+          {autoSpinOn && (
+            <span className="device-twin-spin-badge">⟳ 自动旋转</span>
+          )}
           <div className="device-twin-status">
             <span className="status-dot" />
             <span>{connectionLabels[connection.state]}</span>
