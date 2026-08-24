@@ -5,11 +5,11 @@
 ## 当前集成基线
 
 - 工作树：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`
-- 分支：`codex/v2-rewrite`
-- 当前 HEAD：`244387d9e5eb74f5308e5a2a4d61798339d43721`
+- 集成基线分支：`codex/v2-rewrite`
+- 当前 HEAD：`5a854c0dd1cba3be6439fbed813aea0692dbc558`
 - 版本：`2.0.0-rc.1`
 - Console 根：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2\apps\console-v2`
-- 最近变更：补齐 Windows Common Controls v6 manifest 检查/嵌入；未改公共 DTO 或 sidecar wire contract。
+- 最近变更：管理页与控制页完善（动作中心循环/预设同步/关节滑块、诊断中心安全监控/红点/多关节曲线、设置页调试模式/摄像头覆盖/持久化、数字孪生 3D、视觉连续映射、猜拳重构）；全部位于前端，未改公共 DTO 或 sidecar wire contract。
 
 旧版 worktree `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 有 dirty GUI 修改。它不是 V2 的工作目录，不能清理或重置。
 
@@ -35,7 +35,8 @@ pnpm build
 
 - Rust contracts、runtime、simulator、motion/telemetry、actions/grasp、sidecar-client、app facade。
 - Tauri actor/channel assembly、browser simulator 和 release sidecar path selection。
-- Device control、actions、smart grasp、diagnostics、settings、vision、RPS UI features。
+- Device control（含 Three.js 数字孪生 3D、预设分类与自定义预设）、actions（循环 + 内置/自定义预设同步 + 关节滑块）、smart grasp、diagnostics（安全监控 + 红点 + 多关节曲线）、settings（调试模式 + 摄像头覆盖 + 持久化）、vision（连续映射 + 录制/回放）、RPS（重构）。
+- 调试模式 / 虚拟手：未连接物理手时提供虚拟调试机械手，并按 `canOperate = isPhysicalDevice || debugMode` 屏蔽相应功能。
 - Python strict NDJSON bridge，fake connect/telemetry/close smoke，离线 Vision assets 和 classic Worker 检查。
 - Windows x64 RC 的 Tauri/NSIS、PyInstaller sidecar、portable 打包脚本和 bundle inventory。
 

@@ -63,7 +63,7 @@ O6 机械手硬件
 
 ---
 
-## 4. V2 当前开发进度（HEAD `244387d`）
+## 4. V2 当前开发进度（HEAD `5a854c0`）
 
 ### 4.1 已集成能力
 
@@ -75,13 +75,15 @@ O6 机械手硬件
 | Sidecar | Python strict NDJSON bridge、fake connect/telemetry/close smoke |
 | Tauri 组装 | actor/command/channel assembly、browser simulator、release sidecar path |
 | 前端功能 | Device control、Actions、Smart Grasp、Diagnostics、Settings、Vision、RPS |
-| Vision | 离线模型/WASM 资源清单、classic Worker + MediaPipe loader 路径 |
+| 管理页增强 | 动作中心循环/预设同步/关节滑块、诊断中心安全监控/红点/多关节曲线、设置页调试模式/摄像头覆盖/持久化 |
+| 调试模式 | 未连接物理手时提供虚拟调试机械手；`canOperate = isPhysicalDevice || debugMode` 屏蔽相应功能 |
+| Vision | 离线模型/WASM 资源清单、classic Worker + MediaPipe loader 路径、连续手部映射、录制/回放 |
 | 打包发布 | Windows x64 RC：Tauri NSIS、PyInstaller sidecar、portable ZIP、bundle inventory、Windows Common Controls manifest |
 
 ### 4.2 当前版本与工作树
 
 - **版本**：`2.0.0-rc.1`
-- **分支**：`codex/v2-rewrite`
+- **集成基线分支**：`codex/v2-rewrite`（管理页开发在 `feat/pages-round2` 完成并已并入）
 - **V2 工作树**：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`
 - **旧版 worktree**：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk`（有 dirty GUI 修改，不可触碰/重置）
 
@@ -209,6 +211,7 @@ pnpm exec vite --configLoader native dev --host 127.0.0.1 --port 1420
 | Core Wiring | `docs/handoffs/core-wiring.md` |
 | Integration 1/2 | `docs/handoffs/integration-1.md` / `integration-2.md` |
 | M1 Integration | `docs/handoffs/m1-integration.md` |
+| Management Pages（动作/诊断/设置 + 调试模式） | `docs/handoffs/management-pages.md` |
 
 ---
 

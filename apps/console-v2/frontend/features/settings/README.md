@@ -66,6 +66,27 @@ controller 必须提供 `load`、`validate`、`save`、`testSidecar`、`checkOff
 - 确认后调用 `resetToFactory()`，随后重新加载 `load()` 和各项状态接口，刷新页面快照。
 - 保存中和未接线时按钮禁用。
 
+### 调试模式（虚拟调试机械手）
+
+- 高级设置中新增「调试模式」开关。
+- `controller.getDebugMode()` / `controller.setDebugMode(enabled)` 持久化到 `localStorage`（`linkerhand-console-v2-debug-mode`）。
+- 未连接真实物理手时，开启调试模式 = 提供一个虚拟调试机械手：设备控制、智能抓取可用，但视觉模仿 / 猜拳互动的「下发到机械手」按钮禁用。
+- 关闭调试模式 + 未连接物理手：首页连接管理、速度/扭矩、关节、快捷动作与智能抓取全部禁用。
+- 真实物理手已连接时（`isPhysicalDevice` 为真），无论开关状态均可用完整功能。
+- 调试模式通过 `onDebugModeChange` 回传给应用壳（`App.tsx`），并同步到所有页面。
+- `SettingsSnapshot` 支持 `debugMode?: boolean`；`load()` 返回 `advanced.debugMode`，`draftFromSnapshot` 合并，保证重进设置页状态保持。
+
+### 摄像头首选设置全局覆盖
+
+- 设置页保存 `preferredCameraDeviceId` 时写入 `localStorage`（`linkerhand-console-v2-camera-device-id`），并随 `load()`/`save()` 快照 `emit`。
+- 应用壳（`App.tsx`）订阅 settings 快照，把首选摄像头实时同步给视觉模仿 / 猜拳互动作为默认摄像头。
+- 视觉 / 猜拳仍可在各自页面独立选择其他摄像头，不会回写设置页的首选值。
+
+### 保存持久化
+
+- `save()` 现在同时持久化设备配置（model/hand/transport）、首选摄像头 deviceId 与调试模式。
+- 修复了旧实现中调试模式「重进设置页变回关闭」的竞态：`load()` 直接返回 `advanced.debugMode`，不再依赖单独的 `getDebugMode()` effect 与 `load()` 的先后顺序。
+
 ### 扩展的 SettingsController 接口
 
 ```ts
@@ -75,6 +96,8 @@ getLogLevel(): Promise<LogLevel>;
 setLogLevel(level: LogLevel): Promise<void>;
 getLocale(): Promise<'zh' | 'en'>;
 setLocale(locale: 'zh' | 'en'): Promise<void>;
+getDebugMode(): Promise<boolean>;
+setDebugMode(enabled: boolean): Promise<void>;
 resetToFactory(): Promise<void>;
 ```
 
@@ -94,6 +117,7 @@ interface SettingsSnapshot {
   firmwareVersion?: FirmwareVersion;
   logLevel?: LogLevel;
   locale?: 'zh' | 'en';
+  debugMode?: boolean;
 }
 ```
 

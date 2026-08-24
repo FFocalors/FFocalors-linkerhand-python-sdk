@@ -4,11 +4,11 @@
 
 ## 当前基线
 
-截至 2026-08-23，本文档对应的工作树为：
+截至 2026-08-24，本文档对应的工作树为：
 
 - 路径：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`
-- 分支：`codex/v2-rewrite`
-- HEAD：`244387d`（`fix(console-v2): embed windows common controls manifest`）
+- 集成基线分支：`codex/v2-rewrite`（最近一次管理页开发在 `feat/pages-round2` 上完成并已并入）
+- HEAD：`5a854c0`（`feat(console-v2): 完善控制与管理页面`）
 - Console 包和 Rust workspace 版本：`2.0.0-rc.1`
 - 前端包管理：`pnpm`，锁文件版本为 pnpm 9
 
@@ -27,6 +27,50 @@
 - Windows x64 RC 打包路径：真实 sidecar 的 PyInstaller 构建、Tauri NSIS、portable ZIP、bundle inventory，以及 Windows Common Controls manifest 检查。
 
 各模块的历史分支、设计不变量和模块级验证记录见 [`MODULES.md`](MODULES.md) 与 [`handoffs/`](handoffs/README.md)。其中旧 handoff 的通过记录是当时分支的证据，不自动等同于当前 HEAD 的新一轮验证。
+
+## 管理页与控制页完善（4abd593 之后）
+
+在 `4abd593`（设备控制页重构）之后，控制台围绕「动作中心 / 诊断中心 / 设置页 / 调试模式」又完成了两轮完善，最终落在 `5a854c0`。这些改动**全部位于前端**（`frontend/`），没有改动公共 DTO、Rust contracts 或 sidecar wire contract。主要能力如下：
+
+### 动作中心（`frontend/features/actions`）
+
+- 循环序列：多选若干动作创建循环，支持命名、调整顺序、设置循环次数（1/3/5/10/无限）；循环列表可运行/编辑/删除。`ActionController` 扩展了 `playLoop`/`stopLoop`。
+- 内置预设同步：首页 `O6_BASIC_ACTIONS`（4 个基础）+ `O6_NUMBER_ACTIONS`（5 个数字）作为动作中心的「内置预设」tab。
+- 自定义预设单向同步：首页自定义预设同步到动作中心（带「首页」标签）；动作中心本页自定义不上传首页。
+- 关节调节滑块卡片：只读展示当前关节位置，订阅遥测实时刷新。
+
+### 诊断中心（`frontend/features/diagnostics`）
+
+- 删除触觉矩阵（TactileMatrix），页面聚焦安全监控与日志审查。
+- 新增安全监控卡片：错误/警告计数、遥测断线计数、安全状态徽章（正常/需关注/异常）。
+- 日志面板新增时间范围筛选（最近 1 分钟 / 5 分钟 / 全部），导出遵循当前筛选。
+- 侧边栏红点条件化：进入诊断页清除红点；检测到 error/warn 日志、连接异常或遥测断线时重新亮起。
+- 关节曲线改为图例点击模式，支持多关节同时显示（替代原先单选下拉）。
+- 修复日志虚报：未连接物理机械手时不再伪造「已连接」日志。
+
+### 设置页（`frontend/features/settings`）
+
+- 连接状态实时显示（含已连接时长轮询）。
+- 固件版本显示、日志级别配置、中英文切换、恢复出厂设置（含确认）、上次保存时间戳。
+- 调试模式开关（见下）。
+- 摄像头首选设置持久化并全局覆盖视觉/猜拳的默认摄像头；视觉/猜拳仍可独立选择其他摄像头。
+
+### 调试模式与虚拟手
+
+- `ConsoleComposition` 新增 `simulator` 判定；`isPhysicalDevice` 改为**动态**：仅当 `!simulator` 且连接状态为 `connected`（真实手已连接）才为真。
+- 页面能力规则：`canOperate = isPhysicalDevice || debugMode`。
+  - 调试模式 ON + 未连接物理手：设备控制 / 智能抓取可用（作用于虚拟手），但视觉模仿 / 猜拳互动的「下发到机械手」按钮禁用并显示提示。
+  - 调试模式 OFF + 未连接物理手：首页连接管理、速度/扭矩、关节控制、快捷动作与智能抓取全部禁用，显示「未连接机械手」提示。
+- 虚拟手模拟：`DeviceControl` 在调试模式下强制连接为 `connected`、遥测每 400ms 模拟、跳过真实设备调用；连接/遥测读取失败时按上下文显示「未连接机械手」而非笼统错误。
+- 摄像头权限：视觉 / 猜拳每次请求预览都会调用 `getUserMedia` 触发权限申请；被拒时给出「在系统/浏览器设置中为本应用开启摄像头权限」的恢复指引。
+
+### 环境修复
+
+- Vite 依赖预打包：`vite.config.ts` 的 `optimizeDeps.include` 加入 `react`、`react-dom`、`react-dom/client`、`scheduler`，修复 React 19 + CJS 导致的空白页。
+- Vite 开发服务器固定 `host: 127.0.0.1`、`strictPort`，避免 IPv4/IPv6 绑定不一致与端口残留导致的空白页。
+- 显式安装 `scheduler` 依赖（react-dom 的传递依赖缺失问题）。
+
+详细的分页改动、端口 seam 与验证记录见 [`handoffs/management-pages.md`](handoffs/management-pages.md)。
 
 ## 未完成项与硬件门槛
 

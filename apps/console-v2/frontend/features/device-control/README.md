@@ -14,3 +14,17 @@
 在 App 装配层创建满足 `DeviceControlController` 的对象，再将其作为 `controller` 传给 `DeviceControl`。连接状态必须由 sidecar 返回的 `ConnectionSnapshot` 通过 `subscribeConnection` 推送；动作状态通过可选的 `subscribeOperation` 推送。`startLoop`/`stopLoop` 应交给 Rust/sidecar 的真实循环执行，浏览器不能自行使用定时器替代它。
 
 建议在 controller 内拒绝断连、锁定或能力不匹配的命令；Feature 会同时将相应控件禁用并把错误展示给操作员。
+
+## 调试模式与虚拟手
+
+- 页面能力 `canOperate = isPhysicalDevice || debugMode`；`virtualHand = debugMode && !isPhysicalDevice`。
+- `isPhysicalDevice` 由应用壳动态传入：仅当 `!simulator` 且连接状态为 `connected`（真实手已连接）才为真。
+- 调试模式 ON + 未连接物理手：虚拟手强制连接为 `connected`、遥测每 400ms 模拟，连接/断开/重连/关节/速度/扭矩/快捷动作/停止/解锁全部作用于虚拟手（跳过真实设备调用），并显示「调试模式：操作作用于虚拟调试机械手」提示。
+- 调试模式 OFF + 未连接物理手：连接管理、关节、速度/扭矩、快捷动作与自定义预设保存全部禁用，显示「未连接机械手，设备控制不可用」提示。
+- 连接/遥测读取失败时按上下文显示「未连接机械手」而非笼统错误，避免误导操作员。
+
+## 共享导出（供动作中心复用）
+
+- `O6_BASIC_ACTIONS`（张开/握拳/OK/点赞）、`O6_NUMBER_ACTIONS`（壹贰叁肆伍）、`O6_JOINT_NAMES`、`JointSlider`、`BasicPresetIcon`、`NumberPresetIcon`、`toVector` 已导出。
+- 动作中心的「内置预设」tab 与「关节滑块」卡片直接复用上述导出，保证首页与动作中心预设一致。
+- 自定义预设通过 `customPresets` / `onCustomPresetsChange` props 与动作中心单向同步（首页 → 动作中心）。

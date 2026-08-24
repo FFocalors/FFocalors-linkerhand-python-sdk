@@ -2,7 +2,7 @@
 
 本目录保存一次模块开发、修复或集成完成后的 handoff。总入口是 [`../DEVELOPMENT.md`](../DEVELOPMENT.md)，当前集成快速入口是 [`../HANDOFF.md`](../HANDOFF.md)，模块依赖边界见 [`../MODULES.md`](../MODULES.md)。
 
-历史记录按主题命名，例如 `contract-freeze.md`、`core-wiring.md`、`release-integration.md`、`vision-worker-loader-fix.md`。历史记录中的测试结果属于记录所标注的分支/提交；接手后必须按当前 HEAD 复验，不能只复制“passed”。
+历史记录按主题命名，例如 `contract-freeze.md`、`core-wiring.md`、`release-integration.md`、`vision-worker-loader-fix.md`、`management-pages.md`（管理页与控制页完善：动作中心 / 诊断中心 / 设置页 / 调试模式）。历史记录中的测试结果属于记录所标注的分支/提交；接手后必须按当前 HEAD 复验，不能只复制“passed”。
 
 ## 新 handoff 模板
 
