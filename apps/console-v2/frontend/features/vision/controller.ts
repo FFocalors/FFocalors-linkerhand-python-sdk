@@ -122,6 +122,7 @@ export interface ProposalEligibility {
 export function canSubmitProposal(input: ProposalEligibility): boolean {
   return input.model === 'O6'
     && input.authorized
+    && input.calibrated
     && input.confidence >= MIN_PROPOSAL_CONFIDENCE
     && !input.locked
     && input.runtimeState === 'running'
@@ -324,12 +325,29 @@ export class VisionFeatureController {
       return;
     }
 
-    this.confidence = hand.confidence;
-    this.gesture = 'unknown';
+    const classification = classifyGesture(hand);
+    const stable = this.stabilizer.update(classification.gesture, classification.confidence);
+    this.gesture = stable.gesture;
+    // Keep the detector's hand confidence as the proposal gate. The gesture
+    // classifier confidence also reflects openness margin, which can be lower
+    // for a valid fist fixture even when the detector is confident.
+    this.confidence = stable.gesture === 'unknown' ? 0 : hand.confidence;
 
     this.calibration.accept(hand.landmarks);
     const positions = this.mapper.map(hand.landmarks, this.calibration.snapshot().complete ? this.calibration.snapshot() : undefined);
     this.lastPositions = positions;
+    if (hand.confidence < MIN_PROPOSAL_CONFIDENCE) {
+      this.lastProposal = null;
+      this.revoke('手势置信度不足');
+      this.emit();
+      return;
+    }
+    if (stable.gesture === 'unknown') {
+      this.lastProposal = null;
+      this.revoke('手势未稳定');
+      this.emit();
+      return;
+    }
     if (canSubmitProposal({
       model: this.model,
       authorized: this.authorized,
@@ -342,7 +360,7 @@ export class VisionFeatureController {
       const proposal: VisionPoseProposal = {
         schemaVersion: 1,
         id: `vision-${result.frameSequence}`,
-        label: '连续姿态',
+        label: stable.gesture === 'fist' ? '握拳' : '连续姿态',
         confidence: this.confidence,
         positions,
         expiresAtMonotonicMs: result.monotonicTimeMs + 500,

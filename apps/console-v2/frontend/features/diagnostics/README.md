@@ -2,15 +2,15 @@
 
 ## 职责
 
-面向普通操作员呈现只读的连接自检、定长关节曲线、安全监控与结构化日志。入口是 `Diagnostics`，依赖现有 `TelemetryPort`、`LogPort`，并可选注入 `DevicePort`、配置/能力快照与未来的 `DiagnosticsExportPort`。
+面向普通操作员呈现只读的连接自检、定长关节曲线、安全监控与结构化日志。入口是 `Diagnostics`，依赖现有 `TelemetryPort`、`LogPort`，并可选注入 `DevicePort`、配置/能力快照与未来的 `DiagnosticsExportPort`。调试模式下由调用方传入 `debugMode`、`isPhysicalDevice=false` 和应用壳创建的共享虚拟遥测；关闭调试且无真机时不显示遥测样本。
 
 ## 不负责
 
-本 feature 不访问设备、不发动作、不实现 Tauri Channel、sidecar、抓取、视觉或 3D，也不扩展公共 contracts。未注入的端口显示“待检查”，不会伪造设备值。
+本 feature 不访问设备、不发动作、不实现 Tauri Channel、sidecar、抓取、视觉或 3D，也不扩展公共 contracts。未注入的端口显示“待检查”，不会伪造真实设备值；虚拟遥测只在显式调试模式下启用。
 
 ## 状态与不变量
 
-- 曲线只保留并绘制最多 240 点；关节选择最多 25 个 capability joints，遥测回调写入 ref，RAF 每帧最多一次。
+- 曲线只保留并绘制最多 240 点；关节选择最多 25 个 capability joints，physical/virtual 模式各自只使用一个遥测 source，遥测回调写入 ref，RAF 每帧最多一次；无真机且关闭调试时隐藏曲线。
 - 页面隐藏或组件卸载时取消 RAF；低可见度策略由 telemetry crate 的纯逻辑 sampler 提供。
 - 日志最多从 `LogPort` 请求 512 条，过滤后只渲染可视窗口；导出失败必须显示可执行错误。
 - raw 遥测仅在操作员主动打开抽屉后展示；连接自检的 `nowMs` 必须与 `TelemetrySnapshot.monotonicTimeMs` 使用同一单调时钟（默认 `performance.now()`）。

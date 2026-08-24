@@ -20,3 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dev-dependencies]
 device-adapter-api = { path = "../crates/device-adapter-api" }
 device-simulator = { path = "../crates/device-simulator" }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+windows = { version = "0.61", features = ["Win32_System_Com"] }

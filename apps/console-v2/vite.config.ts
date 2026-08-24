@@ -21,6 +21,7 @@ export default defineConfig({
   plugins: [react(), classicVisionWorkerPlugin],
   resolve: { preserveSymlinks: true },
   optimizeDeps: { noDiscovery: true, include: ['react', 'react-dom', 'react-dom/client', 'scheduler'] },
+  worker: { format: 'iife', rollupOptions: { output: { entryFileNames: 'assets/vision-worker-[hash].js' } } },
   server: { host: '127.0.0.1', port: 5173, strictPort: true },
   test: { environment: 'jsdom', setupFiles: './frontend/test-setup.ts', globals: true },
 });

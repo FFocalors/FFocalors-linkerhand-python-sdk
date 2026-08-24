@@ -153,8 +153,12 @@ pub enum FailureReason {
     /// Zero confirmed contacts while every moving joint reached its limit.
     EmptyGrasp,
     /// A critical joint (thumb or majority) stalled out of control.
-    JointStall { joint: usize },
-    OverCurrent { joint: usize },
+    JointStall {
+        joint: usize,
+    },
+    OverCurrent {
+        joint: usize,
+    },
     InvalidTelemetry,
     UnsupportedProfile(Profile),
 }
@@ -635,11 +639,7 @@ impl GraspMachine {
         Ok(())
     }
     pub fn is_calibrated(&self) -> bool {
-        self.state == GraspState::Ready
-            || self
-                .calibration
-                .iter()
-                .any(|c| c.is_some())
+        self.state == GraspState::Ready || self.calibration.iter().any(|c| c.is_some())
     }
 
     pub fn start_approach(
@@ -875,7 +875,7 @@ impl GraspMachine {
             let actual = telemetry.positions[i];
             let target = self.grasp_target[i];
             let limit = 0.05; // closed limit for the sweep
-            // keep closing until the closed limit is reached
+                              // keep closing until the closed limit is reached
             if (target - limit).abs() > 1e-6 {
                 all_done = false;
                 let next = (target - 0.016).max(limit);
@@ -891,7 +891,8 @@ impl GraspMachine {
         }
         if target_updated {
             self.current = self.grasp_target.clone();
-        }        if all_done {
+        }
+        if all_done {
             self.compute_calibration();
             // back to the open pose, ready
             self.current = vec![0.5; n];
@@ -981,12 +982,8 @@ impl GraspMachine {
             let target = self.current[i];
 
             // tactile channel, if present, is authoritative
-            let touched = telemetry
-                .raw_touch
-                .get(i)
-                .copied()
-                .unwrap_or(0)
-                >= self.config.touch_threshold;
+            let touched =
+                telemetry.raw_touch.get(i).copied().unwrap_or(0) >= self.config.touch_threshold;
 
             let analyzer = &mut self.analyzers[i];
             analyzer.push(actual, target, self.config.jitter_window);
@@ -1078,7 +1075,11 @@ impl GraspMachine {
             .iter()
             .filter(|s| **s == GraspJointState::ContactConfirmed)
             .count();
-        let moving_total = self.closing_directions.iter().filter(|d| **d != 0.0).count();
+        let moving_total = self
+            .closing_directions
+            .iter()
+            .filter(|d| **d != 0.0)
+            .count();
         let stopped = self
             .joint_states
             .iter()
@@ -1100,11 +1101,13 @@ impl GraspMachine {
             true
         };
         let finger_contacts = if self.config.thumb_required {
-            confirmed.saturating_sub(if self.joint_states[0] == GraspJointState::ContactConfirmed {
-                1
-            } else {
-                0
-            })
+            confirmed.saturating_sub(
+                if self.joint_states[0] == GraspJointState::ContactConfirmed {
+                    1
+                } else {
+                    0
+                },
+            )
         } else {
             confirmed
         };
@@ -1348,10 +1351,7 @@ mod tests {
                 positions = out.command.positions;
             }
             if machine.state() == &GraspState::Failed {
-                assert_eq!(
-                    machine.failure(),
-                    Some(&FailureReason::EmptyGrasp)
-                );
+                assert_eq!(machine.failure(), Some(&FailureReason::EmptyGrasp));
                 return;
             }
         }
@@ -1487,7 +1487,11 @@ mod tests {
                 break;
             }
         }
-        assert!(ready, "calibration should finish by itself, got {:?}", machine.state());
+        assert!(
+            ready,
+            "calibration should finish by itself, got {:?}",
+            machine.state()
+        );
         let thresholds: Vec<f64> = machine
             .calibration
             .iter()

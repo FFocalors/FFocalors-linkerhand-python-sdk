@@ -19,5 +19,11 @@ export const mockRuntime: ConsolePorts = {
   actions: { async list() { return []; }, async delete() {} },
   grasp: { async listPresets() { return [{ id: 'soft', name: '柔软物体', description: '低力度包络抓取' }, { id: 'cube', name: '方形物体', description: '稳定的平行夹持' }, { id: 'precision', name: '精细拾取', description: '指尖精确定位' }]; }, async runPreset() {} },
   vision: { async propose() { return [{ schemaVersion: 1, id: 'pose-1', label: '拿起蓝色杯子', confidence: .94, positions: [.56, .45, .66, .5, .58, .5] }, { schemaVersion: 1, id: 'pose-2', label: '向前伸手', confidence: .81, positions: [.51, .48, .58, .52, .5, .5] }]; }, async sync() {} },
-  logs: { async list(limit = 20) { return logs.slice(0, limit); } }
+  logs: {
+    async list(limit = 20) { return logs.slice(0, limit); },
+    async record(entry) {
+      const now = Date.now();
+      logs.unshift({ schemaVersion: 1, id: String(now), monotonicTimeMs: now, ...entry });
+    },
+  }
 };

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { GraspPort, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
 import { Badge, Card } from '../../shared/ui';
+import { useI18n } from '../../shared/i18n';
 
 // ── Phase & joint state types ──
 
@@ -150,6 +151,7 @@ export function SmartGrasp({
   debugMode?: boolean;
   isPhysicalDevice?: boolean;
 }) {
+  const { t, locale } = useI18n();
   const [presets, setPresets] = useState<{ id: string; name: string; description: string }[]>([]);
   const [selected, setSelected] = useState<string>();
   const [degraded] = useState(false);
@@ -219,8 +221,8 @@ export function SmartGrasp({
     <div className="stack">
       <div className="page-heading">
         <div>
-          <h1>智能抓取</h1>
-          <p className="muted">自适应抓取通过关节负载分析实现柔性接触锁定。</p>
+          <h1>{t('grasp.title')}</h1>
+          <p className="muted">{locale === 'en' ? 'Adaptive grasping uses joint load analysis for compliant contact locking.' : '自适应抓取通过关节负载分析实现柔性接触锁定。'}</p>
         </div>
         <div className="heading-actions">
           <Badge tone={!available ? 'red' : state.calibrated ? 'green' : 'amber'}>
@@ -231,23 +233,23 @@ export function SmartGrasp({
 
       {!state.calibrated && controllerReady && available && (
         <div className="permission-note" role="status">
-          首次抓取需先完成空载标定；标定结果仅在本次会话内缓存，应用关闭后自动清除，不占用磁盘空间。
+          {locale === 'en' ? 'Complete no-load calibration before the first grasp. Results are cached for this session only and cleared on exit.' : '首次抓取需先完成空载标定；标定结果仅在本次会话内缓存，应用关闭后自动清除，不占用磁盘空间。'}
         </div>
       )}
 
       {!controllerReady && (
         <div className="permission-note" role="status">
-          抓取控制器尚未接线；标定、逼近、抓取和中止已禁用。
+          {locale === 'en' ? 'The grasp controller is not wired; calibration, approach, grasp, and abort are disabled.' : '抓取控制器尚未接线；标定、逼近、抓取和中止已禁用。'}
         </div>
       )}
       {controllerReady && !canOperate && (
         <div className="permission-note" role="status">
-          未连接机械手，智能抓取不可用。
+          {locale === 'en' ? 'The hand is not connected; smart grasp is unavailable.' : '未连接机械手，智能抓取不可用。'}
         </div>
       )}
       {!available && (
         <div className="permission-note" role="alert">
-          <strong>{model} 不支持智能自适应抓取。</strong> 当前支持 O6、L6、L7、L10、L20。
+          <strong>{locale === 'en' ? `${model} does not support adaptive grasping.` : `${model} 不支持智能自适应抓取。`}</strong> {locale === 'en' ? 'Supported models: O6, L6, L7, L10, L20.' : '当前支持 O6、L6、L7、L10、L20。'}
         </div>
       )}
 
@@ -255,7 +257,7 @@ export function SmartGrasp({
       <Card className="grasp-flow-card">
         <div className="card-header">
           <div>
-            <h2>抓取流程</h2>
+            <h2>{t('grasp.flow.title')}</h2>
             <span className="muted">当前：{PHASE_LABEL[state.phase]}{state.calibrated ? ' · 基线已就绪' : ''}</span>
           </div>
           <div className="heading-actions">
@@ -267,7 +269,7 @@ export function SmartGrasp({
             </Badge>
             {canAbort && (
               <button className="button button-ghost" onClick={() => invoke(() => controller!.abort(), '中止请求失败')}>
-                中止
+                {t('grasp.abort')}
               </button>
             )}
           </div>
@@ -302,19 +304,19 @@ export function SmartGrasp({
         <div className="grid grid-4" style={{ marginTop: 10 }}>
           <button className="button button-calibrate" disabled={!canCalibrate}
             onClick={() => invoke(() => controller!.calibrate(), '标定启动失败')}>
-            1. 空载标定
+            1. {t('grasp.calibrate')}
           </button>
           <button className="button button-approach" disabled={!canApproach}
             onClick={() => invoke(() => controller!.approach(), '逼近启动失败')}>
-            2. 预抓取定位
+            2. {t('grasp.approach')}
           </button>
           <button className="button button-grasp-start" disabled={!canGrasp || !selected}
             onClick={() => { if (!controller || !selected) return; void invoke(() => controller.startGrasp(selected, degraded), '抓取未启动'); }}>
-            3. 开始抓取
+            3. {t('grasp.start')}
           </button>
           <button className="button button-release" disabled={!canRelease}
             onClick={() => invoke(() => controller!.release(), '释放请求失败')}>
-            释放
+            {t('grasp.release')}
           </button>
         </div>
         <p className="muted" style={{ marginTop: 6, fontSize: '9px' }}>
@@ -327,7 +329,7 @@ export function SmartGrasp({
         <div className="grasp-left-col">
           <Card className="grasp-preset-card">
             <div className="card-header">
-              <div><h2>抓取预设</h2><span className="muted">选择目标物体的抓取策略</span></div>
+              <div><h2>{t('grasp.presets.title')}</h2><span className="muted">{t('grasp.presets.subtitle')}</span></div>
             </div>
             {presets.length === 0 ? (
               <p className="muted" style={{ padding: '12px 0', textAlign: 'center' }}>运行时通过 GraspPort 提供预设后会显示在这里。</p>
@@ -350,7 +352,7 @@ export function SmartGrasp({
           </Card>
           <Card className="grasp-tactile-notice">
             <div className="card-header">
-              <div><h2>触觉反馈</h2><span className="muted">{model} 型号不支持触觉传感器</span></div>
+              <div><h2>{t('grasp.tactile.title')}</h2><span className="muted">{t('grasp.tactile.unsupported', { model })}</span></div>
               <Badge tone="amber">不可用</Badge>
             </div>
             <p className="muted" style={{ margin: '4px 0 0', fontSize: '9px' }}>自适应抓取通过关节负载（电流）分析实现接触检测，无需触觉传感器。</p>
@@ -359,7 +361,7 @@ export function SmartGrasp({
 
         <Card className="grasp-load-card">
           <div className="card-header">
-            <div><h2>关节实时负载</h2><span className="muted">raw current · 0–255</span></div>
+            <div><h2>{t('grasp.load.title')}</h2><span className="muted">{t('grasp.load.raw')}</span></div>
             <Badge tone={telemetry ? 'green' : 'amber'}>{telemetry ? '实时' : '无遥测'}</Badge>
           </div>
           <div className="grasp-load-list">

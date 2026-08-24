@@ -252,6 +252,8 @@ impl AppRuntime {
         loop_count: Option<u32>,
         now_ms: u64,
     ) -> Result<(), AppRuntimeError> {
+        action_engine::validate_playback_speed(speed)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
         let lookup_id = if id == "safe-position" {
             "builtin:neutral"
         } else {
@@ -262,6 +264,24 @@ impl AppRuntime {
             .into_iter()
             .find(|item| item.id == lookup_id)
             .ok_or_else(|| AppRuntimeError::Unsupported(format!("action {id} not found")))?;
+        self.actions.set_loop(loop_enabled, loop_count);
+        self.actions
+            .play_at(recording, now_ms)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
+        self.actions
+            .set_speed(speed)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+    }
+    pub fn action_play_recording(
+        &mut self,
+        recording: ActionRecording,
+        speed: f32,
+        loop_enabled: bool,
+        loop_count: Option<u32>,
+        now_ms: u64,
+    ) -> Result<(), AppRuntimeError> {
+        action_engine::validate_playback_speed(speed)
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?;
         self.actions.set_loop(loop_enabled, loop_count);
         self.actions
             .play_at(recording, now_ms)
@@ -362,7 +382,11 @@ impl AppRuntime {
             .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?
             .map(|o| o.command))
     }
-    pub fn stop_all(&mut self) {
+    /// Stop every feature and report the physical adapter result.  The UI
+    /// safety path still uses `stop_all` for its fire-and-forget contract, but
+    /// the Tauri actor uses this checked seam so logs never claim a hardware
+    /// stop succeeded when the adapter rejected it.
+    pub fn stop_all_checked(&mut self) -> Result<(), AppRuntimeError> {
         MotionPort::stop_all(&mut self.motion);
         ActionPort::cancel(&mut self.actions);
         GraspPort::abort(&mut self.grasp);
@@ -373,7 +397,10 @@ impl AppRuntime {
             s.stop();
             s.cancel_pending();
         }
-        let _ = self.device.stop();
+        self.device.stop().map_err(AppRuntimeError::Device)
+    }
+    pub fn stop_all(&mut self) {
+        let _ = self.stop_all_checked();
     }
     pub fn unlock(&mut self) {
         self.motion.unlock();
@@ -619,6 +646,10 @@ mod tests {
             .action_list()
             .iter()
             .any(|item| item.id == recording.id));
+        assert!(runtime
+            .action_play_recording(recording.clone(), 1.01, true, Some(1), 0)
+            .is_err());
+        assert_eq!(*runtime.actions.state(), action_engine::PlaybackState::Idle);
         runtime
             .action_play(&recording.id, 1.0, true, Some(1), 0)
             .unwrap();

@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Profiler } from 'react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, OperationSnapshot, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
 import { DeviceControl, JointSlider, type DeviceControlController } from './index';
+import { createVirtualTelemetry } from '../../shared/telemetry/virtual';
 
 const config: DeviceConfig = { schemaVersion: 1, deviceId: 'test-device', name: '测试设备', model: 'L25', hand: 'left', transport: { type: 'can', channel: 'fake' }, autoReconnect: true };
 function capabilities(jointCount: number, speedCommandLength = jointCount, torqueCommandLength: number | null = jointCount): DeviceCapabilities {
@@ -31,6 +32,13 @@ describe('device control', () => {
     fireEvent.pointerDown(slider); fireEvent.change(slider, { target: { value: '0.42' } }); fireEvent.pointerUp(slider);
     await waitFor(() => expect(controller.setJointTarget).toHaveBeenCalledTimes(1));
     expect(vi.mocked(controller.setJointTarget).mock.calls[0][0]).toMatchObject({ positions: [0.42, 0], finalCommand: true });
+  });
+  it('uses a fine-grained target slider and keeps a virtual curve in debug mode', async () => {
+    const fixtureValue = fixture(1);
+    render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(1)} config={config} capabilities={capabilities(1)} controller={fixtureValue.controller} debugMode isPhysicalDevice={false} virtualTelemetry={createVirtualTelemetry(1)} />);
+    const slider = await screen.findByRole('slider', { name: '大拇指弯曲 目标' });
+    expect(slider).toHaveAttribute('step', '0.001');
+    expect(await screen.findByText('调试虚拟遥测')).toBeInTheDocument();
   });
   it('coalesces rapid changes into at most one non-final command per frame', async () => {
     const { controller } = renderControl(2); const slider = await screen.findByRole('slider', { name: '大拇指弯曲 目标' });

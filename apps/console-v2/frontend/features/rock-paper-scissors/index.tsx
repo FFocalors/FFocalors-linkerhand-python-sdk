@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeviceCapabilities, VisionPort } from '../../shared/contracts';
 import type { VisionRuntimeSnapshot } from '../../shared/vision-runtime';
 import { Badge, Card } from '../../shared/ui';
+import { useI18n } from '../../shared/i18n';
 import { RpsGameController } from './controller';
 import { STRATEGY_LABELS, STRATEGY_ORDER, ROUND_MODE_LABELS, ROUND_MODE_ORDER, MOVE_LABELS, MOVE_ICONS, INVALID_LABELS, type RpsActionController, type RpsMove, type RpsRoundMode, type RpsState, type RpsStrategy, type RpsVisionRuntime, type RpsScheduler } from './types';
 import './styles.css';
@@ -95,6 +96,7 @@ function runtimeLabel(snapshot: VisionRuntimeSnapshot | undefined): string {
 }
 
 export function RockPaperScissors({ capabilities, locked, runtime, actionController, scheduler, random, debugMode, isPhysicalDevice, preferredCameraDeviceId }: RockPaperScissorsProps) {
+  const { t, locale } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -277,8 +279,8 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
     <div className="stack rps-feature">
       <div className="page-heading">
         <div>
-          <h1>猜拳互动</h1>
-          <p className="muted">左半屏为摄像头预览与手部骨架；右半屏为对局状态、策略面板与游戏控制。</p>
+          <h1>{t('rps.title')}</h1>
+          <p className="muted">{locale === 'en' ? 'The left half shows camera preview and hand skeleton; the right half contains match state, strategy, and game controls.' : '左半屏为摄像头预览与手部骨架；右半屏为对局状态、策略面板与游戏控制。'}</p>
         </div>
         <Badge tone={hardwareEligible ? 'green' : 'amber'}>{hardwareEligible ? 'O6 动作需授权' : '预览模式'}</Badge>
       </div>
@@ -301,7 +303,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
 
           <Card>
             <div className="card-header">
-              <div><h2>摄像头控制</h2></div>
+              <div><h2>{t('rps.camera.title')}</h2></div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 <select
                   value={selectedCameraId ?? ''}
@@ -317,19 +319,19 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
                   }}
                   style={{ fontSize: 10 }}
                 >
-                  <option value="">自动选择摄像头</option>
+                  <option value="">{t('common.camera.autoSelect')}</option>
                   {cameras.map(cam => <option key={cam.deviceId} value={cam.deviceId}>{cam.label || cam.deviceId}</option>)}
                 </select>
-                <button className="button button-secondary" disabled={!canControl} onClick={async () => { const cams = await navigator.mediaDevices?.enumerateDevices().then(d => d.filter(d => d.kind === 'videoinput').map(d => ({ deviceId: d.deviceId, label: d.label || d.deviceId, kind: d.kind, groupId: d.groupId } as MediaDeviceInfo))).catch(() => []); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>刷新</button>
+                <button className="button button-secondary" disabled={!canControl} onClick={async () => { const cams = await navigator.mediaDevices?.enumerateDevices().then(d => d.filter(d => d.kind === 'videoinput').map(d => ({ deviceId: d.deviceId, label: d.label || d.deviceId, kind: d.kind, groupId: d.groupId } as MediaDeviceInfo))).catch(() => []); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>{t('common.button.refresh')}</button>
                 <button className="button button-primary" disabled={!canControl || locked} onClick={() => { if (controller) runAsync(() => (cameraRunning ? controller.stop() : controller.startCamera())); }}>
-                  {cameraRunning ? '停止预览' : state?.cameraState === 'error' || state?.cameraState === 'device-lost' || state?.cameraState === 'permission-denied' ? '重新连接摄像头' : '开始预览'}
+                  {cameraRunning ? t('common.camera.stopPreview') : state?.cameraState === 'error' || state?.cameraState === 'device-lost' || state?.cameraState === 'permission-denied' ? t('common.camera.reconnect') : t('common.camera.startPreview')}
                 </button>
               </div>
             </div>
             {(state?.cameraError || actionError) && (
               <div role="alert" className="permission-note">
                 {[state?.cameraError?.message, actionError].filter((m, i, arr): m is string => Boolean(m) && arr.indexOf(m) === i).map(m => <p key={m}>{m}</p>)}
-                <span>请检查摄像头权限和视觉资源后重试。</span>
+                <span>{locale === 'en' ? 'Check camera permission and vision assets, then retry.' : '请检查摄像头权限和视觉资源后重试。'}</span>
               </div>
             )}
           </Card>
@@ -339,7 +341,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
         <div className="rps-controls">
           <Card>
             <div className="card-header">
-              <div><h2>下发到机械手</h2><span className="muted">开启后揭晓时请求 O6 回应出拳姿态</span></div>
+              <div><h2>{t('rps.output.title')}</h2><span className="muted">{t('rps.output.subtitle')}</span></div>
               <Badge tone={hardwareReady ? 'green' : state?.action.status === 'disabled' ? 'amber' : 'amber'}>{hardwareReady ? '已授权' : state?.action.status === 'disabled' ? '预览模式' : '未授权'}</Badge>
             </div>
             <label className="vision-toggle" style={{ marginTop: 10 }}>
@@ -350,13 +352,13 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
                 onChange={event => { if (controller) runAsync(() => (event.target.checked ? controller.authorizeHardware() : controller.revokeHardware())); }}
               />
               <span className="toggle-track"><span className="toggle-thumb" /></span>
-              {hardwareReady ? '揭晓后机械手将同步出拳姿态' : state?.action.status === 'disabled' ? '当前无可用动作控制器，仅进行识别与记分' : '打开后机械手将在揭晓时回应出拳'}
+              {hardwareReady ? (locale === 'en' ? 'The hand will mirror the move at reveal' : '揭晓后机械手将同步出拳姿态') : state?.action.status === 'disabled' ? (locale === 'en' ? 'No action controller; recognition and scoring only' : '当前无可用动作控制器，仅进行识别与记分') : (locale === 'en' ? 'Turn on to have the hand respond at reveal' : '打开后机械手将在揭晓时回应出拳')}
             </label>
-            {debugMode && !isPhysicalDevice && <p className="permission-note">调试模式：视觉识别正常运行，但不会下发到机械手。</p>}
+            {debugMode && !isPhysicalDevice && <p className="permission-note">{locale === 'en' ? 'Debug mode: vision recognition is running, but no commands are sent to the hand.' : '调试模式：视觉识别正常运行，但不会下发到机械手。'}</p>}
           </Card>
 
           <Card>
-            <div className="card-header"><div><h2>游戏设置</h2><span className="muted">开始为主操作；每轮结束后自动开始下一局。</span></div></div>
+            <div className="card-header"><div><h2>{t('rps.game.title')}</h2><span className="muted">{t('rps.game.subtitle')}</span></div></div>
             <label className="rps-field">
               <span className="muted">轮次预设</span>
               <select
@@ -369,17 +371,17 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
             </label>
             <div className="rps-actions">
               {state?.phase === 'matchOver' ? (
-                <button className="button button-primary" disabled={!controller || locked} onClick={() => { if (controller) controller.reset(); }}>再来一局</button>
+                <button className="button button-primary" disabled={!controller || locked} onClick={() => { if (controller) controller.reset(); }}>{t('rps.game.newRound')}</button>
               ) : (
-                <button className="button button-primary" disabled={!canStartRound || locked} onClick={() => { if (controller) controller.beginRound(); }}>开始游戏</button>
+                <button className="button button-primary" disabled={!canStartRound || locked} onClick={() => { if (controller) controller.beginRound(); }}>{t('rps.game.start')}</button>
               )}
               {gameActive && (
-                <button className="button button-secondary" disabled={locked} onClick={() => { if (controller) controller.stopRound(); }}>停止游戏</button>
+                <button className="button button-secondary" disabled={locked} onClick={() => { if (controller) controller.stopRound(); }}>{t('rps.game.stop')}</button>
               )}
               {state?.phase === 'invalid' && (
                 <button className="button button-ghost" disabled={locked} onClick={() => { if (controller) controller.retry(); }}>重试</button>
               )}
-              <button className="button button-ghost" disabled={!controller || locked} onClick={() => { if (controller) controller.reset(); }}>重置比分</button>
+              <button className="button button-ghost" disabled={!controller || locked} onClick={() => { if (controller) controller.reset(); }}>{t('rps.game.resetScore')}</button>
             </div>
             {state?.phase === 'matchOver' && (
               <p className="permission-note">{state.matchWinner === 'player' ? '🎉 你赢得本场！' : state.matchWinner === 'machine' ? '🤖 机械手赢得本场！' : '本场结束'} 点击“再来一局”重置比分重新开始。</p>
@@ -395,7 +397,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
 
           <Card>
             <div className="card-header">
-              <div><h2>对局状态</h2><span className="muted">系统出拳瞬间锁定 · 防止临时变招</span></div>
+              <div><h2>{t('rps.match.title')}</h2><span className="muted">{t('rps.match.subtitle')}</span></div>
               <span className="muted">锁定 {stableFrames}/1</span>
             </div>
             <div className="rps-status" role="status" aria-live="polite">
@@ -425,7 +427,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
 
           <Card>
             <div className="card-header">
-              <div><h2>个体化策略</h2><span className="muted">机器只根据历史对局习惯预测，不读取当前轮最终手势。</span></div>
+              <div><h2>{t('rps.strategy.title')}</h2><span className="muted">{t('rps.strategy.subtitle')}</span></div>
             </div>
             <div className="rps-strategy-grid">
               <label className="rps-field">
@@ -510,7 +512,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
 
           {hardwareEligible && hardwareConnected && (
             <Card>
-              <div className="card-header"><div><h2>动作测试</h2><span className="muted">单独验证三种出拳姿态，不影响当前比分。</span></div></div>
+              <div className="card-header"><div><h2>{t('rps.actionTest.title')}</h2><span className="muted">{t('rps.actionTest.subtitle')}</span></div></div>
               <div className="rps-test-actions">
                 {(['rock', 'paper', 'scissors'] as const).map(move => (
                   <button

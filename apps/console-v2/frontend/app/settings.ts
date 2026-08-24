@@ -1,5 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { DeviceConfig, ConnectionSnapshot, LogLevel } from '../shared/contracts';
+import type { CameraPermissionStatus, DeviceConfig, ConnectionSnapshot, LogLevel } from '../shared/contracts';
 import type { SettingsController, SettingsDraft, SettingsSnapshot, SettingsSaveResult, SidecarCheckResult, OfflineAssetsCheckResult, CameraDevice, CameraPermission, ThemePort, ThemePreference, ConnectionStateInfo, FirmwareVersion } from '../features/settings';
 import { draftFromSnapshot, validateSettingsDraft } from '../features/settings';
 import type { ConsolePorts } from '../shared/contracts';
@@ -16,10 +16,14 @@ const saveStored = (config: DeviceConfig) => { try { localStorage.setItem(CONFIG
 const readPreferredCamera = (): string | null => {
   try { const stored = localStorage.getItem(CAMERA_KEY); return stored ? JSON.parse(stored) as string : null; } catch { return null; }
 };
-const cameraPermission = (error?: unknown): CameraPermission => {
-  const name = error instanceof DOMException ? error.name : '';
-  return name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : error ? 'error' : 'granted';
-};
+export function classifyCameraError(error: unknown): CameraPermission {
+  const name = error instanceof DOMException ? error.name : error && typeof error === 'object' && 'name' in error ? String((error as { name?: unknown }).name) : '';
+  if (name === 'SecurityError') return 'webview-denied';
+  if (name === 'NotAllowedError') return 'windows-denied';
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError') return 'no-device';
+  if (name === 'NotReadableError' || name === 'TrackStartError' || name === 'AbortError') return 'in-use';
+  return error ? 'error' : 'granted';
+}
 
 export function createSettingsController(runtime: ConsolePorts, simulator: boolean): SettingsController {
   const listeners = new Set<(snapshot: SettingsSnapshot) => void>();
@@ -66,17 +70,34 @@ export function createSettingsController(runtime: ConsolePorts, simulator: boole
       return results.every(Boolean) ? { ok: true, message: '离线视觉模型与 WASM 资源可用' } : { ok: false, message: '离线视觉资源缺失或不可读', detail: resources.filter((_, index) => !results[index]).join(', ') };
     },
     async listCameras() {
-      if (!navigator.mediaDevices?.enumerateDevices) return { cameras: [], permission: 'error' as const };
+      if (!navigator.mediaDevices?.enumerateDevices) return { cameras: [], permission: 'error' as const, detail: '当前 WebView 不支持媒体设备 API' };
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         let permission: CameraPermission = devices.some(device => device.kind === 'videoinput' && device.label) ? 'granted' : 'prompt';
+        let detail: string | undefined;
         if (permission !== 'granted' && navigator.mediaDevices.getUserMedia) {
           try { const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); stream.getTracks().forEach(track => track.stop()); permission = 'granted'; }
-          catch (error) { permission = cameraPermission(error); }
+          catch (error) { permission = classifyCameraError(error); detail = error instanceof Error ? error.name : String(error); }
         }
         const cameras: CameraDevice[] = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput').map(device => ({ deviceId: device.deviceId, label: device.label || '未命名摄像头', kind: device.kind }));
-        return { cameras, permission };
-      } catch (error) { return { cameras: [], permission: cameraPermission(error) === 'granted' ? 'error' : cameraPermission(error) }; }
+        if (cameras.length === 0 && permission === 'granted') permission = 'no-device';
+        return { cameras, permission, detail };
+      } catch (error) { return { cameras: [], permission: classifyCameraError(error) === 'granted' ? 'error' : classifyCameraError(error), detail: error instanceof Error ? error.message : String(error) }; }
+    },
+    async getCameraPermission(): Promise<CameraPermissionStatus> {
+      if (simulator || !isTauri()) return { state: 'default' };
+      return invoke<CameraPermissionStatus>('camera_permission_status');
+    },
+    async resetCameraPermission(): Promise<CameraPermissionStatus> {
+      if (simulator || !isTauri()) return { state: 'default' };
+      return invoke<CameraPermissionStatus>('reset_camera_permission');
+    },
+    async openCameraPrivacySettings() {
+      if (simulator || !isTauri()) {
+        window.open('ms-settings:privacy-webcam', '_blank', 'noopener,noreferrer');
+        return;
+      }
+      await invoke<void>('open_camera_privacy_settings');
     },
     subscribe(listener) { listeners.add(listener); if (current) listener(current); return () => listeners.delete(listener); },
     async getConnectionState(): Promise<ConnectionStateInfo> {

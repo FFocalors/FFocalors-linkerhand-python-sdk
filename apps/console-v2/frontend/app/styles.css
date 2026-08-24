@@ -100,7 +100,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .device-chip small { color: var(--muted); font-size: 9px; margin-top: 2px; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 .status-dot { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 13%, transparent); }
 .nav-group { margin: 0 0 10px; }
-.nav-item { width: 100%; min-height: 32px; display: flex; align-items: center; gap: 8px; position: relative; margin: 1px 0; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: left; font-size: 11px; font-weight: 600; transition: background-color 120ms linear, color 120ms linear; }
+.nav-item { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px; position: relative; margin: 1px 0; padding: 6px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: left; font-size: 11px; font-weight: 600; transition: background-color 120ms linear, color 120ms linear; }
 .nav-item:hover { color: var(--text); background: var(--surface-2); }
 .nav-item.active { color: var(--blue); background: var(--blue-soft); }
 .nav-alert { width: 5px; height: 5px; margin-left: auto; border-radius: 50%; background: var(--danger); }
@@ -316,7 +316,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .badge-green { color: var(--green); background: var(--green-soft); }
 .badge-amber { color: var(--amber); background: var(--amber-soft); }
 .badge-red { color: var(--danger); background: var(--danger-soft); }
-.button { min-height: 32px; padding: 6px 10px; border: 1px solid transparent; border-radius: 5px; font-size: 10px; font-weight: 700; transition: background-color 120ms linear, border-color 120ms linear, color 120ms linear; }
+.button { min-height: 44px; padding: 6px 10px; border: 1px solid transparent; border-radius: 5px; font-size: 10px; font-weight: 700; transition: background-color 120ms linear, border-color 120ms linear, color 120ms linear; }
 .button-primary { color: #fff; background: var(--blue); box-shadow: 0 4px 10px color-mix(in srgb, var(--blue) 18%, transparent); }
 .button-secondary { color: var(--blue); background: var(--blue-soft); }
 .button-ghost { padding: 5px 6px; background: transparent; color: var(--blue); }
@@ -573,6 +573,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
   font-size: 11px;
   font-weight: 600;
   user-select: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
 }
 .vision-toggle input {
   position: absolute;
@@ -601,16 +606,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
   box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
   transition: transform 150ms var(--page-ease);
 }
-.vision-toggle input:checked + .toggle-track {
+.vision-toggle[aria-pressed="true"] .toggle-track {
   background: var(--green);
 }
-.vision-toggle input:checked + .toggle-track .toggle-thumb {
+.vision-toggle[aria-pressed="true"] .toggle-track .toggle-thumb {
   transform: translateX(18px);
 }
-.vision-toggle input:disabled + .toggle-track {
+.vision-toggle:disabled .toggle-track {
   opacity: .45;
 }
-.vision-toggle:hover input:not(:disabled) + .toggle-track {
+.vision-toggle:hover:not(:disabled) .toggle-track {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 15%, transparent);
 }
 .vision-toggle-disabled-hint {

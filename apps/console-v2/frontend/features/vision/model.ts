@@ -129,8 +129,8 @@ export function classifyGesture(hand: HandLandmark): { gesture: Gesture; confide
   const openness = features.slice(2).reduce((sum, value) => sum + value, 0) / 4;
   const margin = Math.abs(openness - 0.5) * 2;
   const confidence = clamp01(hand.confidence * (0.55 + margin * 0.45));
-  if (openness >= 0.65) return { gesture: 'open', confidence, openness };
-  if (openness <= 0.35) return { gesture: 'fist', confidence, openness };
+  if (openness >= 0.85) return { gesture: 'open', confidence, openness };
+  if (openness <= 0.75) return { gesture: 'fist', confidence, openness };
   return { gesture: 'unknown', confidence: confidence * 0.5, openness };
 }
 
@@ -161,23 +161,18 @@ export class SessionCalibration {
   private openReference: number[] | null = null;
   private fistReference: number[] | null = null;
   private readonly requiredSamples: number;
-  private lastAcceptTime = 0;
-  private readonly minSampleIntervalMs = 500;
 
   constructor(requiredSamples = 3) { this.requiredSamples = Math.max(1, requiredSamples); }
-  begin(): void { this.phase = 'open'; this.open = []; this.fist = []; this.openReference = null; this.fistReference = null; this.lastAcceptTime = 0; }
+  begin(): void { this.phase = 'open'; this.open = []; this.fist = []; this.openReference = null; this.fistReference = null; }
   accept(landmarks: Landmark[]): void {
     if (this.phase !== 'open' && this.phase !== 'fist') return;
-    const now = performance.now();
-    if (now - this.lastAcceptTime < this.minSampleIntervalMs) return;
-    this.lastAcceptTime = now;
     const features = landmarkFeatures(landmarks);
     // features 已按 O6 语义：curl 相关维度 0=弯曲, 1=伸直；因此 openness 高=伸直, 低=弯曲
     const openness = features.slice(2).reduce((sum, value) => sum + value, 0) / 4;
-    if (this.phase === 'open' && openness >= 0.55) {
+    if (this.phase === 'open' && openness >= 0.85) {
       this.open.push(features);
       if (this.open.length >= this.requiredSamples) { this.openReference = average(this.open); this.phase = 'fist'; }
-    } else if (this.phase === 'fist' && openness <= 0.45) {
+    } else if (this.phase === 'fist' && openness <= 0.75) {
       this.fist.push(features);
       if (this.fist.length >= this.requiredSamples) { this.fistReference = average(this.fist); this.phase = 'complete'; }
     }

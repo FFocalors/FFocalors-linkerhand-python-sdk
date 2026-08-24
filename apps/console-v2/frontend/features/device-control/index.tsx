@@ -2,10 +2,13 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, JointTargetCommand, OperationSnapshot, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
 import { Badge, Card } from '../../shared/ui';
+import { useI18n } from '../../shared/i18n';
 import { Pencil, Trash2, X } from 'lucide-react';
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { HAND_MODEL, O6_DRIVE_RULES, sdkNormalizedToJointAngles } from './handModel';
+import type { VirtualTelemetryPort } from '../../shared/telemetry/virtual';
+import './device-control.css';
 
 /** Feature-local controller seam. The runtime adapter can implement this without changing shared contracts. */
 export interface DeviceControlController {
@@ -38,11 +41,13 @@ interface DeviceControlProps {
   onNavigateToDiagnostics?: () => void;
   debugMode?: boolean;
   isPhysicalDevice?: boolean;
+  virtualTelemetry?: VirtualTelemetryPort;
   customPresets?: DeviceControlQuickAction[];
   onCustomPresetsChange?: (presets: DeviceControlQuickAction[]) => void;
 }
 
 const clamp = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+const formatJointPercent = (value: number) => `${(Math.round(value * 1000) / 10).toFixed(1)}%`;
 export const toVector = (values: number[], length: number) => Array.from({ length }, (_, index) => clamp(values[index] ?? 0));
 const connectionLabels: Record<ConnectionSnapshot['state'], string> = { disconnected: '未连接', connecting: '连接中', connected: '已连接', reconnecting: '重连中', error: '连接错误' };
 function statusTone(state: ConnectionSnapshot['state']): 'blue' | 'green' | 'amber' | 'red' { if (state === 'connected') return 'green'; if (state === 'error') return 'red'; if (state === 'disconnected') return 'amber'; return 'blue'; }
@@ -219,28 +224,28 @@ export const JointSlider = memo(function JointSlider({ index, value, disabled, l
   useEffect(() => {
     if (draggingRef.current) return;
     if (inputRef.current) inputRef.current.value = String(value);
-    if (outputRef.current) outputRef.current.textContent = `${Math.round(value * 100)}%`;
+    if (outputRef.current) outputRef.current.textContent = formatJointPercent(value);
   }, [value]);
   const handleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const next = clamp(Number(event.currentTarget.value));
     if (inputRef.current) inputRef.current.value = String(next);
-    if (outputRef.current) outputRef.current.textContent = `${Math.round(next * 100)}%`;
+    if (outputRef.current) outputRef.current.textContent = formatJointPercent(next);
     onInput(index, next);
   };
-  return <label className="joint-row"><span className="joint-name">{label ?? `J${index + 1}`}</span><input ref={inputRef} aria-label={`${label ?? `J${index + 1}`} 目标`} type="range" min="0" max="1" step="0.01" defaultValue={value} disabled={disabled} onPointerDown={() => { draggingRef.current = true; onBegin(index); }} onPointerUp={() => { draggingRef.current = false; onFinish(index); }} onPointerCancel={() => { draggingRef.current = false; onFinish(index); }} onBlur={() => { if (draggingRef.current) { draggingRef.current = false; onFinish(index); } }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); draggingRef.current = false; onFinish(index, true); } }} onChange={handleChange} /><output ref={outputRef}>{Math.round(value * 100)}%</output></label>;
+  return <label className="joint-row"><span className="joint-name">{label ?? `J${index + 1}`}</span><input ref={inputRef} aria-label={`${label ?? `J${index + 1}`} 目标`} type="range" min="0" max="1" step="0.001" defaultValue={value} disabled={disabled} onPointerDown={() => { draggingRef.current = true; onBegin(index); }} onPointerUp={() => { draggingRef.current = false; onFinish(index); }} onPointerCancel={() => { draggingRef.current = false; onFinish(index); }} onBlur={() => { if (draggingRef.current) { draggingRef.current = false; onFinish(index); } }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); draggingRef.current = false; onFinish(index, true); } }} onChange={handleChange} /><output ref={outputRef}>{formatJointPercent(value)}</output></label>;
 });
 
 /** Live 6-joint position curve on a canvas, styled after the legacy console waveform. */
-function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort; jointCount: number }) {
+function JointCurveChart({ telemetry, jointCount, virtual, sample, subscribeTelemetry }: { telemetry?: TelemetryPort; jointCount: number; virtual?: boolean; sample?: TelemetrySnapshot; subscribeTelemetry: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const samplesRef = useRef<TelemetrySnapshot[]>([]);
   const rafRef = useRef<number | undefined>(undefined);
   const pausedRef = useRef(false);
   const [paused, setPaused] = useState(false);
   const [visibleJoints, setVisibleJoints] = useState<Set<number>>(() => new Set(Array.from({ length: jointCount }, (_, i) => i)));
+  const sourceTelemetry = telemetry;
   useEffect(() => { pausedRef.current = paused; }, [paused]);
   useEffect(() => { setVisibleJoints(new Set(Array.from({ length: jointCount }, (_, i) => i))); }, [jointCount]);
-
   const toggleJoint = useCallback((index: number) => {
     setVisibleJoints(prev => {
       const next = new Set(prev);
@@ -314,15 +319,23 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
   }, [draw]);
 
   useEffect(() => {
-    if (!telemetry) return;
-    const unsubscribe = telemetry.subscribe(value => {
+    if (sample === undefined) return;
+    if (pausedRef.current) return;
+    samplesRef.current.push(sample);
+    if (samplesRef.current.length > CURVE_MAX_POINTS) samplesRef.current.splice(0, samplesRef.current.length - CURVE_MAX_POINTS);
+    scheduleDraw();
+  }, [sample, scheduleDraw]);
+  useEffect(() => {
+    if (!subscribeTelemetry || sample !== undefined) return;
+    if (!sourceTelemetry) return;
+    const unsubscribe = sourceTelemetry.subscribe(value => {
       if (pausedRef.current) return;
       samplesRef.current.push(value);
       if (samplesRef.current.length > CURVE_MAX_POINTS) samplesRef.current.splice(0, samplesRef.current.length - CURVE_MAX_POINTS);
       scheduleDraw();
     });
     return unsubscribe;
-  }, [scheduleDraw, telemetry]);
+  }, [sample, scheduleDraw, sourceTelemetry, subscribeTelemetry]);
   useEffect(() => {
     const onVisibility = () => { if (document.visibilityState === 'hidden' && rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } else scheduleDraw(); };
     document.addEventListener('visibilitychange', onVisibility);
@@ -330,15 +343,17 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
   }, [scheduleDraw]);
 
   return <Card className="joint-curve-card">
-    <div className="card-header"><div><h2>实时关节曲线</h2><span className="muted">最近 {CURVE_MAX_POINTS} 个采样点 · 0–255</span></div><div className="heading-actions"><Badge tone={telemetry ? 'green' : 'amber'}>{telemetry ? '实时采样' : '遥测未接入'}</Badge><button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>清空</button></div></div>
+    <div className="card-header"><div><h2>实时关节曲线</h2><span className="muted">最近 {CURVE_MAX_POINTS} 个采样点 · 0–255</span></div><div className="heading-actions"><Badge tone={virtual ? 'blue' : sourceTelemetry ? 'green' : 'amber'}>{virtual ? '调试虚拟遥测' : sourceTelemetry ? '实时采样' : '遥测未接入'}</Badge><button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>清空</button></div></div>
     <div className="joint-curve-legend">{Array.from({ length: jointCount }, (_, index) => <button key={index} className={`curve-legend-item ${visibleJoints.has(index) ? '' : 'curve-legend-hidden'}`} onClick={() => toggleJoint(index)} title={visibleJoints.has(index) ? `点击隐藏 ${jointName(index, jointCount)}` : `点击显示 ${jointName(index, jointCount)}`}><i style={{ background: visibleJoints.has(index) ? CURVE_COLORS[index % CURVE_COLORS.length] : 'transparent' }} />{jointName(index, jointCount)}</button>)}</div>
     <div className="joint-curve-plot"><canvas ref={canvasRef} className="joint-curve-canvas" aria-label="6 关节实时位置曲线" /></div>
   </Card>;
 }
 
-export function DeviceControl({ device, telemetry, config, capabilities, locked = false, controller, quickActions = [{ id: 'safe-position', label: '回到安全位', detail: '由设备控制器执行' }], loops = [], onNavigateToDiagnostics, debugMode, isPhysicalDevice, customPresets: customPresetsProp, onCustomPresetsChange }: DeviceControlProps) {
+export function DeviceControl({ device, telemetry, config, capabilities, locked = false, controller, quickActions = [{ id: 'safe-position', label: '回到安全位', detail: '由设备控制器执行' }], loops = [], onNavigateToDiagnostics, debugMode, isPhysicalDevice, virtualTelemetry, customPresets: customPresetsProp, onCustomPresetsChange }: DeviceControlProps) {
+  const { t, locale } = useI18n();
   const jointCount = Math.max(0, capabilities.jointCount);
-  const [values, setValues] = useState<number[]>(() => Array.from({ length: jointCount }, () => 250 / 255));
+  const virtualHand = Boolean(debugMode) && !(isPhysicalDevice ?? false);
+  const [values, setValues] = useState<number[]>(() => virtualTelemetry?.getPositions() ?? Array.from({ length: jointCount }, () => 250 / 255));
   const [live, setLive] = useState<TelemetrySnapshot>();
   const [connection, setConnection] = useState<ConnectionSnapshot>({ schemaVersion: capabilities.schemaVersion, deviceId: capabilities.deviceId, state: 'disconnected', attempt: 0, lastError: null });
   const [safetyLocked, setSafetyLocked] = useState(false);
@@ -364,7 +379,9 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const lockedRef = useRef(locked || safetyLocked);
   const isLocked = locked || safetyLocked;
   const canOperate = (isPhysicalDevice ?? false) || (debugMode ?? false);
-  const virtualHand = Boolean(debugMode) && !(isPhysicalDevice ?? false);
+  // The shell owns the virtual stream. Features only select that shared stream
+  // in debug mode; physical mode continues to use the injected port.
+  const telemetrySource = virtualHand ? virtualTelemetry : (isPhysicalDevice ? telemetry : undefined);
   const twinCanvasRef = useRef<HTMLCanvasElement>(null);
   const [twinReady, setTwinReady] = useState(false);
   const [autoSpinOn, setAutoSpinOn] = useState(false);
@@ -573,6 +590,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   }, []);
 
   useEffect(() => { valuesRef.current = values; }, [values]);
+  useEffect(() => { virtualTelemetry?.setPositions(valuesRef.current); }, [values, virtualTelemetry]);
   useEffect(() => { connectionRef.current = connection; }, [connection]);
   useEffect(() => { lockedRef.current = isLocked; }, [isLocked]);
   useEffect(() => {
@@ -586,20 +604,26 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   }, [applyConnection, capabilities, device, virtualHand, debugMode, canOperate]);
   useEffect(() => {
     let mounted = true;
-    const mergeTelemetry = (snapshot: TelemetrySnapshot) => { setLive(snapshot); const next = toVector(pendingVector.current, jointCount); snapshot.positions.forEach((position, index) => { if (index < jointCount && !dragging.current.has(index)) next[index] = clamp(position); }); valuesRef.current = next; pendingVector.current = next; setValues(next); };
-    if (virtualHand) {
-      let sequence = 0;
-      const timer = window.setInterval(() => {
-        if (!mounted) return;
-        const values = toVector(pendingVector.current, jointCount);
-        mergeTelemetry({ schemaVersion: capabilities.schemaVersion, deviceId: 'virtual-hand', sequence: ++sequence, monotonicTimeMs: performance.now(), positions: values, rawPosition: values.map(v => Math.round(v * 255)), rawCurrent: [], rawSpeed: [], rawTouch: [], connected: true });
-      }, 400);
-      return () => { mounted = false; clearInterval(timer); };
-    }
-    void telemetry.read().then(snapshot => { if (mounted) mergeTelemetry(snapshot); }).catch(error => { if (mounted && canOperate && !debugMode) setErrorMessage('未连接机械手，无法读取遥测。'); else if (mounted && canOperate) setErrorMessage(errorText(error)); });
-    const unsubscribe = telemetry.subscribe(mergeTelemetry);
+    const mergeTelemetry = (snapshot: TelemetrySnapshot) => {
+      setLive(snapshot);
+      // Virtual samples animate around the target but must not feed back into
+      // the target sliders. Physical samples remain authoritative for them.
+      if (virtualHand) return;
+      const next = toVector(pendingVector.current, jointCount);
+      snapshot.positions.forEach((position, index) => { if (index < jointCount && !dragging.current.has(index)) next[index] = clamp(position); });
+      valuesRef.current = next;
+      pendingVector.current = next;
+      setValues(next);
+    };
+    if (!telemetrySource) { setLive(undefined); return () => { mounted = false; }; }
+    // Subscribe before the initial read. A live packet can arrive while the
+    // read is in flight; never let that stale snapshot overwrite a newer drag
+    // or telemetry update.
+    let receivedLiveTelemetry = false;
+    const unsubscribe = telemetrySource.subscribe(snapshot => { receivedLiveTelemetry = true; mergeTelemetry(snapshot); });
+    void telemetrySource.read().then(snapshot => { if (mounted && !receivedLiveTelemetry) mergeTelemetry(snapshot); }).catch(error => { if (mounted && canOperate && !debugMode) setErrorMessage('未连接机械手，无法读取遥测。'); else if (mounted && canOperate) setErrorMessage(errorText(error)); });
     return () => { mounted = false; unsubscribe(); };
-  }, [jointCount, telemetry, virtualHand, capabilities, canOperate, debugMode]);
+  }, [jointCount, telemetrySource, virtualHand, canOperate, debugMode]);
   useEffect(() => { if (!controller || virtualHand) return undefined; const unsubscribeConnection = controller.subscribeConnection(applyConnection); const unsubscribeOperation = controller.subscribeOperation?.(snapshot => setOperation(snapshot)); return () => { unsubscribeConnection(); unsubscribeOperation?.(); }; }, [applyConnection, controller, virtualHand]);
   useEffect(() => () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); }, []);
 
@@ -688,14 +712,15 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const basicActions = resolvedQuickActions.filter(action => action.category === 'basic');
   const numberActions = resolvedQuickActions.filter(action => action.category === 'number');
   const otherQuickActions = resolvedQuickActions.filter(action => !action.category || (action.category !== 'basic' && action.category !== 'number' && action.category !== 'custom'));
+  const localizedConnectionLabel = (state: ConnectionSnapshot['state']) => locale === 'en' ? ({ disconnected: 'Disconnected', connecting: 'Connecting', connected: 'Connected', reconnecting: 'Reconnecting', error: 'Connection error' } as Record<string, string>)[state] : connectionLabels[state];
   const positionTrend = live && live.positions.length > 0 ? `${Math.round(live.positions.reduce((sum, value) => sum + value, 0) / live.positions.length * 100)}% 平均目标` : '等待遥测';
 
   return <div className="stack device-control-page">
-    <div className="page-heading"><div><h1>设备控制</h1><p className="muted">所有目标都通过设备控制器提交，硬件状态以实时遥测为准。</p></div><div className="heading-actions"><Badge tone={statusTone(connection.state)}>{connectionLabels[connection.state]}</Badge><button aria-label="设备安全锁" className={`button ${isLocked ? 'button-secondary' : 'button-primary'}`} onClick={isLocked ? unlock : stopAll} disabled={busy}>{isLocked ? '恢复控制' : '停止全部动作'}</button></div></div>
-    {!controller && <div className="permission-note">未接入设备控制器：为避免伪造硬件执行，连接、关节、速度、扭矩和动作控制均已禁用。集成 runtime adapter 后可用。</div>}
-    {controller && !canOperate && <div className="permission-note">未连接机械手，设备控制不可用。请在设置中连接设备，或启用调试模式以使用虚拟机械手。</div>}
-    {controller && virtualHand && <div className="permission-note" role="status">调试模式：当前操作作用于虚拟调试机械手，不会发送到真实硬件。</div>}
-    {errorMessage && <div className="lock-banner" role="alert"><span><strong>操作未完成</strong> {errorMessage}</span><button onClick={() => setErrorMessage('')}>关闭</button></div>}
+    <div className="page-heading"><div><h1>{t('device.title')}</h1><p className="muted">{t('device.subtitle')}</p></div><div className="heading-actions"><Badge tone={statusTone(connection.state)}>{localizedConnectionLabel(connection.state)}</Badge><button aria-label={locale === 'en' ? 'Device safety lock' : '设备安全锁'} className={`button ${isLocked ? 'button-secondary' : 'button-primary'}`} onClick={isLocked ? unlock : stopAll} disabled={busy}>{isLocked ? t('app.safety.restore') : t('app.safety.stopAll')}</button></div></div>
+    {!controller && <div className="permission-note">{locale === 'en' ? 'No device controller is wired; connection, joints, speed, torque, and actions are disabled to avoid pretending to run hardware.' : '未接入设备控制器：为避免伪造硬件执行，连接、关节、速度、扭矩和动作控制均已禁用。集成 runtime adapter 后可用。'}</div>}
+    {controller && !canOperate && <div className="permission-note">{locale === 'en' ? 'The hand is not connected, so device control is unavailable. Connect it in Settings or enable debug mode for a virtual hand.' : '未连接机械手，设备控制不可用。请在设置中连接设备，或启用调试模式以使用虚拟机械手。'}</div>}
+    {controller && virtualHand && <div className="permission-note" role="status">{locale === 'en' ? 'Debug mode: actions target a virtual hand and are not sent to real hardware.' : '调试模式：当前操作作用于虚拟调试机械手，不会发送到真实硬件。'}</div>}
+    {errorMessage && <div className="lock-banner" role="alert"><span><strong>{locale === 'en' ? 'Operation incomplete' : '操作未完成'}</strong> {errorMessage}</span><button onClick={() => setErrorMessage('')}>{t('common.button.close')}</button></div>}
     <div className="device-control-layout">
       <div className="device-twin-column">
         <Card className="device-twin-stage">
@@ -728,11 +753,11 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
             <span>J{jointCount}</span>
           </div>
         </Card>
-        <JointCurveChart telemetry={telemetry} jointCount={jointCount} />
+        {telemetrySource && <JointCurveChart telemetry={telemetrySource} jointCount={jointCount} virtual={virtualHand} sample={virtualHand ? undefined : live} subscribeTelemetry={virtualHand} />}
       </div>
       <div className="control-panel">
         <Card>
-          <div className="card-header"><div><h2>连接管理</h2><span className="muted">第 {connection.attempt} 次尝试</span></div><Badge tone={controller ? statusTone(connection.state) : 'amber'}>{controller ? connectionLabels[connection.state] : '控制器未接入'}</Badge></div>
+          <div className="card-header"><div><h2>{t('device.connection.title')}</h2><span className="muted">{t('device.connection.attempt', { count: connection.attempt })}</span></div><Badge tone={controller ? statusTone(connection.state) : 'amber'}>{controller ? localizedConnectionLabel(connection.state) : t('device.connection.controllerMissing')}</Badge></div>
           <div className="grid grid-3" style={{ marginTop: 10 }}>
             <button className="button button-primary" disabled={!controller || busy || connection.state === 'connected' || !canOperate} onClick={connect}>连接</button>
             <button className="button button-secondary" disabled={!controller || busy || connection.state === 'disconnected' || !canOperate} onClick={disconnect}>断开</button>
@@ -743,7 +768,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
         <div className="control-twin">
           <div className="joint-target-column">
             <Card className="joint-target-card">
-              <div className="card-header"><div><h2>关节目标</h2><span className="muted">归一化 · 0–100%</span></div><Badge>{jointCount} 关节</Badge></div>
+              <div className="card-header"><div><h2>{t('device.joints.title')}</h2><span className="muted">{t('device.joints.subtitle')}</span></div><Badge>{t('common.label.jointCount', { count: jointCount })}</Badge></div>
               {jointCount === 0 && <p className="muted">当前能力未报告关节，控制不可用。</p>}
               <div className="joint-list joint-list-single">{Array.from({ length: jointCount }, (_, index) => <JointSlider key={index} index={index} label={jointName(index, jointCount)} value={values[index] ?? 0} disabled={!controller || isLocked || connection.state !== 'connected' || !canOperate} onBegin={beginJoint} onInput={changeJoint} onFinish={finishJoint} />)}</div>
               <details open={rawOpen} onToggle={event => setRawOpen(event.currentTarget.open)}><summary className="button button-ghost" style={{ cursor: 'pointer' }}>高级诊断：原始值估算</summary><div className="grid grid-3" style={{ marginTop: 8 }}><span className="muted">raw 估算：{values.map(value => Math.round(value * (capabilities.position.range.max - capabilities.position.range.min) + capabilities.position.range.min)).join(', ') || '—'}</span><span className="muted">范围：{capabilities.position.range.min}–{capabilities.position.range.max}</span><span className="muted">遥测 raw：{live?.rawPosition.join(', ') || '—'}</span></div></details>
@@ -753,7 +778,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
             </div>
           </div>
         <Card className="preset-actions-card">
-          <div className="card-header"><div><h2>快捷动作</h2><span className="muted">内置预设由设备控制器执行</span></div></div>
+          <div className="card-header"><div><h2>{t('device.presets.title')}</h2><span className="muted">{t('device.presets.subtitle')}</span></div></div>
           <div className="preset-actions-scroll">
             <div className="preset-row">
               <span className="preset-row-label">基本预设</span>
@@ -786,6 +811,26 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                       {isQuickActionRunning(action) ? `${action.label} · 执行中` : action.label}
                     </button>
                   ))}
+                </div>
+              </div>
+            )}
+            {loops.length > 0 && (
+              <div className="preset-row">
+                <span className="preset-row-label">循环动作</span>
+                <div className="grid grid-3">
+                  {loops.map(loop => {
+                    const running = submittingLoop === loop.id || (loopOperationActive && (singleLoopOperation || operation?.operationId === loop.id));
+                    return (
+                      <button
+                        className="button button-secondary"
+                        key={loop.id}
+                        disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)}
+                        onClick={() => { setSubmittingLoop(loop.id); void runController(() => controller!.startLoop(loop.id)).finally(() => setSubmittingLoop(undefined)); }}
+                      >
+                        {running ? `${loop.label} · 执行中` : loop.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}

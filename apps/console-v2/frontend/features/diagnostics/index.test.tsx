@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { Diagnostics, TelemetryChart, buildConnectionChecks, SafetyCard } from './index';
-import type { DeviceCapabilities, DeviceConfig, LogPort, StructuredLogEntry, TelemetryPort } from '../../shared/contracts';
+import { Diagnostics, TelemetryChart, buildConnectionChecks, SafetyCard, drawTelemetryCurve } from './index';
+import type { DeviceCapabilities, DeviceConfig, LogPort, StructuredLogEntry, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
+import { createVirtualTelemetry } from '../../shared/telemetry/virtual';
 
 const config: DeviceConfig = { schemaVersion: 1, deviceId: 'demo', name: 'Demo', model: 'O6', hand: 'left', transport: { type: 'can', channel: 'fake' }, autoReconnect: true };
 const capabilities: DeviceCapabilities = { schemaVersion: 1, deviceId: 'demo', model: 'O6', hand: 'left', transport: { type: 'can', channel: 'fake' }, jointCount: 2, position: { length: 2, available: true, range: { min: 0, max: 255 } }, speed: { length: 2, available: true, range: { min: 0, max: 255 } }, current: { length: 2, available: true, range: { min: 0, max: 255 } }, torque: { length: 2, available: true, range: { min: 0, max: 255 } }, touch: { length: 2, available: false, range: { min: 0, max: 255 } }, speedCommandLength: 2, currentCommandLength: null, torqueCommandLength: null, supportedOperations: [] };
@@ -11,6 +12,65 @@ describe('diagnostics feature', () => {
   it('keeps all capability joints selectable, including J25', () => {
     render(<TelemetryChart jointCount={25} />);
     expect(screen.getByText('J25')).toBeInTheDocument();
+  });
+
+  it('renders a virtual telemetry stream for debug mode without a device port', () => {
+    render(<TelemetryChart telemetry={createVirtualTelemetry(2)} jointCount={2} virtual />);
+    expect(screen.getByText('调试虚拟遥测')).toBeInTheDocument();
+    expect(screen.getByLabelText('关节遥测曲线')).toBeInTheDocument();
+  });
+
+  it('draws received samples instead of only rendering a source badge', () => {
+    const context = {
+      beginPath: vi.fn(), moveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(),
+      strokeStyle: '', lineWidth: 0,
+    } as unknown as CanvasRenderingContext2D;
+    const sample = (sequence: number, position: number): TelemetrySnapshot => ({ schemaVersion: 1, deviceId: 'demo', sequence, monotonicTimeMs: sequence * 100, positions: [position], rawPosition: [Math.round(position * 255)], rawCurrent: [], rawSpeed: [], rawTouch: [], connected: true });
+    const drawn = drawTelemetryCurve(context, { samples: [sample(1, 0.2), sample(2, 0.8)], jointCount: 1, visibleJoints: new Set([0]), windowMs: 30_000, width: 200, height: 80 });
+    expect(drawn).toBe(1);
+    expect(context.beginPath).toHaveBeenCalledTimes(1);
+    expect(context.lineTo).toHaveBeenCalledWith(200, 16);
+    expect(context.stroke).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the chart when debug is off and no physical source exists', () => {
+    render(<Diagnostics logs={{ list: vi.fn(async () => []) }} capabilities={capabilities} debugMode={false} isPhysicalDevice={false} />);
+    expect(screen.queryByLabelText('关节遥测曲线')).not.toBeInTheDocument();
+  });
+
+  it('lets diagnostics opt into virtual telemetry only when debug mode is active', async () => {
+    render(<Diagnostics logs={{ list: vi.fn(async () => []) }} capabilities={capabilities} debugMode isPhysicalDevice={false} virtualTelemetry={createVirtualTelemetry(2)} />);
+    expect(await screen.findByText('调试虚拟遥测')).toBeInTheDocument();
+  });
+
+  it('shares one virtual timer across subscribers and stops it after the last unsubscribe', () => {
+    vi.useFakeTimers();
+    const intervalSpy = vi.spyOn(window, 'setInterval');
+    const clearIntervalSpy = vi.spyOn(window, 'clearInterval');
+    const telemetry = createVirtualTelemetry(2);
+    const first = vi.fn();
+    const second = vi.fn();
+    const unsubscribeFirst = telemetry.subscribe(first);
+    const unsubscribeSecond = telemetry.subscribe(second);
+    expect(intervalSpy).toHaveBeenCalledTimes(1);
+    first.mockClear();
+    second.mockClear();
+    vi.advanceTimersByTime(220);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first.mock.calls[0][0].sequence).toBe(second.mock.calls[0][0].sequence);
+    unsubscribeFirst();
+    vi.advanceTimersByTime(220);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(2);
+    unsubscribeSecond();
+    expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(440);
+    expect(second).toHaveBeenCalledTimes(2);
+    unsubscribeSecond();
+    intervalSpy.mockRestore();
+    clearIntervalSpy.mockRestore();
+    vi.useRealTimers();
   });
 
   it('produces deterministic connection advice', () => {

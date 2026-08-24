@@ -1,13 +1,25 @@
 # 动作中心
 
-动作中心提供动作录制、回放、删除以及循环序列管理能力。
+动作中心使用两个明确的数据概念：`PosePreset` 是一个静止关键帧，`ProgrammedAction` 是按顺序引用多个姿态并带有播放配置的动作。
 
-- 录制自定义动作并保存为可复用动作。
-- 通过倍速和循环次数控制单动作回放。
-- 进入选择模式后勾选多个动作，创建循环序列。
-- 循环支持重排动作顺序、设置循环次数（1/3/5/10/无限）。
-- 运行循环时，控制器会按顺序依次播放每个动作，并根据设置重复执行。
-- 循环列表支持运行、编辑和删除。
-- **内置预设同步**：`内置预设` 标签页从 `device-control` 模块同步 O6 基本预设（张开、握拳、OK、点赞）和数字预设（壹至伍），以按钮网格形式展示；点击运行会调用 `controller.play` 并将预设 ID 传给 ActionController；内置预设支持本地隐藏（×）。
-- **自定义预设合并**：`自定义` 标签页合并来自首页的同步预设（带「首页」徽章）与本地录制的动作（带「自定义」徽章）；首页预设可运行但不可删除，本地录制支持运行与删除。
-- **关节位置卡片**：当 `capabilities` 提供且 `capabilities.jointCount > 0` 时，页面顶部显示关节位置只读卡片，实时订阅 `telemetry` 并将原始值按 `position.range` 归一化后显示；滑动条只读，不可交互。
+- “＋新建动作”直接进入姿态编排器。候选只包含 4 个基础预设、5 个数字预设、首页自定义姿态和动作中心本地自定义姿态。
+- 编排器支持按选择顺序选择、重排、移除和清空，并在保存前设置动作的单次/循环、倍速、正放/倒放和循环次数。
+- 首页姿态在动作中心只读；动作中心通过 `localPresets`/`onLocalPresetsChange` 维护本地姿态，不回写首页。
+- `programmedActions`/`onProgrammedActionsChange` 可由集成层控制，未提供时使用 feature-local 会话状态。
+- 旧 `ActionRecording` 只显示在独立“录制兼容区”，不混入全部姿态或编排候选。
+- 姿态编辑器在调试模式开放 6 个关节滑块；草稿与遥测当前位置分离，支持读取当前位置、重置草稿、预览和保存为动作中心自定义姿态。`onVirtualPoseChange` 可将未保存草稿同步给虚拟机械手。
+- 物理设备通过 `isPhysicalDevice` 开启预览/应用门槛：选择姿态只生成预览，只有明确点击“应用到设备”才调用 `applyPose`（缺少该方法时回退到 `playPose`）。
+- 编排倍速固定为 `0.25×/0.5×/0.75×/1×`，运行和持久化都会将旧数据速度归一化到该范围。
+
+## ActionController 集成清单
+
+`ActionController` 优先使用完整目标接口：
+
+```ts
+playPose(pose: PosePreset, options: PlaybackOptions): Promise<void>
+playProgrammedAction(action: ProgrammedAction, options: PlaybackOptions): Promise<void>
+```
+
+其中 `ProgrammedAction` 携带 `poseIds`、完整 `poses` 快照和 `playback` 配置；运行时不需要猜测内置/local ID。旧 `play(id, { speed, loopCount, direction? })` 仅作为兼容降级路径，新集成应实现上述两个方法。
+
+建议后续将这两个 feature-local DTO 固化到共享契约，并让播放状态事件增加 `sequenceId`、`itemIndex`、`direction`，以便准确显示序列进度。

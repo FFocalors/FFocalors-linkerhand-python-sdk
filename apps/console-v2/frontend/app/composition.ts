@@ -1,4 +1,4 @@
-import type { ActionController, ActionControllerState } from '../features/actions';
+import type { ActionController, ActionControllerState, PlaybackOptions, PosePreset, ProgrammedAction } from '../features/actions';
 import type { DeviceControlController } from '../features/device-control';
 import type { GraspController, GraspControllerState } from '../features/smart-grasp';
 import type { ConnectionSnapshot, ConsolePorts, JointTargetCommand, OperationSnapshot } from '../shared/contracts';
@@ -68,11 +68,44 @@ export function createDeviceController(runtime: ConsolePorts, simulator: boolean
   };
 }
 
-function actionController(runtime: ConsolePorts, simulator: boolean): ActionController {
+export function createActionController(runtime: ConsolePorts, simulator: boolean, actionExtrasOverride?: typeof tauriRuntimeExtras.actions): ActionController {
   let state: ActionControllerState = { state: 'idle', progress: 0 };
   const listeners = stateListeners<ActionControllerState>();
   const set = (next: ActionControllerState) => { state = next; listeners.emit(state); };
-  const extras = simulator ? undefined : tauriRuntimeExtras.actions;
+  const extras = simulator ? undefined : actionExtrasOverride ?? tauriRuntimeExtras.actions;
+  let simulatorTimer: number | undefined;
+  const validateFrames = async (id: string, poses: PosePreset[]): Promise<JointTargetCommand[]> => {
+    const capabilities = await runtime.device.getCapabilities();
+    const expected = capabilities.jointCount;
+    if (poses.length === 0) throw new Error('动作至少需要一个姿态。');
+    return poses.map((pose, index) => {
+      if (!pose.positions || pose.positions.length !== expected || pose.positions.some(value => !Number.isFinite(value) || value < 0 || value > 1)) throw new Error(`姿态“${pose.name}”的关节向量必须包含 ${expected} 个 0..1 数值。`);
+      return { schemaVersion: 1, commandId: `${id}:frame:${index}`, source: 'preset' as const, positions: [...pose.positions], durationMs: 500, finalCommand: index === poses.length - 1 };
+    });
+  };
+  const validationFailure = async (message: string) => {
+    set({ state: 'error', progress: 0, detail: message });
+    await runtime.logs.record?.({ level: 'error', event: 'control.action.validation_failed', message, fields: { source: 'action-center' } });
+    throw new Error(message);
+  };
+  const runFrames = async (id: string, name: string, poses: PosePreset[], options: PlaybackOptions) => {
+    let frames: JointTargetCommand[];
+    try { frames = await validateFrames(id, poses); } catch (error) { return validationFailure(error instanceof Error ? error.message : String(error)); }
+    set({ state: 'playing', actionId: id, progress: 0, detail: name });
+    try {
+      if (extras) await extras.playFrames(id, name, frames, options);
+      else {
+        set({ state: 'playing', actionId: id, progress: 0, detail: simulator ? '浏览器模拟器执行中' : name });
+        if (simulatorTimer !== undefined) window.clearTimeout(simulatorTimer);
+        const repetitions = options.mode === 'loop' ? options.loopCount === null ? null : options.loopCount + 1 : 1;
+        if (repetitions !== null) simulatorTimer = window.setTimeout(() => { simulatorTimer = undefined; set({ state: 'completed', actionId: id, progress: 1, detail: '动作执行完成' }); }, Math.max(20, Math.round(frames.length * 500 * repetitions / Math.max(.25, options.speed))));
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      set({ state: 'error', actionId: id, progress: 0, detail: message });
+      throw error;
+    }
+  };
   return {
     async startRecording(name) { if (extras) { await extras.startRecording(name); return; } set({ state: 'recording', progress: 0, detail: '浏览器模拟器录制中' }); },
     async pauseRecording() { if (extras) { await extras.pauseRecording(); return; } set({ ...state, state: 'recordingPaused' }); },
@@ -80,11 +113,13 @@ function actionController(runtime: ConsolePorts, simulator: boolean): ActionCont
     async finishRecording() { if (extras) { await extras.finishRecording(); return; } set({ state: 'idle', progress: 0 }); },
     async cancelRecording() { if (extras) { await extras.cancelRecording(); return; } set({ state: 'cancelled', progress: 0 }); },
     async play(actionId, options) { if (extras) { await extras.play(actionId, options); return; } set({ state: 'playing', actionId, progress: 0, detail: '浏览器模拟器执行中' }); },
+    async playPose(pose, options) { await runFrames(pose.id, pose.name, [pose], options); },
+    async playProgrammedAction(action, options) { await runFrames(action.id, action.name, action.poses, options); },
     async pausePlayback() { if (extras) { await extras.pause(); return; } set({ ...state, state: 'paused' }); },
     async resumePlayback() { if (extras) { await extras.resume(); return; } set({ ...state, state: 'playing' }); },
-    async stop() { if (extras) { await extras.stop(); return; } set({ state: 'cancelled', progress: 0 }); },
+    async stop() { if (extras) { await extras.stop(); return; } if (simulatorTimer !== undefined) { window.clearTimeout(simulatorTimer); simulatorTimer = undefined; } set({ state: 'cancelled', progress: 0, detail: '已取消' }); },
     async playLoop(loop, options) { if (extras) { await (extras as any).playLoop(loop, options); return; } set({ state: 'playing', actionId: loop.actionIds[0], progress: 0, detail: '浏览器模拟器循环执行中' }); },
-    async stopLoop() { if (extras) { await (extras as any).stopLoop(); return; } set({ state: 'idle', progress: 0 }); },
+    async stopLoop() { if (extras) { await (extras as any).stopLoop(); return; } if (simulatorTimer !== undefined) { window.clearTimeout(simulatorTimer); simulatorTimer = undefined; } set({ state: 'idle', progress: 0 }); },
     getState: async () => state,
     subscribe(listener) { const remove = listeners.add(listener); const remote = extras?.subscribe(listener); return () => { remove(); remote?.(); }; },
   };
@@ -238,5 +273,5 @@ export function createComposition(): ConsoleComposition {
   // runtime until that snapshot is available.
   const createRps = (nextCapabilities: import('../shared/contracts').DeviceCapabilities) => createRpsActionController(runtime, nextCapabilities, simulator);
   const fallbackCapabilities = { schemaVersion: 1, deviceId: 'pending', model: 'O6' as const, hand: 'right' as const, transport: { type: 'can' as const, channel: 'pending' }, jointCount: 6, position: { length: 6, available: true, range: { min: 0, max: 255 } }, speed: { length: 6, available: true, range: { min: 0, max: 255 } }, current: { length: 6, available: true, range: { min: 0, max: 255 } }, torque: { length: 6, available: true, range: { min: 0, max: 255 } }, touch: { length: 0, available: false, range: { min: 0, max: 255 } }, speedCommandLength: 6, currentCommandLength: null, torqueCommandLength: 6, supportedOperations: ['setPosition' as const] };
-  return { ...runtime, simulator, isPhysicalDevice: !simulator, visionRuntime, visionProposalController, rpsActionController: createRps(fallbackCapabilities), createRpsActionController: createRps, settingsController: createSettingsController(runtime, simulator), themePort: createThemePort(), deviceController: createDeviceController(runtime, simulator, simulator ? undefined : tauriRuntimeExtras.device), actionController: actionController(runtime, simulator), graspController: graspController(runtime, simulator) };
+  return { ...runtime, simulator, isPhysicalDevice: !simulator, visionRuntime, visionProposalController, rpsActionController: createRps(fallbackCapabilities), createRpsActionController: createRps, settingsController: createSettingsController(runtime, simulator), themePort: createThemePort(), deviceController: createDeviceController(runtime, simulator, simulator ? undefined : tauriRuntimeExtras.device), actionController: createActionController(runtime, simulator), graspController: graspController(runtime, simulator) };
 }

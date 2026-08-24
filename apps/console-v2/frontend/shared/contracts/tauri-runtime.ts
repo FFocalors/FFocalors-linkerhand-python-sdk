@@ -1,5 +1,5 @@
 import { Channel, invoke, isTauri } from '@tauri-apps/api/core';
-import type { AppError, ConsolePorts, DeviceCapabilities, DeviceConfig, JointTargetCommand, OperationSnapshot, TelemetrySnapshot } from './index';
+import type { AppError, ConsolePorts, DeviceCapabilities, DeviceConfig, JointTargetCommand, OperationSnapshot, StructuredLogEntry, TelemetrySnapshot } from './index';
 
 /** Runtime wire events stay feature-agnostic; app composition maps them to feature-local state. */
 export type TauriActionState = { state: 'idle' | 'recording' | 'recordingPaused' | 'playing' | 'paused' | 'completed' | 'cancelled' | 'error'; actionId?: string; progress: number; detail?: string };
@@ -35,6 +35,7 @@ export const tauriRuntimeExtras = {
   actions: {
     startRecording: (name: string) => invoke<void>('action_start_recording', { name }), pauseRecording: () => invoke<void>('action_pause_recording'), resumeRecording: () => invoke<void>('action_resume_recording'), finishRecording: () => invoke<void>('action_finish_recording'), cancelRecording: () => invoke<void>('action_cancel_recording'),
     play: (id: string, options: { speed: number; loopCount: number | null }) => invoke<void>('action_play', { id, speed: options.speed, loopEnabled: options.loopCount !== 0, loopCount: options.loopCount }), pause: () => invoke<void>('action_pause'), resume: () => invoke<void>('action_resume'), stop: () => invoke<void>('action_stop'),
+    playFrames: (id: string, name: string, frames: JointTargetCommand[], options: { mode: 'single' | 'loop'; speed: number; direction: 'forward' | 'reverse'; loopCount: number | null }) => invoke<void>('action_play_frames', { id, name, frames, speed: options.speed, loopEnabled: options.mode === 'loop', loopCount: options.mode === 'single' ? 1 : options.loopCount, direction: options.direction }),
     subscribe: (listener: (value: TauriActionState) => void) => subscribeChannel('action_subscribe', 'action_unsubscribe', listener),
   },
   grasp: {
@@ -79,5 +80,8 @@ export const tauriRuntime: ConsolePorts = {
   actions: { list: () => invoke('action_list'), delete: (id: string) => invoke<void>('action_delete', { id }) },
   grasp: { listPresets: () => invoke('grasp_presets'), runPreset: () => invoke<void>('grasp_start', { preset: 'cube', degraded: false }) },
   vision: { propose: () => unavailable('vision proposals'), sync: () => unavailable('vision sync') },
-  logs: { list: (limit = 20) => invoke('logs_list', { limit: Math.min(limit, 512) }) },
+  logs: {
+    list: (limit = 20) => invoke('logs_list', { limit: Math.min(limit, 512) }),
+    record: (entry: Pick<StructuredLogEntry, 'level' | 'event' | 'message' | 'fields'>) => invoke<void>('logs_record', { entry }),
+  },
 };

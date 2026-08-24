@@ -2,8 +2,8 @@
 //! the sidecar adapter; IPC commands never hold a mutex while doing I/O.
 use app_runtime::AppRuntime;
 use console_contracts::{
-    AppError, ConnectionSnapshot, DeviceCapabilities, DeviceConfig, JointTargetCommand,
-    OperationSnapshot, TelemetrySnapshot,
+    AppError, ConnectionSnapshot, DeviceCapabilities, DeviceConfig, JointTargetCommand, LogLevel,
+    OperationSnapshot, StructuredLogEntry, TelemetrySnapshot, CURRENT_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use sidecar_client::{
@@ -16,6 +16,267 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use tauri::ipc::Channel;
 use tauri::Manager;
+
+fn trusted_camera_origin(uri: &str) -> bool {
+    [
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "tauri://localhost",
+        "http://127.0.0.1:1420",
+        "http://localhost:1420",
+    ]
+    .iter()
+    .any(|origin| uri == *origin || uri.starts_with(&format!("{origin}/")))
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CameraPermissionStatus {
+    pub state: String,
+    pub origin: Option<String>,
+    pub detail: Option<String>,
+}
+
+#[cfg(windows)]
+fn camera_permission_status(
+    app: &tauri::AppHandle,
+    reset_denied: bool,
+) -> Result<CameraPermissionStatus, String> {
+    use std::time::Duration;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2Profile4, ICoreWebView2_13, COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+        COREWEBVIEW2_PERMISSION_STATE_DEFAULT, COREWEBVIEW2_PERMISSION_STATE_DENY,
+    };
+    use webview2_com::{
+        GetNonDefaultPermissionSettingsCompletedHandler, SetPermissionStateCompletedHandler,
+    };
+    use windows::core::{Interface, PCWSTR, PWSTR};
+    use windows::Win32::System::Com::CoTaskMemFree;
+
+    let Some(window) = app.get_webview_window("main") else {
+        return Err("主窗口 WebView 不可用".into());
+    };
+    let (tx, rx) = mpsc::channel::<Result<CameraPermissionStatus, String>>();
+    let with_webview_result = window.with_webview(move |webview| {
+        let setup_result = (|| -> Result<(), String> {
+            let controller = webview.controller();
+            let core_webview = unsafe { controller.CoreWebView2() }
+                .map_err(|error| format!("获取 WebView2 失败：{error}"))?;
+            let core_webview_13: ICoreWebView2_13 = core_webview
+                .cast()
+                .map_err(|error| format!("当前 WebView2 不支持 profile API：{error}"))?;
+            let profile = unsafe { core_webview_13.Profile() }
+                .map_err(|error| format!("获取 WebView2 profile 失败：{error}"))?;
+            let profile4: ICoreWebView2Profile4 = profile
+                .cast()
+                .map_err(|error| format!("当前 WebView2 不支持 profile 权限 API：{error}"))?;
+            let callback_tx = tx.clone();
+            let callback_profile = profile4.clone();
+            let callback = GetNonDefaultPermissionSettingsCompletedHandler::create(Box::new(
+                move |completed, settings| {
+                    let result = (|| -> Result<(), String> {
+                        completed
+                            .map_err(|error| format!("查询 WebView2 摄像头权限失败：{error}"))?;
+                        let Some(settings) = settings else {
+                            callback_tx
+                                .send(Ok(CameraPermissionStatus {
+                                    state: "default".into(),
+                                    origin: None,
+                                    detail: None,
+                                }))
+                                .map_err(|_| "摄像头权限查询结果接收方已关闭".to_string())?;
+                            return Ok(());
+                        };
+                        let mut count = 0_u32;
+                        unsafe { settings.Count(&mut count) }
+                            .map_err(|error| format!("读取 WebView2 权限数量失败：{error}"))?;
+                        for index in 0..count {
+                            let setting = unsafe { settings.GetValueAtIndex(index) }
+                                .map_err(|error| format!("读取 WebView2 权限条目失败：{error}"))?;
+                            let mut kind = Default::default();
+                            unsafe { setting.PermissionKind(&mut kind) }
+                                .map_err(|error| format!("读取 WebView2 权限类型失败：{error}"))?;
+                            if kind != COREWEBVIEW2_PERMISSION_KIND_CAMERA {
+                                continue;
+                            }
+                            let mut raw_origin = PWSTR::null();
+                            unsafe { setting.PermissionOrigin(&mut raw_origin) }
+                                .map_err(|error| format!("读取 WebView2 权限来源失败：{error}"))?;
+                            let origin_result = unsafe { raw_origin.to_string() };
+                            unsafe {
+                                CoTaskMemFree(Some(raw_origin.0 as *const _));
+                            }
+                            let origin = origin_result
+                                .map_err(|error| format!("解析 WebView2 权限来源失败：{error}"))?;
+                            if !trusted_camera_origin(&origin) {
+                                continue;
+                            }
+                            let mut state = Default::default();
+                            unsafe { setting.PermissionState(&mut state) }.map_err(|error| {
+                                format!("读取 WebView2 摄像头权限状态失败：{error}")
+                            })?;
+                            let state_name = camera_permission_state_name(state);
+                            if reset_denied && state == COREWEBVIEW2_PERMISSION_STATE_DENY {
+                                let origin_units: Vec<u16> =
+                                    origin.encode_utf16().chain(std::iter::once(0)).collect();
+                                let origin_ptr = PCWSTR(origin_units.as_ptr());
+                                let callback_origin = origin.clone();
+                                let tx = callback_tx.clone();
+                                let reset_callback = SetPermissionStateCompletedHandler::create(
+                                    Box::new(move |result| {
+                                        let status = result
+                                            .map(|_| CameraPermissionStatus {
+                                                state: "default".into(),
+                                                origin: Some(callback_origin),
+                                                detail: None,
+                                            })
+                                            .map_err(|error| {
+                                                format!("重置 WebView2 摄像头权限失败：{error}")
+                                            });
+                                        tx.send(status)
+                                            .map_err(|_| windows::core::Error::from_win32())?;
+                                        Ok(())
+                                    }),
+                                );
+                                unsafe {
+                                    callback_profile.SetPermissionState(
+                                        COREWEBVIEW2_PERMISSION_KIND_CAMERA,
+                                        origin_ptr,
+                                        COREWEBVIEW2_PERMISSION_STATE_DEFAULT,
+                                        &reset_callback,
+                                    )
+                                }
+                                .map_err(|error| {
+                                    format!("提交 WebView2 摄像头权限重置失败：{error}")
+                                })?;
+                            } else {
+                                callback_tx
+                                    .send(Ok(CameraPermissionStatus {
+                                        state: state_name.into(),
+                                        origin: Some(origin),
+                                        detail: None,
+                                    }))
+                                    .map_err(|_| "摄像头权限查询结果接收方已关闭".to_string())?;
+                            }
+                            return Ok(());
+                        }
+                        callback_tx
+                            .send(Ok(CameraPermissionStatus {
+                                state: "default".into(),
+                                origin: None,
+                                detail: None,
+                            }))
+                            .map_err(|_| "摄像头权限查询结果接收方已关闭".to_string())?;
+                        Ok(())
+                    })();
+                    if let Err(error) = result {
+                        let _ = callback_tx.send(Err(error));
+                    }
+                    Ok(())
+                },
+            ));
+            unsafe { profile4.GetNonDefaultPermissionSettings(&callback) }
+                .map_err(|error| format!("查询 WebView2 摄像头权限失败：{error}"))?;
+            Ok(())
+        })();
+        if let Err(error) = setup_result {
+            let _ = tx.send(Err(error));
+        }
+    });
+    with_webview_result.map_err(|error| format!("访问主窗口 WebView 失败：{error}"))?;
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "等待 WebView2 摄像头权限结果超时".to_string())?
+}
+
+#[cfg(not(windows))]
+fn camera_permission_status(
+    _app: &tauri::AppHandle,
+    _reset_denied: bool,
+) -> Result<CameraPermissionStatus, String> {
+    Err("当前平台没有 WebView2 摄像头权限 API".into())
+}
+
+#[cfg(windows)]
+fn camera_permission_state_name(
+    state: webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PERMISSION_STATE,
+) -> &'static str {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DEFAULT,
+        COREWEBVIEW2_PERMISSION_STATE_DENY,
+    };
+    if state == COREWEBVIEW2_PERMISSION_STATE_DENY {
+        "deny"
+    } else if state == COREWEBVIEW2_PERMISSION_STATE_ALLOW {
+        "allow"
+    } else if state == COREWEBVIEW2_PERMISSION_STATE_DEFAULT {
+        "default"
+    } else {
+        "unknown"
+    }
+}
+
+#[cfg(windows)]
+fn install_camera_permission_handler(app: &tauri::AppHandle) {
+    use std::ffi::c_void;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+        COREWEBVIEW2_PERMISSION_STATE_DENY,
+    };
+    use webview2_com::PermissionRequestedEventHandler;
+    use windows::core::PWSTR;
+    use windows::Win32::System::Com::CoTaskMemFree;
+
+    let Some(window) = app.get_webview_window("main") else {
+        eprintln!("camera permission handler: main webview is not available");
+        return;
+    };
+    if let Err(error) = window.with_webview(|webview| {
+        let controller = webview.controller();
+        let Ok(core_webview) = (unsafe { controller.CoreWebView2() }) else {
+            eprintln!("camera permission handler: WebView2 handle is unavailable");
+            return;
+        };
+        let mut token = 0_i64;
+        let result = unsafe {
+            core_webview.add_PermissionRequested(
+                &PermissionRequestedEventHandler::create(Box::new(|_, args| {
+                    let Some(args) = args else {
+                        return Ok(());
+                    };
+                    let mut kind = Default::default();
+                    args.PermissionKind(&mut kind)?;
+
+                    if kind == COREWEBVIEW2_PERMISSION_KIND_CAMERA {
+                        let mut raw_uri = PWSTR::null();
+                        args.Uri(&mut raw_uri)?;
+                        let uri_result = raw_uri.to_string();
+                        CoTaskMemFree(Some(raw_uri.0 as *const c_void));
+                        let uri = uri_result?;
+                        let state = if trusted_camera_origin(&uri) {
+                            COREWEBVIEW2_PERMISSION_STATE_ALLOW
+                        } else {
+                            COREWEBVIEW2_PERMISSION_STATE_DENY
+                        };
+                        args.SetState(state)?;
+                    } else if kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                        || kind == COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION
+                    {
+                        // The console never needs microphone or unknown permissions.
+                        args.SetState(COREWEBVIEW2_PERMISSION_STATE_DENY)?;
+                    }
+                    Ok(())
+                })),
+                &mut token,
+            )
+        };
+        if let Err(error) = result {
+            eprintln!("camera permission handler registration failed: {error}");
+        }
+    }) {
+        eprintln!("camera permission handler setup failed: {error}");
+    }
+}
 
 fn app_error(code: &str, message: impl Into<String>, retryable: bool) -> AppError {
     AppError {
@@ -74,6 +335,15 @@ struct SidecarCheck {
     ok: bool,
     message: String,
     detail: Option<String>,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LogRecord {
+    level: LogLevel,
+    event: String,
+    message: String,
+    #[serde(default)]
+    fields: serde_json::Value,
 }
 enum ActorRequest {
     Config {
@@ -156,6 +426,16 @@ enum ActorRequest {
         loop_count: Option<u32>,
         reply: Reply<()>,
     },
+    ActionPlayFrames {
+        id: String,
+        name: String,
+        frames: Vec<JointTargetCommand>,
+        speed: f32,
+        loop_enabled: bool,
+        loop_count: Option<u32>,
+        direction: String,
+        reply: Reply<()>,
+    },
     ActionPause {
         reply: Reply<()>,
     },
@@ -207,6 +487,10 @@ enum ActorRequest {
     Logs {
         limit: usize,
         reply: Reply<Vec<console_contracts::StructuredLogEntry>>,
+    },
+    RecordLog {
+        entry: LogRecord,
+        reply: Reply<()>,
     },
     Operation {
         reply: Reply<OperationSnapshot>,
@@ -280,9 +564,62 @@ struct RuntimeActor {
     shutdown_requested: Arc<AtomicBool>,
     applied_control: u8,
     stopped: Arc<AtomicBool>,
+    simulator: bool,
+    log_sequence: u64,
 }
 impl RuntimeActor {
+    fn log(
+        &mut self,
+        monotonic_time_ms: u64,
+        level: LogLevel,
+        event: &str,
+        message: &str,
+        fields: serde_json::Value,
+    ) {
+        self.log_sequence = self.log_sequence.wrapping_add(1);
+        self.runtime.logs.push(StructuredLogEntry {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            id: format!("{monotonic_time_ms}-{}", self.log_sequence),
+            monotonic_time_ms,
+            level,
+            event: event.into(),
+            message: message.into(),
+            fields,
+        });
+    }
+    fn log_result<T>(
+        &mut self,
+        result: &Result<T, AppError>,
+        now: u64,
+        event: &str,
+        message: &str,
+        fields: serde_json::Value,
+    ) {
+        match result {
+            Ok(_) => self.log(now, LogLevel::Info, &format!("{event}.success"), message, fields),
+            Err(error) => self.log(now, LogLevel::Error, &format!("{event}.failed"), &error.message, serde_json::json!({ "error": error.message, "code": error.code, "context": fields })),
+        }
+    }
+    fn log_command_result<T>(
+        &mut self,
+        result: &Result<T, AppError>,
+        now: u64,
+        final_command: bool,
+        fields: serde_json::Value,
+    ) {
+        match result {
+            Ok(_) => self.log(now, if final_command { LogLevel::Info } else { LogLevel::Debug }, "control.command.success", "控制指令执行成功", fields),
+            Err(error) => self.log(now, LogLevel::Error, "control.command.failed", &error.message, serde_json::json!({ "error": error.message, "code": error.code, "context": fields })),
+        }
+    }
     fn run(mut self) {
+        self.log(
+            now_ms(),
+            LogLevel::Info,
+            "app.started",
+            "LinkerHand Console 运行时已启动",
+            serde_json::json!({ "source": "runtime", "simulator": self.simulator }),
+        );
         let mut next_telemetry = now_ms();
         loop {
             self.apply_control();
@@ -345,6 +682,14 @@ impl RuntimeActor {
                 )));
             }
             ActorRequest::Connect { reply } => {
+                let started = now_ms();
+                self.log(
+                    started,
+                    LogLevel::Info,
+                    "device.connect.started",
+                    "开始连接设备",
+                    serde_json::json!({ "attempt": self.runtime.device.snapshot().attempt }),
+                );
                 let result = self
                     .runtime
                     .connect()
@@ -353,9 +698,24 @@ impl RuntimeActor {
                 if let Ok(snapshot) = &result {
                     self.broadcast_connection(snapshot.clone());
                 }
+                self.log_result(
+                    &result,
+                    now_ms(),
+                    "device.connect",
+                    "设备已连接",
+                    serde_json::json!({ "state": self.runtime.device.snapshot().state }),
+                );
                 let _ = reply.send(result);
             }
             ActorRequest::Reconnect { reply } => {
+                let started = now_ms();
+                self.log(
+                    started,
+                    LogLevel::Info,
+                    "device.reconnect.started",
+                    "开始重连设备",
+                    serde_json::json!({ "attempt": self.runtime.device.snapshot().attempt + 1 }),
+                );
                 let result = self
                     .runtime
                     .device
@@ -365,9 +725,24 @@ impl RuntimeActor {
                 if let Ok(snapshot) = &result {
                     self.broadcast_connection(snapshot.clone());
                 }
+                self.log_result(
+                    &result,
+                    now_ms(),
+                    "device.reconnect",
+                    "设备已重连",
+                    serde_json::json!({ "state": self.runtime.device.snapshot().state }),
+                );
                 let _ = reply.send(result);
             }
             ActorRequest::Disconnect { reply } => {
+                let started = now_ms();
+                self.log(
+                    started,
+                    LogLevel::Info,
+                    "device.disconnect.started",
+                    "开始断开设备",
+                    serde_json::json!({}),
+                );
                 let result = self
                     .runtime
                     .device
@@ -377,15 +752,31 @@ impl RuntimeActor {
                 if let Ok(snapshot) = &result {
                     self.broadcast_connection(snapshot.clone());
                 }
+                self.log_result(
+                    &result,
+                    now_ms(),
+                    "device.disconnect",
+                    "设备已断开",
+                    serde_json::json!({ "state": self.runtime.device.snapshot().state }),
+                );
                 let _ = reply.send(result);
             }
             ActorRequest::Submit { command, reply } => {
+                let command_id = command.command_id.clone();
+                let source = serde_json::to_value(&command.source)
+                    .unwrap_or_else(|_| serde_json::json!("unknown"));
+                let context = serde_json::json!({ "commandId": command_id, "source": source, "finalCommand": command.final_command, "jointCount": command.positions.len() });
+                self.log(
+                    now_ms(),
+                    LogLevel::Debug,
+                    "control.command.started",
+                    "开始执行控制指令",
+                    context.clone(),
+                );
                 if self.control_state.load(Ordering::Acquire) == 1 {
-                    let _ = reply.send(Err(app_error(
-                        "STOPPED",
-                        "motion is locked after stop",
-                        false,
-                    )));
+                    let result = Err(app_error("STOPPED", "motion is locked after stop", false));
+                    self.log_command_result(&result, now_ms(), command.final_command, context);
+                    let _ = reply.send(result);
                     return;
                 }
                 let result = self
@@ -407,6 +798,7 @@ impl RuntimeActor {
                 if result.is_ok() && command.final_command {
                     self.flush_motion(now_ms());
                 }
+                self.log_command_result(&result, now_ms(), command.final_command, context);
                 let _ = reply.send(result);
             }
             ActorRequest::SetSpeed { command, reply } => {
@@ -539,6 +931,18 @@ impl RuntimeActor {
                 loop_count,
                 reply,
             } => {
+                if let Err(error) = action_engine::validate_playback_speed(speed) {
+                    let _ = reply.send(Err(map_error(error)));
+                    return;
+                }
+                let action_context = serde_json::json!({ "actionId": id, "speed": speed, "loopEnabled": loop_enabled, "loopCount": loop_count });
+                self.log(
+                    now_ms(),
+                    LogLevel::Info,
+                    "control.action.started",
+                    "开始执行动作",
+                    action_context.clone(),
+                );
                 let result = if let Some(active) = self.runtime.motion.active_source() {
                     if !matches!(
                         active,
@@ -560,6 +964,86 @@ impl RuntimeActor {
                         .action_play(&id, speed, loop_enabled, loop_count, now_ms())
                         .map_err(map_error)
                 };
+                self.log_result(
+                    &result,
+                    now_ms(),
+                    "control.action",
+                    "动作执行成功",
+                    action_context,
+                );
+                let _ = reply.send(result);
+            }
+            ActorRequest::ActionPlayFrames {
+                id,
+                name,
+                mut frames,
+                speed,
+                loop_enabled,
+                loop_count,
+                direction,
+                reply,
+            } => {
+                if let Err(error) = action_engine::validate_playback_speed(speed) {
+                    let _ = reply.send(Err(map_error(error)));
+                    return;
+                }
+                let context = serde_json::json!({ "actionId": id, "name": name, "frameCount": frames.len(), "speed": speed, "loopEnabled": loop_enabled, "loopCount": loop_count, "direction": direction });
+                self.log(
+                    now_ms(),
+                    LogLevel::Info,
+                    "control.action.frames_started",
+                    "开始执行完整动作关键帧",
+                    context.clone(),
+                );
+                if direction == "reverse" {
+                    frames.reverse();
+                }
+                let recording = console_contracts::ActionRecording {
+                    schema_version: CURRENT_SCHEMA_VERSION,
+                    id,
+                    name,
+                    duration_ms: frames
+                        .iter()
+                        .map(|frame| frame.duration_ms.unwrap_or(500))
+                        .sum(),
+                    steps: frames.len() as u32,
+                    updated_at: String::new(),
+                    frames,
+                };
+                let result = if let Some(active) = self.runtime.motion.active_source() {
+                    if !matches!(
+                        active,
+                        console_contracts::CommandSource::Playback
+                            | console_contracts::CommandSource::Loop
+                    ) {
+                        Err(app_error(
+                            "SOURCE_BUSY",
+                            format!("motion source {active:?} is active"),
+                            true,
+                        ))
+                    } else {
+                        self.runtime
+                            .action_play_recording(
+                                recording,
+                                speed,
+                                loop_enabled,
+                                loop_count,
+                                now_ms(),
+                            )
+                            .map_err(map_error)
+                    }
+                } else {
+                    self.runtime
+                        .action_play_recording(recording, speed, loop_enabled, loop_count, now_ms())
+                        .map_err(map_error)
+                };
+                self.log_result(
+                    &result,
+                    now_ms(),
+                    "control.action.frames",
+                    "完整动作关键帧执行成功",
+                    context,
+                );
                 let _ = reply.send(result);
             }
             ActorRequest::ActionPause { reply } => {
@@ -601,7 +1085,11 @@ impl RuntimeActor {
                         .map_err(map_error),
                 );
             }
-            ActorRequest::GraspStart { preset, degraded, reply } => {
+            ActorRequest::GraspStart {
+                preset,
+                degraded,
+                reply,
+            } => {
                 let _ = reply.send(
                     self.runtime
                         .grasp_start(&preset, degraded, now_ms())
@@ -640,6 +1128,16 @@ impl RuntimeActor {
                     limit.min(512),
                 )));
             }
+            ActorRequest::RecordLog { entry, reply } => {
+                self.log(
+                    now_ms(),
+                    entry.level,
+                    &entry.event,
+                    &entry.message,
+                    entry.fields,
+                );
+                let _ = reply.send(Ok(()));
+            }
             ActorRequest::Shutdown => {}
         }
     }
@@ -651,13 +1149,58 @@ impl RuntimeActor {
         if desired == 2 && self.applied_control == 0 {
             // Preserve stop-before-unlock ordering even if both atomics were
             // changed while the actor was busy or the request queue was full.
-            self.runtime.stop_all();
+            self.log(
+                now_ms(),
+                LogLevel::Warn,
+                "safety.stop.requested",
+                "收到停止全部动作请求",
+                serde_json::json!({ "emergency": true, "reason": "unlock-before-stop" }),
+            );
+            let result = self
+                .runtime
+                .stop_all_checked()
+                .map_err(|error| app_error("STOP_FAILED", error.to_string(), true));
+            self.log_result(
+                &result,
+                now_ms(),
+                "safety.stop",
+                "全部动作已停止",
+                serde_json::json!({ "emergency": true }),
+            );
             self.applied_control = 1;
             return;
         }
         match desired {
-            1 => self.runtime.stop_all(),
-            2 => self.runtime.unlock(),
+            1 => {
+                self.log(
+                    now_ms(),
+                    LogLevel::Warn,
+                    "safety.stop.requested",
+                    "收到停止全部动作请求",
+                    serde_json::json!({ "emergency": true }),
+                );
+                let result = self
+                    .runtime
+                    .stop_all_checked()
+                    .map_err(|error| app_error("STOP_FAILED", error.to_string(), true));
+                self.log_result(
+                    &result,
+                    now_ms(),
+                    "safety.stop",
+                    "全部动作已停止",
+                    serde_json::json!({ "emergency": true }),
+                );
+            }
+            2 => {
+                self.runtime.unlock();
+                self.log(
+                    now_ms(),
+                    LogLevel::Info,
+                    "safety.unlock.completed",
+                    "控制锁已解除",
+                    serde_json::json!({}),
+                );
+            }
             _ => return,
         }
         self.applied_control = desired;
@@ -770,6 +1313,13 @@ impl RuntimeActor {
             .retain(|channel| channel.send(value.clone()).is_ok());
     }
     fn shutdown(&mut self) {
+        self.log(
+            now_ms(),
+            LogLevel::Info,
+            "app.stopping",
+            "LinkerHand Console 运行时正在停止",
+            serde_json::json!({ "source": "runtime" }),
+        );
         self.runtime.motion.stop_all();
         self.runtime.shutdown();
         self.stopped.store(true, Ordering::Release);
@@ -852,6 +1402,11 @@ fn sidecar_process(explicit: Option<PathBuf>, simulator: bool) -> (ProcessConfig
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/linkerhand-bridge/main.py");
         return (ProcessConfig::fake(script), None);
     }
+    let roots = sidecar_roots();
+    sidecar_process_with_roots(explicit, simulator, roots)
+}
+
+fn sidecar_roots() -> Vec<PathBuf> {
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|path| path.parent().map(Path::to_path_buf));
@@ -861,6 +1416,19 @@ fn sidecar_process(explicit: Option<PathBuf>, simulator: bool) -> (ProcessConfig
     }
     if let Ok(dir) = std::env::current_dir() {
         roots.push(dir);
+    }
+    roots
+}
+
+fn sidecar_process_with_roots(
+    explicit: Option<PathBuf>,
+    simulator: bool,
+    roots: Vec<PathBuf>,
+) -> (ProcessConfig, Option<PathBuf>) {
+    if simulator {
+        let script =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../sidecar/linkerhand-bridge/main.py");
+        return (ProcessConfig::fake(script), None);
     }
     let selected = resolve_sidecar_path(explicit, roots.clone());
     // Keep a deterministic, explainable missing path so a later explicit
@@ -907,6 +1475,8 @@ fn spawn_runtime(
                 shutdown_requested: actor_shutdown,
                 applied_control: 0,
                 stopped: actor_stopped,
+                simulator,
+                log_sequence: 0,
             }
             .run()
         })
@@ -1007,6 +1577,33 @@ mod commands {
     ) -> Result<(), AppError> {
         let path = settings_path(&app)?;
         persist_settings(&path, &config)
+    }
+    #[tauri::command]
+    pub async fn open_camera_privacy_settings() -> Result<(), String> {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "start", "", "ms-settings:privacy-webcam"])
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("启动 Windows 摄像头设置失败：{error}"))
+        }
+        #[cfg(not(windows))]
+        {
+            Err("当前平台没有 Windows 摄像头隐私设置页面".into())
+        }
+    }
+    #[tauri::command]
+    pub async fn camera_permission_status(
+        app: tauri::AppHandle,
+    ) -> Result<CameraPermissionStatus, String> {
+        super::camera_permission_status(&app, false)
+    }
+    #[tauri::command]
+    pub async fn reset_camera_permission(
+        app: tauri::AppHandle,
+    ) -> Result<CameraPermissionStatus, String> {
+        super::camera_permission_status(&app, true)
     }
     #[tauri::command]
     pub async fn sidecar_self_check(
@@ -1288,6 +1885,29 @@ mod commands {
         .await
     }
     #[tauri::command]
+    pub async fn action_play_frames(
+        state: tauri::State<'_, RuntimeState>,
+        id: String,
+        name: String,
+        frames: Vec<JointTargetCommand>,
+        speed: f32,
+        loop_enabled: bool,
+        loop_count: Option<u32>,
+        direction: String,
+    ) -> Result<(), AppError> {
+        dispatch(state.0.clone(), |reply| ActorRequest::ActionPlayFrames {
+            id,
+            name,
+            frames,
+            speed,
+            loop_enabled,
+            loop_count,
+            direction,
+            reply,
+        })
+        .await
+    }
+    #[tauri::command]
     pub async fn action_pause(state: tauri::State<'_, RuntimeState>) -> Result<(), AppError> {
         dispatch(state.0.clone(), |reply| ActorRequest::ActionPause { reply }).await
     }
@@ -1409,6 +2029,17 @@ mod commands {
     ) -> Result<Vec<console_contracts::StructuredLogEntry>, AppError> {
         dispatch(state.0.clone(), |reply| ActorRequest::Logs { limit, reply }).await
     }
+    #[tauri::command]
+    pub async fn logs_record(
+        state: tauri::State<'_, RuntimeState>,
+        entry: LogRecord,
+    ) -> Result<(), AppError> {
+        dispatch(state.0.clone(), |reply| ActorRequest::RecordLog {
+            entry,
+            reply,
+        })
+        .await
+    }
 }
 
 fn now_ms() -> u64 {
@@ -1431,6 +2062,8 @@ pub fn run() {
             let (process, selected_path) = sidecar_process(explicit, simulator);
             let handle = spawn_runtime(config, process, simulator, selected_path);
             app.manage(RuntimeState(handle.clone()));
+            #[cfg(windows)]
+            install_camera_permission_handler(app.handle());
             *shutdown_slot.lock().expect("shutdown slot poisoned") = Some(handle);
             Ok(())
         })
@@ -1439,6 +2072,9 @@ pub fn run() {
             commands::capabilities,
             commands::settings_load,
             commands::settings_save,
+            commands::open_camera_privacy_settings,
+            commands::camera_permission_status,
+            commands::reset_camera_permission,
             commands::sidecar_self_check,
             commands::connection,
             commands::connect,
@@ -1466,6 +2102,7 @@ pub fn run() {
             commands::action_finish_recording,
             commands::action_cancel_recording,
             commands::action_play,
+            commands::action_play_frames,
             commands::action_pause,
             commands::action_resume,
             commands::action_stop,
@@ -1480,7 +2117,8 @@ pub fn run() {
             commands::grasp_abort,
             commands::grasp_subscribe,
             commands::grasp_unsubscribe,
-            commands::logs_list
+            commands::logs_list,
+            commands::logs_record
         ])
         .build(tauri::generate_context!())
         .expect("error while building LinkerHand Console")
@@ -1506,6 +2144,38 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn camera_permission_handler_only_trusts_console_origins() {
+        assert!(trusted_camera_origin("http://tauri.localhost/settings"));
+        assert!(trusted_camera_origin("http://127.0.0.1:1420/"));
+        assert!(!trusted_camera_origin("http://127.0.0.1:1421/"));
+        assert!(!trusted_camera_origin("https://evil.example/"));
+        assert!(!trusted_camera_origin(
+            "http://tauri.localhost.evil.example/"
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn camera_permission_state_name_preserves_webview2_default() {
+        use webview2_com::Microsoft::Web::WebView2::Win32::{
+            COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DEFAULT,
+            COREWEBVIEW2_PERMISSION_STATE_DENY,
+        };
+        assert_eq!(
+            camera_permission_state_name(COREWEBVIEW2_PERMISSION_STATE_DEFAULT),
+            "default"
+        );
+        assert_eq!(
+            camera_permission_state_name(COREWEBVIEW2_PERMISSION_STATE_ALLOW),
+            "allow"
+        );
+        assert_eq!(
+            camera_permission_state_name(COREWEBVIEW2_PERMISSION_STATE_DENY),
+            "deny"
+        );
+    }
+
+    #[test]
     fn release_defaults_never_select_fake_transport_or_python() {
         let config = normalize_config(safe_default_config(), false);
         assert!(matches!(
@@ -1513,9 +2183,13 @@ mod tests {
             console_contracts::Transport::Can { ref channel }
                 if channel.eq_ignore_ascii_case("PCAN_USBBUS1")
         ));
-        let (process, selected) = sidecar_process(
+        let (process, selected) = sidecar_process_with_roots(
             Some(PathBuf::from("C:/missing/linkerhand-sidecar.exe")),
             false,
+            vec![std::env::temp_dir().join(format!(
+                "linkerhand-console-v2-test-roots-{}",
+                std::process::id()
+            ))],
         );
         assert!(selected.is_none());
         assert_ne!(process.program, PathBuf::from("python"));
@@ -1554,12 +2228,16 @@ mod tests {
 
     #[test]
     fn missing_release_sidecar_is_deferred_until_connect() {
-        let (process, selected) = sidecar_process(
+        let (process, selected) = sidecar_process_with_roots(
             Some(std::env::temp_dir().join(format!(
                 "linkerhand-console-v2-missing-{}.exe",
                 std::process::id()
             ))),
             false,
+            vec![std::env::temp_dir().join(format!(
+                "linkerhand-console-v2-test-roots-{}",
+                std::process::id()
+            ))],
         );
         assert!(selected.is_none());
         let manager = SidecarProcessManager::new(process);
@@ -1668,6 +2346,8 @@ mod tests {
                     shutdown_requested: actor_shutdown,
                     applied_control: 0,
                     stopped: actor_stopped,
+                    simulator: true,
+                    log_sequence: 0,
                 }
                 .run()
             })
@@ -1974,6 +2654,112 @@ mod tests {
             .unwrap();
         assert_eq!(latest.positions, vec![0.77; 6]);
         assert_eq!(latest.raw_position, vec![196; 6]);
+        handle.shutdown();
+    }
+
+    #[test]
+    fn actor_plays_complete_frames_in_reverse_with_loop_and_can_cancel() {
+        let (handle, writes) = spawn_capturing_runtime();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Connect {
+                reply,
+            }))
+            .unwrap();
+        let frames = vec![
+            JointTargetCommand {
+                schema_version: CURRENT_SCHEMA_VERSION,
+                command_id: "frame-a".into(),
+                source: CommandSource::Preset,
+                positions: vec![0.1; 6],
+                duration_ms: Some(50),
+                final_command: false,
+            },
+            JointTargetCommand {
+                schema_version: CURRENT_SCHEMA_VERSION,
+                command_id: "frame-b".into(),
+                source: CommandSource::Preset,
+                positions: vec![0.9; 6],
+                duration_ms: Some(50),
+                final_command: true,
+            },
+        ];
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| {
+                ActorRequest::ActionPlayFrames {
+                    id: "programmed-1".into(),
+                    name: "编程动作".into(),
+                    frames,
+                    speed: 1.0,
+                    loop_enabled: true,
+                    loop_count: Some(2),
+                    direction: "reverse".into(),
+                    reply,
+                }
+            }))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(90));
+        let first = writes
+            .lock()
+            .unwrap()
+            .first()
+            .cloned()
+            .expect("first programmed frame was sent");
+        assert_eq!(first.positions, vec![0.9; 6]);
+        writes.lock().unwrap().clear();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::ActionStop {
+                reply,
+            }))
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(80));
+        assert!(writes.lock().unwrap().is_empty());
+        handle.shutdown();
+    }
+
+    #[test]
+    fn non_final_control_command_success_is_debug_but_final_is_info() {
+        let (handle, _writes) = spawn_capturing_runtime();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Connect {
+                reply,
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
+                command: command("mid", 0.2, false),
+                reply,
+            }))
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
+                command: command("final", 0.8, true),
+                reply,
+            }))
+            .unwrap();
+        let logs = runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Logs {
+                limit: 512,
+                reply,
+            }))
+            .unwrap();
+        let successes: Vec<_> = logs
+            .iter()
+            .filter(|entry| entry.event == "control.command.success")
+            .collect();
+        assert!(successes
+            .iter()
+            .any(|entry| entry.level == LogLevel::Debug && entry.fields["finalCommand"] == false));
+        assert!(successes
+            .iter()
+            .any(|entry| entry.level == LogLevel::Info && entry.fields["finalCommand"] == true));
         handle.shutdown();
     }
 

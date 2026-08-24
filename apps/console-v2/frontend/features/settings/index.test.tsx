@@ -7,7 +7,7 @@ import type { LogLevel } from '../../shared/contracts';
 const snapshot: SettingsSnapshot = { config: { schemaVersion: 1, deviceId: 'test', name: '测试手', model: 'O6', hand: 'left', transport: { type: 'can', channel: 'can0' }, autoReconnect: true }, version: '2.0.0', build: 'test', cameraPermission: 'granted' };
 const result: SettingsSaveResult = { applied: true, reconnectRequired: false, restartRequired: false, errors: [] };
 function controller(overrides: Partial<SettingsController> = {}): SettingsController {
-  return { load: async () => snapshot, validate: draft => validateSettingsDraft(draft), save: async () => result, testSidecar: async () => ({ ok: true, message: 'sidecar 可用' }), checkOfflineAssets: async () => ({ ok: true, message: '资源完整' }), listCameras: async () => ({ permission: 'granted', cameras: [{ deviceId: 'cam-1', label: 'USB Camera' }] }), getConnectionState: async () => ({ state: 'disconnected' as const }), getFirmwareVersion: async () => ({ version: '0.0.0' }), getDebugMode: async () => false, setDebugMode: async () => undefined, getLogLevel: async () => 'info' as const, setLogLevel: async () => undefined, getLocale: async () => 'zh' as const, setLocale: async () => undefined, resetToFactory: async () => undefined, subscribe: () => () => undefined, ...overrides };
+  return { load: async () => snapshot, validate: draft => validateSettingsDraft(draft), save: async () => result, testSidecar: async () => ({ ok: true, message: 'sidecar 可用' }), checkOfflineAssets: async () => ({ ok: true, message: '资源完整' }), listCameras: async () => ({ permission: 'granted', cameras: [{ deviceId: 'cam-1', label: 'USB Camera' }] }), openCameraPrivacySettings: async () => undefined, getConnectionState: async () => ({ state: 'disconnected' as const }), getFirmwareVersion: async () => ({ version: '0.0.0' }), getDebugMode: async () => false, setDebugMode: async () => undefined, getLogLevel: async () => 'info' as const, setLogLevel: async () => undefined, getLocale: async () => 'zh' as const, setLocale: async () => undefined, resetToFactory: async () => undefined, subscribe: () => () => undefined, ...overrides };
 }
 function renderSettings(next = controller()) { return render(<ThemeProvider><Settings model="O6" transport={{ type: 'can', channel: 'can0' }} controller={next} /></ThemeProvider>); }
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason?: unknown) => void; const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; }); return { promise, resolve, reject }; }
@@ -74,12 +74,30 @@ describe('settings feature boundary', () => {
 
   it('reports camera permission denial with recovery guidance and allows retry', async () => {
     const listCameras = vi.fn(async () => ({ permission: 'denied' as const, cameras: [] }));
-    renderSettings(controller({ listCameras }));
+    const openCameraPrivacySettings = vi.fn(async () => undefined);
+    renderSettings(controller({ listCameras, openCameraPrivacySettings }));
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     await userEvent.setup().click(screen.getByRole('button', { name: '刷新摄像头' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('请在系统设置中为本应用开启摄像头权限');
+    expect(await screen.findByRole('alert')).toHaveTextContent('允许桌面应用访问摄像头');
+    expect(screen.getByRole('button', { name: '打开 Windows 摄像头设置' })).toBeEnabled();
+    await userEvent.setup().click(screen.getByRole('button', { name: '打开 Windows 摄像头设置' }));
+    expect(openCameraPrivacySettings).toHaveBeenCalledTimes(1);
     expect(screen.getByRole('button', { name: '重试摄像头' })).toBeEnabled();
     expect(listCameras).toHaveBeenCalledTimes(1);
+  });
+
+  it('distinguishes an app-profile denial and resets only that permission before retry', async () => {
+    const listCameras = vi.fn(async () => ({ permission: 'windows-denied' as const, cameras: [] }));
+    const getCameraPermission = vi.fn(async () => ({ state: 'deny' as const, origin: 'http://tauri.localhost' }));
+    const resetCameraPermission = vi.fn(async () => ({ state: 'default' as const, origin: 'http://tauri.localhost' }));
+    renderSettings(controller({ listCameras, getCameraPermission, resetCameraPermission }));
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    await userEvent.setup().click(screen.getByRole('button', { name: '刷新摄像头' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('应用配置文件拒绝了摄像头权限');
+    expect(screen.getByRole('button', { name: '重置本应用摄像头权限' })).toBeEnabled();
+    await userEvent.setup().click(screen.getByRole('button', { name: '重置本应用摄像头权限' }));
+    await waitFor(() => expect(resetCameraPermission).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('已重置本应用摄像头权限，请点击“重试摄像头”。')).toBeInTheDocument();
   });
 
   it('turns camera enumeration rejection into retryable error and suppresses updates after unmount', async () => {

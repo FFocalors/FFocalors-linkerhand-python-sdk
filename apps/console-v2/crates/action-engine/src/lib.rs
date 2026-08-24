@@ -9,6 +9,15 @@ use thiserror::Error;
 
 pub const MAX_RECORDING_FRAMES: usize = 4096;
 pub const DEFAULT_SAMPLE_INTERVAL_MS: u64 = 50;
+pub const MIN_PLAYBACK_SPEED: f32 = 0.25;
+pub const MAX_PLAYBACK_SPEED: f32 = 1.0;
+
+pub fn validate_playback_speed(speed: f32) -> Result<(), ActionError> {
+    if !(MIN_PLAYBACK_SPEED..=MAX_PLAYBACK_SPEED).contains(&speed) || !speed.is_finite() {
+        return Err(ActionError::InvalidSpeed);
+    }
+    Ok(())
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Preset {
@@ -48,7 +57,7 @@ pub enum ActionError {
     FrameLimit(usize),
     #[error("sample time moved backwards ({previous} > {actual})")]
     NonMonotonicTime { previous: u64, actual: u64 },
-    #[error("playback speed must be between 0.25x and 2x")]
+    #[error("playback speed must be between 0.25x and 1x")]
     InvalidSpeed,
 }
 
@@ -368,9 +377,7 @@ impl ActionEngine {
         Ok(())
     }
     pub fn set_speed(&mut self, speed: f32) -> Result<(), ActionError> {
-        if !(0.25..=2.0).contains(&speed) || !speed.is_finite() {
-            return Err(ActionError::InvalidSpeed);
-        }
+        validate_playback_speed(speed)?;
         if let Some(playback) = self.playback.as_mut() {
             playback.speed = speed;
         }
@@ -599,6 +606,13 @@ mod tests {
         assert!(a.set_speed(2.1).is_err());
     }
     #[test]
+    fn playback_speed_is_capped_before_starting() {
+        let engine = ActionEngine::new();
+        assert!(validate_playback_speed(1.0).is_ok());
+        assert!(validate_playback_speed(1.01).is_err());
+        assert_eq!(*engine.state(), PlaybackState::Idle);
+    }
+    #[test]
     fn final_command_releases_playback_source() {
         let mut a = ActionEngine::new();
         let r = ActionRecording {
@@ -665,10 +679,10 @@ mod tests {
             updated_at: String::new(),
         };
         engine.play_at(fast, 0).unwrap();
-        engine.set_speed(2.0).unwrap();
+        engine.set_speed(1.0).unwrap();
         engine.tick(0);
-        assert!(engine.tick(24).is_none());
-        assert!(engine.tick(25).is_some());
+        assert!(engine.tick(49).is_none());
+        assert!(engine.tick(50).is_some());
     }
     #[test]
     fn infinite_loop_runs_until_cancel_and_frame_limit_is_bounded() {

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Download, Pause, Play, RotateCcw, Shield, SlidersHorizontal } from 'lucide-react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, LogLevel, LogPort, StructuredLogEntry, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
 import { Badge, Card } from '../../shared/ui';
+import { useI18n } from '../../shared/i18n';
+import type { VirtualTelemetryPort } from '../../shared/telemetry/virtual';
 import './diagnostics.css';
 
 const CURVE_COLORS = ['#3568f2', '#208c60', '#a9680f', '#b65144', '#7450a7', '#0f9ba8'];
@@ -38,7 +40,33 @@ function visibilityAllowsDrawing(canvas: HTMLCanvasElement | null) {
   return Boolean(canvas && (document.visibilityState === 'visible' || document.visibilityState === undefined));
 }
 
-export function TelemetryChart({ telemetry, jointCount = 0 }: { telemetry?: TelemetryPort; jointCount?: number }) {
+/** Draw the currently visible sample window and return the number of curves drawn. */
+export function drawTelemetryCurve(context: CanvasRenderingContext2D, input: { samples: TelemetrySnapshot[]; jointCount: number; visibleJoints: Set<number>; windowMs: number; width: number; height: number }): number {
+  const latestTime = input.samples.at(-1)?.monotonicTimeMs ?? 0;
+  const visible = input.samples.filter(sample => latestTime - sample.monotonicTimeMs <= input.windowMs).slice(-MAX_POINTS);
+  if (visible.length < 2) return 0;
+  const joints = Array.from(input.visibleJoints).filter(index => index < input.jointCount).sort((a, b) => a - b);
+  let drawn = 0;
+  for (const jointIndex of joints) {
+    const values = visible.map(sample => sample.positions[jointIndex] ?? 0);
+    if (values.length < 2) continue;
+    context.strokeStyle = CURVE_COLORS[jointIndex % CURVE_COLORS.length];
+    context.lineWidth = 2;
+    context.beginPath();
+    values.forEach((value, index) => {
+      const x = index / Math.max(1, values.length - 1) * input.width;
+      const y = input.height - Math.max(0, Math.min(1, value)) * input.height;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+    drawn += 1;
+  }
+  return drawn;
+}
+
+export function TelemetryChart({ telemetry, jointCount = 0, virtual = false }: { telemetry?: TelemetryPort; jointCount?: number; virtual?: boolean }) {
+  const { t } = useI18n();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const samplesRef = useRef<TelemetrySnapshot[]>([]);
   const rafRef = useRef<number | undefined>(undefined);
@@ -90,25 +118,7 @@ export function TelemetryChart({ telemetry, jointCount = 0 }: { telemetry?: Tele
       context.lineTo(width, y);
       context.stroke();
     }
-    const samples = samplesRef.current;
-    const latestTime = samples.at(-1)?.monotonicTimeMs ?? 0;
-    const visible = samples.filter(sample => latestTime - sample.monotonicTimeMs <= windowMs).slice(-MAX_POINTS);
-    if (visible.length < 2) return;
-    const joints = Array.from(visibleJoints).sort((a, b) => a - b);
-    for (const jointIndex of joints) {
-      const values = visible.map(sample => sample.positions[jointIndex] ?? 0);
-      if (values.length < 2) continue;
-      context.strokeStyle = CURVE_COLORS[jointIndex % CURVE_COLORS.length];
-      context.lineWidth = 2;
-      context.beginPath();
-      values.forEach((value, index) => {
-        const x = index / Math.max(1, values.length - 1) * width;
-        const y = height - Math.max(0, Math.min(1, value)) * height;
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.stroke();
-    }
+    drawTelemetryCurve(context, { samples: samplesRef.current, jointCount: effectiveJointCount, visibleJoints, windowMs, width, height });
   }, [windowMs, visibleJoints]);
 
   const scheduleDraw = useCallback(() => {
@@ -146,16 +156,16 @@ export function TelemetryChart({ telemetry, jointCount = 0 }: { telemetry?: Tele
     <Card className="diagnostic-chart">
       <div className="card-header">
         <div>
-          <h2>关节曲线</h2>
+          <h2>{t('diagnostics.curve.title')}</h2>
           <span className="muted">固定 {MAX_POINTS} 点 · 仅绘制可见窗口</span>
         </div>
         <div className="chart-controls">
           <button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>
-            <RotateCcw size={14} />清空
+            <RotateCcw size={14} />{t('common.button.clear')}
           </button>
           <button className="button button-ghost" onClick={() => setPaused(value => !value)}>
             {paused ? <Play size={14} /> : <Pause size={14} />}
-            {paused ? '继续' : '暂停'}
+            {paused ? t('common.button.resume') : t('common.button.pause')}
           </button>
         </div>
       </div>
@@ -168,7 +178,7 @@ export function TelemetryChart({ telemetry, jointCount = 0 }: { telemetry?: Tele
             <option value={60_000}>60 秒</option>
           </select>
         </label>
-        <span className="muted">{telemetry ? (paused ? '已暂停采样' : '实时采样') : '遥测端口未注入，等待运行时'}</span>
+        <span className="muted">{virtual ? '调试虚拟遥测' : telemetry ? (paused ? '已暂停采样' : '实时采样') : '遥测端口未注入，等待运行时'}</span>
       </div>
       <div className="curve-legend">
         {Array.from({ length: effectiveJointCount }, (_, index) => (
@@ -234,6 +244,7 @@ type TimeRange = '1m' | '5m' | 'all';
 const TIME_RANGE_MS: Record<TimeRange, number> = { '1m': 60_000, '5m': 5 * 60_000, all: 0 };
 
 function LogPanel({ logs, entries, setEntries }: { logs: LogPort; entries: StructuredLogEntry[]; setEntries: (entries: StructuredLogEntry[]) => void }) {
+  const { t, locale } = useI18n();
   const [level, setLevel] = useState<LogLevel | 'all'>('all');
   const [event, setEvent] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -278,15 +289,15 @@ function LogPanel({ logs, entries, setEntries }: { logs: LogPort; entries: Struc
     <Card className="log-card">
       <div className="card-header">
         <div>
-          <h2>结构化日志</h2>
+          <h2>{t('diagnostics.logs.title')}</h2>
           <span className="muted">窗口化显示 · 最多载入 {LOG_LIMIT} 条</span>
         </div>
         <div className="heading-actions">
           <button className="button button-ghost" onClick={() => void refresh()}>
-            <RotateCcw size={14} />刷新
+            <RotateCcw size={14} />{t('common.button.refresh')}
           </button>
           <button className="button button-secondary" disabled={exporting} onClick={() => void exportLogs()}>
-            <Download size={14} />{exporting ? '导出中…' : '导出 JSON'}
+            <Download size={14} />{exporting ? (locale === 'en' ? 'Exporting…' : '导出中…') : (locale === 'en' ? 'Export JSON' : '导出 JSON')}
           </button>
         </div>
       </div>
@@ -325,6 +336,7 @@ function LogPanel({ logs, entries, setEntries }: { logs: LogPort; entries: Struc
 }
 
 export function SafetyCard({ entries, disconnectCount }: { entries: StructuredLogEntry[]; disconnectCount: number }) {
+  const { locale } = useI18n();
   const errorCount = entries.filter(entry => entry.level === 'error').length;
   const warnCount = entries.filter(entry => entry.level === 'warn').length;
   const latestTimestamp = useMemo(() => entries.reduce((max, entry) => Math.max(max, entry.monotonicTimeMs), 0), [entries]);
@@ -339,7 +351,7 @@ export function SafetyCard({ entries, disconnectCount }: { entries: StructuredLo
     <Card className="safety-card">
       <div className="card-header">
         <div>
-          <h2>安全监控</h2>
+          <h2>{locale === 'en' ? 'Safety monitoring' : '安全监控'}</h2>
           <span className="muted">错误与警告统计 · 遥测断线计数</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -391,12 +403,15 @@ function CheckList({ checks }: { checks: DiagnosticCheck[] }) {
   );
 }
 
-export function Diagnostics({ logs, telemetry, device, config, capabilities, exportPort, onAlertChange }: { logs: LogPort; telemetry?: TelemetryPort; device?: DevicePort; config?: DeviceConfig; capabilities?: DeviceCapabilities; exportPort?: DiagnosticsExportPort; onAlertChange?: (hasAlert: boolean) => void }) {
+export function Diagnostics({ logs, telemetry, device, config, capabilities, exportPort, onAlertChange, debugMode = false, isPhysicalDevice = false, virtualTelemetry }: { logs: LogPort; telemetry?: TelemetryPort; device?: DevicePort; config?: DeviceConfig; capabilities?: DeviceCapabilities; exportPort?: DiagnosticsExportPort; onAlertChange?: (hasAlert: boolean) => void; debugMode?: boolean; isPhysicalDevice?: boolean; virtualTelemetry?: VirtualTelemetryPort }) {
+  const { t, locale } = useI18n();
   const [entries, setEntries] = useState<StructuredLogEntry[]>([]);
   const [connection, setConnection] = useState<ConnectionSnapshot>();
   const [resolvedConfig, setResolvedConfig] = useState(config);
   const [resolvedCapabilities, setResolvedCapabilities] = useState(capabilities);
-  const telemetrySnapshot = useTelemetryRead(telemetry);
+  const virtualSource = debugMode && !isPhysicalDevice ? virtualTelemetry : undefined;
+  const effectiveTelemetry = virtualSource ?? (isPhysicalDevice ? telemetry : undefined);
+  const telemetrySnapshot = useTelemetryRead(effectiveTelemetry);
   const [showRaw, setShowRaw] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [exportError, setExportError] = useState('');
@@ -404,15 +419,15 @@ export function Diagnostics({ logs, telemetry, device, config, capabilities, exp
   const prevConnectedRef = useRef<boolean | undefined>(undefined);
 
   useEffect(() => {
-    if (!telemetry) return;
+    if (!effectiveTelemetry) return;
     prevConnectedRef.current = undefined;
-    return telemetry.subscribe(snapshot => {
+    return effectiveTelemetry.subscribe(snapshot => {
       if (prevConnectedRef.current === true && snapshot.connected === false) {
         setDisconnectCount(c => c + 1);
       }
       prevConnectedRef.current = snapshot.connected;
     });
-  }, [telemetry]);
+  }, [effectiveTelemetry]);
 
   useEffect(() => {
     let active = true;
@@ -452,11 +467,11 @@ export function Diagnostics({ logs, telemetry, device, config, capabilities, exp
     <div className="stack diagnostics-feature">
       <div className="page-heading">
         <div>
-          <h1>诊断中心</h1>
-          <p>用确定性检查快速判断连接、遥测与日志状态。</p>
+          <h1>{t('diagnostics.title')}</h1>
+          <p>{locale === 'en' ? 'Use deterministic checks to assess connection, telemetry, and log state.' : '用确定性检查快速判断连接、遥测与日志状态。'}</p>
         </div>
         <button className="button button-secondary" onClick={() => void exportPackage()}>
-          <Download size={15} />导出诊断包
+          <Download size={15} />{locale === 'en' ? 'Export diagnostics' : '导出诊断包'}
         </button>
       </div>
       {loadError && <div className="diagnostic-error" role="alert">{loadError}</div>}
@@ -480,16 +495,16 @@ export function Diagnostics({ logs, telemetry, device, config, capabilities, exp
           <Badge>固定窗口</Badge>
         </Card>
       </div>
-      <TelemetryChart telemetry={telemetry} jointCount={resolvedCapabilities?.jointCount} />
+      {effectiveTelemetry && <TelemetryChart telemetry={effectiveTelemetry} jointCount={resolvedCapabilities?.jointCount} virtual={Boolean(virtualSource)} />}
       <SafetyCard entries={entries} disconnectCount={disconnectCount} />
       <Card className="self-check-card">
         <div className="card-header">
           <div>
-            <h2>连接自检</h2>
-            <span className="muted">只读检查注入端口，不直接访问设备</span>
+            <h2>{t('diagnostics.connection.title')}</h2>
+            <span className="muted">{locale === 'en' ? 'Read-only checks of injected ports; does not access the device directly' : '只读检查注入端口，不直接访问设备'}</span>
           </div>
           <button className="button button-ghost" onClick={() => setShowRaw(value => !value)}>
-            <SlidersHorizontal size={14} />{showRaw ? '隐藏 raw 值' : '查看 raw 值'}<ChevronDown size={14} />
+            <SlidersHorizontal size={14} />{showRaw ? (locale === 'en' ? 'Hide raw values' : '隐藏 raw 值') : t('diagnostics.raw.toggle')}<ChevronDown size={14} />
           </button>
         </div>
         <CheckList checks={checks} />
