@@ -1,16 +1,21 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { DeviceConfig } from '../shared/contracts';
-import type { SettingsController, SettingsDraft, SettingsSnapshot, SettingsSaveResult, SidecarCheckResult, OfflineAssetsCheckResult, CameraDevice, CameraPermission, ThemePort, ThemePreference } from '../features/settings';
+import type { DeviceConfig, ConnectionSnapshot, LogLevel } from '../shared/contracts';
+import type { SettingsController, SettingsDraft, SettingsSnapshot, SettingsSaveResult, SidecarCheckResult, OfflineAssetsCheckResult, CameraDevice, CameraPermission, ThemePort, ThemePreference, ConnectionStateInfo, FirmwareVersion } from '../features/settings';
 import { draftFromSnapshot, validateSettingsDraft } from '../features/settings';
 import type { ConsolePorts } from '../shared/contracts';
 import { visionAssetUrl } from '../shared/vision-runtime';
 
 const CONFIG_KEY = 'linkerhand-console-v2-config';
 const THEME_KEY = 'linkerhand-console-v2-theme';
+const CAMERA_KEY = 'linkerhand-console-v2-camera-device-id';
+const DEBUG_KEY = 'linkerhand-console-v2-debug-mode';
 const readStored = (): Partial<DeviceConfig> | null => {
   try { const value = localStorage.getItem(CONFIG_KEY); return value ? JSON.parse(value) as Partial<DeviceConfig> : null; } catch { return null; }
 };
 const saveStored = (config: DeviceConfig) => { try { localStorage.setItem(CONFIG_KEY, JSON.stringify(config)); } catch { /* ephemeral runtime */ } };
+const readPreferredCamera = (): string | null => {
+  try { const stored = localStorage.getItem(CAMERA_KEY); return stored ? JSON.parse(stored) as string : null; } catch { return null; }
+};
 const cameraPermission = (error?: unknown): CameraPermission => {
   const name = error instanceof DOMException ? error.name : '';
   return name === 'NotAllowedError' || name === 'SecurityError' ? 'denied' : error ? 'error' : 'granted';
@@ -28,7 +33,14 @@ export function createSettingsController(runtime: ConsolePorts, simulator: boole
       else {
         try { config = await invoke<DeviceConfig>('settings_load'); } catch { /* first run or older preview build */ }
       }
-      const snapshot: SettingsSnapshot = { config, theme: (localStorage.getItem(THEME_KEY) as ThemePreference | null) ?? 'system', version: import.meta.env.VITE_APP_VERSION || '2.0.0-rc.1', build: import.meta.env.MODE };
+      const snapshot: SettingsSnapshot = {
+        config,
+        theme: (localStorage.getItem(THEME_KEY) as ThemePreference | null) ?? 'system',
+        version: import.meta.env.VITE_APP_VERSION || '2.0.0-rc.1',
+        build: import.meta.env.MODE,
+        preferredCameraDeviceId: readPreferredCamera(),
+        advanced: { debugMode: localStorage.getItem('linkerhand-console-v2-debug-mode') === 'true' },
+      };
       emit(snapshot); return snapshot;
     },
     validate: draft => validateSettingsDraft(draft),
@@ -36,9 +48,11 @@ export function createSettingsController(runtime: ConsolePorts, simulator: boole
       const previous = current?.config;
       const config: DeviceConfig = { ...(previous ?? await runtime.device.getConfig()), model: draft.model, hand: draft.hand, transport: draft.transport };
       if (simulator) saveStored(config); else await invoke<void>('settings_save', { config });
+      if (draft.preferredCameraDeviceId) localStorage.setItem('linkerhand-console-v2-camera-device-id', JSON.stringify(draft.preferredCameraDeviceId));
+      else localStorage.removeItem('linkerhand-console-v2-camera-device-id');
       const restartRequired = Boolean(previous && (previous.model !== config.model || previous.hand !== config.hand));
       const reconnectRequired = Boolean(previous && JSON.stringify(previous.transport) !== JSON.stringify(config.transport));
-      const snapshot: SettingsSnapshot = { ...(current ?? {}), config };
+      const snapshot: SettingsSnapshot = { ...(current ?? {}), config, preferredCameraDeviceId: draft.preferredCameraDeviceId ?? null, advanced: { ...(current?.advanced ?? {}), debugMode: draft.advanced.debugMode } };
       emit(snapshot);
       return { applied: simulator, reconnectRequired, restartRequired, errors: [] };
     },
@@ -65,6 +79,48 @@ export function createSettingsController(runtime: ConsolePorts, simulator: boole
       } catch (error) { return { cameras: [], permission: cameraPermission(error) === 'granted' ? 'error' : cameraPermission(error) }; }
     },
     subscribe(listener) { listeners.add(listener); if (current) listener(current); return () => listeners.delete(listener); },
+    async getConnectionState(): Promise<ConnectionStateInfo> {
+      try {
+        const connection = await runtime.device.getConnection();
+        const state = connection.state === 'reconnecting' ? 'connecting' : connection.state;
+        return { state: state as ConnectionStateInfo['state'] };
+      } catch {
+        return { state: 'disconnected' };
+      }
+    },
+    async getFirmwareVersion(): Promise<FirmwareVersion> {
+      try {
+        if (simulator) return { version: 'sim-1.0.0', buildDate: new Date().toISOString().split('T')[0] };
+        return await invoke<{ version: string; buildDate?: string }>('firmware_info');
+      } catch {
+        return { version: 'unknown' };
+      }
+    },
+    async getDebugMode(): Promise<boolean> {
+      return localStorage.getItem('linkerhand-console-v2-debug-mode') === 'true';
+    },
+    async setDebugMode(enabled: boolean) {
+      localStorage.setItem('linkerhand-console-v2-debug-mode', String(enabled));
+    },
+    async getLogLevel(): Promise<LogLevel> {
+      return (localStorage.getItem('linkerhand-console-v2-log-level') as LogLevel | null) ?? 'info';
+    },
+    async setLogLevel(level: LogLevel) {
+      localStorage.setItem('linkerhand-console-v2-log-level', level);
+    },
+    async getLocale(): Promise<'zh' | 'en'> {
+      return (localStorage.getItem('linkerhand-console-v2-locale') as 'zh' | 'en' | null) ?? 'zh';
+    },
+    async setLocale(locale: 'zh' | 'en') {
+      localStorage.setItem('linkerhand-console-v2-locale', locale);
+    },
+    async resetToFactory() {
+      localStorage.removeItem(CONFIG_KEY);
+      localStorage.removeItem('linkerhand-console-v2-log-level');
+      localStorage.removeItem('linkerhand-console-v2-locale');
+      localStorage.removeItem('linkerhand-console-v2-debug-mode');
+      localStorage.removeItem(CAMERA_KEY);
+    },
   };
 }
 

@@ -30,6 +30,7 @@
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "scheduler": "^0.27.0",
     "three": "^0.185.1",
     "typescript": "5.9.3",
     "vite": "latest"

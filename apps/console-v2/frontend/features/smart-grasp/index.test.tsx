@@ -48,4 +48,12 @@ describe('SmartGrasp controller boundary', () => {
     render(<SmartGrasp grasp={grasp} locked={false} tactileAvailable={false} controller={controller(state)} jointCount={6} />);
     expect(await screen.findByRole('alert')).toHaveTextContent(failure.message);
   });
+  it('disables all actions when not connected and debug mode is off', async () => {
+    render(<SmartGrasp grasp={grasp} locked={false} tactileAvailable={false} controller={controller(makeIdleState())} jointCount={6} debugMode={false} isPhysicalDevice={false} />);
+    expect(await screen.findByText('未连接机械手，智能抓取不可用。')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /空载标定/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /预抓取定位/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /开始抓取/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /释放/ })).toBeDisabled();
+  });
 });

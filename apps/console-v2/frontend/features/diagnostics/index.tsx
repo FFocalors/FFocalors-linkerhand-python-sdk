@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, Download, Pause, Play, RotateCcw, SlidersHorizontal } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Download, Pause, Play, RotateCcw, Shield, SlidersHorizontal } from 'lucide-react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, LogLevel, LogPort, StructuredLogEntry, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
 import { Badge, Card } from '../../shared/ui';
 import './diagnostics.css';
 
+const CURVE_COLORS = ['#3568f2', '#208c60', '#a9680f', '#b65144', '#7450a7', '#0f9ba8'];
+const O6_JOINT_NAMES = ['大拇指弯曲', '大拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小拇指弯曲'];
+function jointName(index: number, count: number): string {
+  return count > 0 && index < O6_JOINT_NAMES.length ? O6_JOINT_NAMES[index] : `J${index + 1}`;
+}
 const MAX_POINTS = 240;
 const MAX_SELECTABLE_JOINTS = 25;
 const LOG_LIMIT = 512;
@@ -14,7 +19,7 @@ export interface DiagnosticCheck { id: string; title: string; tone: CheckTone; d
 export function buildConnectionChecks(input: { config?: DeviceConfig; capabilities?: DeviceCapabilities; connection?: ConnectionSnapshot; telemetry?: TelemetrySnapshot; logs?: StructuredLogEntry[]; nowMs?: number }): DiagnosticCheck[] {
   const checks: DiagnosticCheck[] = [];
   checks.push(input.config ? { id: 'config', title: '设备配置', tone: input.config.deviceId ? 'ok' : 'error', detail: input.config.deviceId ? `${input.config.name} · ${input.config.model}` : '缺少设备 ID', action: input.config.deviceId ? undefined : '打开设置，保存设备配置' } : { id: 'config', title: '设备配置', tone: 'unknown', detail: '诊断端口尚未提供配置', action: '连接运行时后重试' });
-  checks.push(input.capabilities ? { id: 'capabilities', title: '能力声明', tone: input.capabilities.jointCount > 0 ? 'ok' : 'error', detail: input.capabilities.jointCount > 0 ? `${input.capabilities.jointCount} 个关节 · ${input.capabilities.touch.available ? '支持触觉' : '无触觉能力'}` : '未声明关节', action: input.capabilities.jointCount > 0 ? undefined : '检查设备型号或能力响应' } : { id: 'capabilities', title: '能力声明', tone: 'unknown', detail: '等待能力信息', action: '连接设备后重试' });
+  checks.push(input.capabilities ? { id: 'capabilities', title: '能力声明', tone: input.capabilities.jointCount > 0 ? 'ok' : 'error', detail: input.capabilities.jointCount > 0 ? `${input.capabilities.jointCount} 个关节` : '未声明关节', action: input.capabilities.jointCount > 0 ? undefined : '检查设备型号或能力响应' } : { id: 'capabilities', title: '能力声明', tone: 'unknown', detail: '等待能力信息', action: '连接设备后重试' });
   const state = input.connection?.state;
   checks.push(state === 'connected' ? { id: 'connection', title: '连接状态', tone: 'ok', detail: '设备已连接' } : state ? { id: 'connection', title: '连接状态', tone: state === 'error' ? 'error' : 'warn', detail: `当前状态：${state}`, action: state === 'error' ? '检查连接错误并重新连接' : '等待连接完成' } : { id: 'connection', title: '连接状态', tone: 'unknown', detail: '尚未读取连接状态', action: '连接运行时后重试' });
   if (input.telemetry) { const age = Math.max(0, (input.nowMs ?? input.telemetry.monotonicTimeMs) - input.telemetry.monotonicTimeMs); checks.push(input.telemetry.connected && age <= 5_000 ? { id: 'telemetry', title: '遥测流', tone: 'ok', detail: `序列 ${input.telemetry.sequence} · ${age} ms 前` } : { id: 'telemetry', title: '遥测流', tone: 'warn', detail: input.telemetry.connected ? `数据延迟 ${age} ms` : '设备未报告遥测连接', action: '确认设备在线并检查采样日志' }); } else checks.push({ id: 'telemetry', title: '遥测流', tone: 'unknown', detail: '尚未读取遥测', action: '打开遥测端口后重试' });
@@ -28,41 +33,469 @@ function useTelemetryRead(telemetry?: TelemetryPort) {
   useEffect(() => { if (!telemetry) return; let active = true; void telemetry.read().then(value => { if (active) setSnapshot(value); }).catch(() => undefined); return () => { active = false; }; }, [telemetry]);
   return snapshot;
 }
-function visibilityAllowsDrawing(canvas: HTMLCanvasElement | null) { return Boolean(canvas && (document.visibilityState === 'visible' || document.visibilityState === undefined)); }
 
-export function TelemetryChart({ telemetry, jointCount = 0 }: { telemetry?: TelemetryPort; jointCount?: number }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null); const samplesRef = useRef<TelemetrySnapshot[]>([]); const rafRef = useRef<number | undefined>(undefined); const pausedRef = useRef(false);
-  const [joint, setJoint] = useState(0); const [paused, setPaused] = useState(false); const [windowMs, setWindowMs] = useState(30_000); const effectiveJointCount = Math.min(Math.max(jointCount, 0), MAX_SELECTABLE_JOINTS);
-  const draw = useCallback(() => { rafRef.current = undefined; const canvas = canvasRef.current; if (!canvas || !visibilityAllowsDrawing(canvas)) return; const context = canvas.getContext('2d'); if (!context) return; const width = canvas.clientWidth || 640; const height = canvas.clientHeight || 220; const ratio = window.devicePixelRatio || 1; if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) { canvas.width = Math.round(width * ratio); canvas.height = Math.round(height * ratio); } context.setTransform(ratio, 0, 0, ratio, 0, 0); context.clearRect(0, 0, width, height); const tokens = getComputedStyle(canvas); context.strokeStyle = tokens.getPropertyValue('--line').trim() || 'currentColor'; context.lineWidth = 1; for (let i = 1; i < 4; i += 1) { const y = height * i / 4; context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke(); } const samples = samplesRef.current; const latestTime = samples.at(-1)?.monotonicTimeMs ?? 0; const visible = samples.filter(sample => latestTime - sample.monotonicTimeMs <= windowMs).slice(-MAX_POINTS); const values = visible.map(sample => sample.positions[joint] ?? 0); if (values.length < 2) return; context.strokeStyle = tokens.getPropertyValue('--blue').trim() || 'currentColor'; context.lineWidth = 2; context.beginPath(); values.forEach((value, index) => { const x = index / Math.max(1, values.length - 1) * width; const y = height - Math.max(0, Math.min(1, value)) * height; if (index === 0) context.moveTo(x, y); else context.lineTo(x, y); }); context.stroke(); }, [joint, windowMs]);
-  const scheduleDraw = useCallback(() => { if (rafRef.current === undefined && visibilityAllowsDrawing(canvasRef.current)) rafRef.current = requestAnimationFrame(draw); }, [draw]);
-  useEffect(() => { pausedRef.current = paused; }, [paused]);
-  useEffect(() => { if (!telemetry) return; const unsubscribe = telemetry.subscribe(value => { if (pausedRef.current) return; samplesRef.current.push(value); if (samplesRef.current.length > MAX_POINTS) samplesRef.current.splice(0, samplesRef.current.length - MAX_POINTS); scheduleDraw(); }); return unsubscribe; }, [scheduleDraw, telemetry]);
-  useEffect(() => { const onVisibility = () => { if (document.visibilityState === 'hidden' && rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } else scheduleDraw(); }; document.addEventListener('visibilitychange', onVisibility); return () => { document.removeEventListener('visibilitychange', onVisibility); if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); }; }, [scheduleDraw]);
-  return <Card className="diagnostic-chart"><div className="card-header"><div><h2>关节曲线</h2><span className="muted">固定 {MAX_POINTS} 点 · 仅绘制可见窗口</span></div><div className="chart-controls"><label>关节 <select value={joint} onChange={event => setJoint(Number(event.target.value))} disabled={!effectiveJointCount} aria-label="选择关节">{Array.from({ length: effectiveJointCount || 1 }, (_, index) => <option key={index} value={index}>J{index + 1}</option>)}</select></label><button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}><RotateCcw size={14} />清空</button><button className="button button-ghost" onClick={() => setPaused(value => !value)}>{paused ? <Play size={14} /> : <Pause size={14} />}{paused ? '继续' : '暂停'}</button></div></div><div className="chart-toolbar"><label>时间窗 <select value={windowMs} onChange={event => setWindowMs(Number(event.target.value))}><option value={10_000}>10 秒</option><option value={30_000}>30 秒</option><option value={60_000}>60 秒</option></select></label><span className="muted">{telemetry ? (paused ? '已暂停采样' : '实时采样') : '遥测端口未注入，等待运行时'}</span></div><canvas ref={canvasRef} className="telemetry-canvas" aria-label="关节遥测曲线" /><div className="chart-scale"><span>1.0</span><span>0.5</span><span>0.0</span></div></Card>;
+function visibilityAllowsDrawing(canvas: HTMLCanvasElement | null) {
+  return Boolean(canvas && (document.visibilityState === 'visible' || document.visibilityState === undefined));
 }
 
-export function TactileMatrix({ telemetry, capabilities }: { telemetry?: TelemetryPort; capabilities?: DeviceCapabilities }) {
-  const [snapshot, setSnapshot] = useState<TelemetrySnapshot | undefined>(undefined); useEffect(() => { if (!telemetry) return; return telemetry.subscribe(setSnapshot); }, [telemetry]); const available = capabilities?.touch.available === true; const count = Math.min(Math.max(capabilities?.touch.length ?? capabilities?.jointCount ?? 0, 0), 32);
-  const completeSnapshot = snapshot && snapshot.rawTouch.length >= Math.max(1, count) ? snapshot : undefined;
-  return <Card className="tactile-card"><div className="card-header"><div><h2>触觉矩阵</h2><span className="muted">原始触觉值 · 局部刷新</span></div>{available ? <Badge tone="green">已支持</Badge> : <Badge tone="amber">无能力</Badge>}</div>{available ? completeSnapshot ? <><div className="tactile-grid" role="grid" aria-label="触觉值">{Array.from({ length: Math.max(8, count) }, (_, index) => { const value = completeSnapshot.rawTouch[index] ?? 0; return <span role="gridcell" key={index} className="tactile-cell" style={{ opacity: .18 + value / 255 * .82 }} aria-label={`触觉 ${index + 1}: ${value}`} />; })}</div><span className="muted">最近序列 {completeSnapshot.sequence}</span></> : <div className="capability-empty"><AlertTriangle size={17} /><div><strong>等待第一帧完整遥测</strong><span>触觉数据尚未到齐，暂不显示数值，避免把缺失值误认为 0。</span></div></div> : <div className="capability-empty"><AlertTriangle size={17} /><div><strong>当前设备没有触觉能力</strong><span>矩阵不会伪造数值。若需要触觉反馈，请使用带触觉传感器的型号并重新读取能力。</span></div></div>}</Card>;
+export function TelemetryChart({ telemetry, jointCount = 0 }: { telemetry?: TelemetryPort; jointCount?: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const samplesRef = useRef<TelemetrySnapshot[]>([]);
+  const rafRef = useRef<number | undefined>(undefined);
+  const pausedRef = useRef(false);
+  const [paused, setPaused] = useState(false);
+  const [windowMs, setWindowMs] = useState(30_000);
+  const effectiveJointCount = Math.min(Math.max(jointCount, 0), MAX_SELECTABLE_JOINTS);
+  const [visibleJoints, setVisibleJoints] = useState<Set<number>>(() => new Set(Array.from({ length: effectiveJointCount }, (_, i) => i)));
+
+  useEffect(() => {
+    setVisibleJoints(new Set(Array.from({ length: effectiveJointCount }, (_, i) => i)));
+  }, [effectiveJointCount]);
+
+  const toggleJoint = useCallback((index: number) => {
+    setVisibleJoints(prev => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        if (next.size <= 1) return prev;
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  }, []);
+
+  const draw = useCallback(() => {
+    rafRef.current = undefined;
+    const canvas = canvasRef.current;
+    if (!canvas || !visibilityAllowsDrawing(canvas)) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    const width = canvas.clientWidth || 640;
+    const height = canvas.clientHeight || 220;
+    const ratio = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(width * ratio) || canvas.height !== Math.round(height * ratio)) {
+      canvas.width = Math.round(width * ratio);
+      canvas.height = Math.round(height * ratio);
+    }
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
+    const tokens = getComputedStyle(canvas);
+    context.strokeStyle = tokens.getPropertyValue('--line').trim() || 'currentColor';
+    context.lineWidth = 1;
+    for (let i = 1; i < 4; i += 1) {
+      const y = height * i / 4;
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(width, y);
+      context.stroke();
+    }
+    const samples = samplesRef.current;
+    const latestTime = samples.at(-1)?.monotonicTimeMs ?? 0;
+    const visible = samples.filter(sample => latestTime - sample.monotonicTimeMs <= windowMs).slice(-MAX_POINTS);
+    if (visible.length < 2) return;
+    const joints = Array.from(visibleJoints).sort((a, b) => a - b);
+    for (const jointIndex of joints) {
+      const values = visible.map(sample => sample.positions[jointIndex] ?? 0);
+      if (values.length < 2) continue;
+      context.strokeStyle = CURVE_COLORS[jointIndex % CURVE_COLORS.length];
+      context.lineWidth = 2;
+      context.beginPath();
+      values.forEach((value, index) => {
+        const x = index / Math.max(1, values.length - 1) * width;
+        const y = height - Math.max(0, Math.min(1, value)) * height;
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.stroke();
+    }
+  }, [windowMs, visibleJoints]);
+
+  const scheduleDraw = useCallback(() => {
+    if (rafRef.current === undefined && visibilityAllowsDrawing(canvasRef.current)) {
+      rafRef.current = requestAnimationFrame(draw);
+    }
+  }, [draw]);
+
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
+  useEffect(() => {
+    if (!telemetry) return;
+    const unsubscribe = telemetry.subscribe(value => {
+      if (pausedRef.current) return;
+      samplesRef.current.push(value);
+      if (samplesRef.current.length > MAX_POINTS) samplesRef.current.splice(0, samplesRef.current.length - MAX_POINTS);
+      scheduleDraw();
+    });
+    return unsubscribe;
+  }, [scheduleDraw, telemetry]);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden' && rafRef.current !== undefined) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = undefined;
+      } else scheduleDraw();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
+    };
+  }, [scheduleDraw]);
+
+  return (
+    <Card className="diagnostic-chart">
+      <div className="card-header">
+        <div>
+          <h2>关节曲线</h2>
+          <span className="muted">固定 {MAX_POINTS} 点 · 仅绘制可见窗口</span>
+        </div>
+        <div className="chart-controls">
+          <button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>
+            <RotateCcw size={14} />清空
+          </button>
+          <button className="button button-ghost" onClick={() => setPaused(value => !value)}>
+            {paused ? <Play size={14} /> : <Pause size={14} />}
+            {paused ? '继续' : '暂停'}
+          </button>
+        </div>
+      </div>
+      <div className="chart-toolbar">
+        <label>
+          时间窗{' '}
+          <select value={windowMs} onChange={event => setWindowMs(Number(event.target.value))}>
+            <option value={10_000}>10 秒</option>
+            <option value={30_000}>30 秒</option>
+            <option value={60_000}>60 秒</option>
+          </select>
+        </label>
+        <span className="muted">{telemetry ? (paused ? '已暂停采样' : '实时采样') : '遥测端口未注入，等待运行时'}</span>
+      </div>
+      <div className="curve-legend">
+        {Array.from({ length: effectiveJointCount }, (_, index) => (
+          <button
+            key={index}
+            type="button"
+            className={`curve-legend-item ${visibleJoints.has(index) ? '' : 'curve-legend-hidden'}`}
+            onClick={() => toggleJoint(index)}
+            title={visibleJoints.has(index) ? `点击隐藏 ${jointName(index, effectiveJointCount)}` : `点击显示 ${jointName(index, effectiveJointCount)}`}
+          >
+            <i style={{ background: visibleJoints.has(index) ? CURVE_COLORS[index % CURVE_COLORS.length] : 'transparent' }} />
+            {jointName(index, effectiveJointCount)}
+          </button>
+        ))}
+      </div>
+      <canvas ref={canvasRef} className="telemetry-canvas" aria-label="关节遥测曲线" />
+      <div className="chart-scale">
+        <span>1.0</span>
+        <span>0.5</span>
+        <span>0.0</span>
+      </div>
+    </Card>
+  );
 }
 
 export interface DiagnosticsExportPort { exportJson(payload: string): Promise<void> }
-export function browserDownloadDiagnostics(payload: string, filename = 'linkerhand-diagnostics.json') { if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') throw new Error('当前环境不支持浏览器下载，请使用桌面运行时导出'); const link = document.createElement('a'); const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' })); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
-
-function LogTable({ entries }: { entries: StructuredLogEntry[] }) { const [scrollTop, setScrollTop] = useState(0); const windowSize = 9; const start = Math.max(0, Math.floor(scrollTop / LOG_ROW_HEIGHT) - 2); const visible = entries.slice(start, start + windowSize); return <div className="log-window" onScroll={event => setScrollTop(event.currentTarget.scrollTop)} role="log" aria-label="结构化事件日志"><div style={{ height: entries.length * LOG_ROW_HEIGHT, position: 'relative' }}>{visible.map((entry, index) => <div className="log-row diagnostic-log-row" key={`${entry.id}-${entry.monotonicTimeMs}`} style={{ position: 'absolute', top: (start + index) * LOG_ROW_HEIGHT, left: 0, right: 0 }}><span className={`log-dot ${entry.level}`} /><span className="mono">{entry.monotonicTimeMs}</span><strong>{entry.message}</strong><span className="log-source">{entry.event}</span></div>)}</div>{entries.length === 0 && <div className="log-empty">没有匹配的日志</div>}</div>; }
-
-function LogPanel({ logs, entries, setEntries }: { logs: LogPort; entries: StructuredLogEntry[]; setEntries: (entries: StructuredLogEntry[]) => void }) {
-  const [level, setLevel] = useState<LogLevel | 'all'>('all'); const [event, setEvent] = useState(''); const [keyword, setKeyword] = useState(''); const [error, setError] = useState(''); const [exporting, setExporting] = useState(false); const filtered = useMemo(() => entries.filter(entry => (level === 'all' || entry.level === level) && (!event || entry.event === event) && (!keyword || `${entry.event} ${entry.message}`.toLowerCase().includes(keyword.toLowerCase()))), [entries, event, keyword, level]);
-  const refresh = async () => { setError(''); try { setEntries(await logs.list(LOG_LIMIT)); } catch (cause) { setError(cause instanceof Error ? cause.message : '读取日志失败，请稍后重试'); } }; const exportLogs = async () => { setExporting(true); setError(''); try { const payload = JSON.stringify({ schemaVersion: 1, generatedAt: new Date().toISOString(), logs: filtered }, null, 2); browserDownloadDiagnostics(payload); } catch (cause) { setError(cause instanceof Error ? cause.message : '导出失败，请检查下载权限'); } finally { setExporting(false); } }; const events = Array.from(new Set(entries.map(entry => entry.event))).slice(0, 100);
-  return <Card className="log-card"><div className="card-header"><div><h2>结构化日志</h2><span className="muted">窗口化显示 · 最多载入 {LOG_LIMIT} 条</span></div><div className="heading-actions"><button className="button button-ghost" onClick={() => void refresh()}><RotateCcw size={14} />刷新</button><button className="button button-secondary" disabled={exporting} onClick={() => void exportLogs()}><Download size={14} />{exporting ? '导出中…' : '导出 JSON'}</button></div></div><div className="log-filters"><label>级别<select value={level} onChange={value => setLevel(value.target.value as LogLevel | 'all')}><option value="all">全部</option>{(['trace', 'debug', 'info', 'warn', 'error'] as const).map(item => <option key={item} value={item}>{item}</option>)}</select></label><label>事件<select value={event} onChange={value => setEvent(value.target.value)}><option value="">全部事件</option>{events.map(item => <option key={item} value={item}>{item}</option>)}</select></label><label className="keyword-filter">关键词<input value={keyword} onChange={value => setKeyword(value.target.value)} placeholder="搜索事件或消息" /></label></div>{error && <p className="diagnostic-error" role="alert">{error}</p>}<LogTable entries={filtered} /></Card>;
+export function browserDownloadDiagnostics(payload: string, filename = 'linkerhand-diagnostics.json') {
+  if (typeof document === 'undefined' || typeof URL === 'undefined' || typeof URL.createObjectURL !== 'function') {
+    throw new Error('当前环境不支持浏览器下载，请使用桌面运行时导出');
+  }
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(new Blob([payload], { type: 'application/json' }));
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
-function CheckList({ checks }: { checks: DiagnosticCheck[] }) { return <div className="check-list">{checks.map(check => <div className={`check-row tone-${check.tone}`} key={check.id}><span className="check-icon">{check.tone === 'ok' ? <Check size={15} /> : <AlertTriangle size={15} />}</span><div><strong>{check.title}</strong><span>{check.detail}</span>{check.action && <small>建议：{check.action}</small>}</div><Badge tone={check.tone === 'ok' ? 'green' : check.tone === 'error' ? 'red' : 'amber'}>{check.tone === 'ok' ? '正常' : check.tone === 'unknown' ? '待检查' : '需关注'}</Badge></div>)}</div>; }
+function LogTable({ entries }: { entries: StructuredLogEntry[] }) {
+  const [scrollTop, setScrollTop] = useState(0);
+  const windowSize = 9;
+  const start = Math.max(0, Math.floor(scrollTop / LOG_ROW_HEIGHT) - 2);
+  const visible = entries.slice(start, start + windowSize);
 
-export function Diagnostics({ logs, telemetry, device, config, capabilities, exportPort }: { logs: LogPort; telemetry?: TelemetryPort; device?: DevicePort; config?: DeviceConfig; capabilities?: DeviceCapabilities; exportPort?: DiagnosticsExportPort }) {
-  const [entries, setEntries] = useState<StructuredLogEntry[]>([]); const [connection, setConnection] = useState<ConnectionSnapshot>(); const [resolvedConfig, setResolvedConfig] = useState(config); const [resolvedCapabilities, setResolvedCapabilities] = useState(capabilities); const telemetrySnapshot = useTelemetryRead(telemetry); const [showRaw, setShowRaw] = useState(false); const [loadError, setLoadError] = useState(''); const [exportError, setExportError] = useState('');
-  useEffect(() => { let active = true; void logs.list(LOG_LIMIT).then(value => { if (active) setEntries(value); }).catch(cause => { if (active) setLoadError(cause instanceof Error ? cause.message : '读取日志失败'); }); return () => { active = false; }; }, [logs]); useEffect(() => { let active = true; void Promise.all([device?.getConnection(), device?.getConfig(), device?.getCapabilities()]).then(([nextConnection, nextConfig, nextCapabilities]) => { if (!active) return; if (nextConnection) setConnection(nextConnection); if (nextConfig) setResolvedConfig(nextConfig); if (nextCapabilities) setResolvedCapabilities(nextCapabilities); }).catch(() => undefined); return () => { active = false; }; }, [device]);
-  const checks = useMemo(() => buildConnectionChecks({ config: resolvedConfig, capabilities: resolvedCapabilities, connection, telemetry: telemetrySnapshot, logs: entries, nowMs: typeof performance !== 'undefined' ? performance.now() : undefined }), [connection, entries, resolvedCapabilities, resolvedConfig, telemetrySnapshot]); const exportPackage = async () => { setExportError(''); try { const payload = JSON.stringify({ schemaVersion: 1, generatedAt: new Date().toISOString(), checks, logs: entries }, null, 2); if (exportPort) await exportPort.exportJson(payload); else browserDownloadDiagnostics(payload); } catch (cause) { setExportError(cause instanceof Error ? cause.message : '导出失败，请检查下载权限'); } };
-  return <div className="stack diagnostics-feature"><div className="page-heading"><div><h1>诊断中心</h1><p>用确定性检查快速判断连接、遥测与日志状态。</p></div><button className="button button-secondary" onClick={() => void exportPackage()}><Download size={15} />导出诊断包</button></div>{loadError && <div className="diagnostic-error" role="alert">{loadError}</div>}{exportError && <div className="diagnostic-error" role="alert">{exportError}</div>}<div className="diagnostic-summary"><Card><span className="metric-label">自检结果</span><div className="metric-lg">{checks.filter(check => check.tone === 'ok').length}<small> / {checks.length} 正常</small></div><Badge tone={checks.some(check => check.tone === 'error') ? 'red' : checks.some(check => check.tone === 'warn') ? 'amber' : 'green'}>{checks.some(check => check.tone === 'error') ? '需要处理' : checks.some(check => check.tone === 'warn') ? '需关注' : '正常'}</Badge></Card><Card><span className="metric-label">日志窗口</span><div className="metric-lg">{entries.length}<small> 条</small></div><Badge>有界输入</Badge></Card><Card><span className="metric-label">遥测点上限</span><div className="metric-lg">{MAX_POINTS}<small> 点</small></div><Badge>固定窗口</Badge></Card></div><div className="grid grid-2"><TelemetryChart telemetry={telemetry} jointCount={resolvedCapabilities?.jointCount} /><TactileMatrix telemetry={telemetry} capabilities={resolvedCapabilities} /></div><Card className="self-check-card"><div className="card-header"><div><h2>连接自检</h2><span className="muted">只读检查注入端口，不直接访问设备</span></div><button className="button button-ghost" onClick={() => setShowRaw(value => !value)}><SlidersHorizontal size={14} />{showRaw ? '隐藏 raw 值' : '查看 raw 值'}<ChevronDown size={14} /></button></div><CheckList checks={checks} />{showRaw && <pre className="raw-drawer">{JSON.stringify({ telemetry: telemetrySnapshot, connection }, null, 2)}</pre>}</Card><LogPanel logs={logs} entries={entries} setEntries={setEntries} /></div>;
+  return (
+    <div className="log-window" onScroll={event => setScrollTop(event.currentTarget.scrollTop)} role="log" aria-label="结构化事件日志">
+      <div style={{ height: entries.length * LOG_ROW_HEIGHT, position: 'relative' }}>
+        {visible.map((entry, index) => (
+          <div className="log-row diagnostic-log-row" key={`${entry.id}-${entry.monotonicTimeMs}`} style={{ position: 'absolute', top: (start + index) * LOG_ROW_HEIGHT, left: 0, right: 0 }}>
+            <span className={`log-dot ${entry.level}`} />
+            <span className="mono">{entry.monotonicTimeMs}</span>
+            <strong>{entry.message}</strong>
+            <span className="log-source">{entry.event}</span>
+          </div>
+        ))}
+      </div>
+      {entries.length === 0 && <div className="log-empty">没有匹配的日志</div>}
+    </div>
+  );
+}
+
+type TimeRange = '1m' | '5m' | 'all';
+const TIME_RANGE_MS: Record<TimeRange, number> = { '1m': 60_000, '5m': 5 * 60_000, all: 0 };
+
+function LogPanel({ logs, entries, setEntries }: { logs: LogPort; entries: StructuredLogEntry[]; setEntries: (entries: StructuredLogEntry[]) => void }) {
+  const [level, setLevel] = useState<LogLevel | 'all'>('all');
+  const [event, setEvent] = useState('');
+  const [keyword, setKeyword] = useState('');
+  const [timeRange, setTimeRange] = useState<TimeRange>('all');
+  const [error, setError] = useState('');
+  const [exporting, setExporting] = useState(false);
+
+  const latestTimestamp = useMemo(() => entries.reduce((max, entry) => Math.max(max, entry.monotonicTimeMs), 0), [entries]);
+  const filtered = useMemo(() => entries.filter(entry => {
+    const matchesLevel = level === 'all' || entry.level === level;
+    const matchesEvent = !event || entry.event === event;
+    const matchesKeyword = !keyword || `${entry.event} ${entry.message}`.toLowerCase().includes(keyword.toLowerCase());
+    const matchesTime = timeRange === 'all' || latestTimestamp - entry.monotonicTimeMs <= TIME_RANGE_MS[timeRange];
+    return matchesLevel && matchesEvent && matchesKeyword && matchesTime;
+  }), [entries, event, keyword, level, timeRange, latestTimestamp]);
+
+  const refresh = async () => {
+    setError('');
+    try {
+      setEntries(await logs.list(LOG_LIMIT));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '读取日志失败，请稍后重试');
+    }
+  };
+
+  const exportLogs = async () => {
+    setExporting(true);
+    setError('');
+    try {
+      const payload = JSON.stringify({ schemaVersion: 1, generatedAt: new Date().toISOString(), logs: filtered }, null, 2);
+      browserDownloadDiagnostics(payload);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '导出失败，请检查下载权限');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const events = Array.from(new Set(entries.map(entry => entry.event))).slice(0, 100);
+
+  return (
+    <Card className="log-card">
+      <div className="card-header">
+        <div>
+          <h2>结构化日志</h2>
+          <span className="muted">窗口化显示 · 最多载入 {LOG_LIMIT} 条</span>
+        </div>
+        <div className="heading-actions">
+          <button className="button button-ghost" onClick={() => void refresh()}>
+            <RotateCcw size={14} />刷新
+          </button>
+          <button className="button button-secondary" disabled={exporting} onClick={() => void exportLogs()}>
+            <Download size={14} />{exporting ? '导出中…' : '导出 JSON'}
+          </button>
+        </div>
+      </div>
+      <div className="log-filters">
+        <label>
+          级别{' '}
+          <select value={level} onChange={value => setLevel(value.target.value as LogLevel | 'all')}>
+            <option value="all">全部</option>
+            {(['trace', 'debug', 'info', 'warn', 'error'] as const).map(item => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label>
+          事件{' '}
+          <select value={event} onChange={value => setEvent(value.target.value)}>
+            <option value="">全部事件</option>
+            {events.map(item => <option key={item} value={item}>{item}</option>)}
+          </select>
+        </label>
+        <label>
+          时间范围{' '}
+          <select value={timeRange} onChange={value => setTimeRange(value.target.value as TimeRange)}>
+            <option value="all">全部</option>
+            <option value="5m">最近5分钟</option>
+            <option value="1m">最近1分钟</option>
+          </select>
+        </label>
+        <label className="keyword-filter">
+          关键词{' '}
+          <input value={keyword} onChange={value => setKeyword(value.target.value)} placeholder="搜索事件或消息" />
+        </label>
+      </div>
+      {error && <p className="diagnostic-error" role="alert">{error}</p>}
+      <LogTable entries={filtered} />
+    </Card>
+  );
+}
+
+export function SafetyCard({ entries, disconnectCount }: { entries: StructuredLogEntry[]; disconnectCount: number }) {
+  const errorCount = entries.filter(entry => entry.level === 'error').length;
+  const warnCount = entries.filter(entry => entry.level === 'warn').length;
+  const latestTimestamp = useMemo(() => entries.reduce((max, entry) => Math.max(max, entry.monotonicTimeMs), 0), [entries]);
+  const recentErrors = entries.filter(entry => entry.level === 'error' && latestTimestamp - entry.monotonicTimeMs <= 5 * 60_000);
+  const hasErrors = errorCount > 0;
+  const hasRecentErrors = recentErrors.length > 0;
+  const tone = hasRecentErrors ? 'red' : hasErrors ? 'amber' : 'green';
+  const label = hasRecentErrors ? '异常' : hasErrors ? '需关注' : '正常';
+  const latestError = [...entries].reverse().find(entry => entry.level === 'error');
+
+  return (
+    <Card className="safety-card">
+      <div className="card-header">
+        <div>
+          <h2>安全监控</h2>
+          <span className="muted">错误与警告统计 · 遥测断线计数</span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Shield size={16} />
+          <Badge tone={tone}>{label}</Badge>
+        </div>
+      </div>
+      <div className="safety-stats">
+        <div className="safety-stat">
+          <span className="metric-label">错误</span>
+          <div className="metric-lg">{errorCount}</div>
+        </div>
+        <div className="safety-stat">
+          <span className="metric-label">警告</span>
+          <div className="metric-lg">{warnCount}</div>
+        </div>
+        <div className="safety-stat">
+          <span className="metric-label">遥测断线</span>
+          <div className="metric-lg">{disconnectCount}</div>
+        </div>
+      </div>
+      {latestError && (
+        <div className="safety-latest-error">
+          <AlertTriangle size={14} />
+          <span>{latestError.message}</span>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function CheckList({ checks }: { checks: DiagnosticCheck[] }) {
+  return (
+    <div className="check-list">
+      {checks.map(check => (
+        <div className={`check-row tone-${check.tone}`} key={check.id}>
+          <span className="check-icon">{check.tone === 'ok' ? <Check size={15} /> : <AlertTriangle size={15} />}</span>
+          <div>
+            <strong>{check.title}</strong>
+            <span>{check.detail}</span>
+            {check.action && <small>建议：{check.action}</small>}
+          </div>
+          <Badge tone={check.tone === 'ok' ? 'green' : check.tone === 'error' ? 'red' : 'amber'}>
+            {check.tone === 'ok' ? '正常' : check.tone === 'unknown' ? '待检查' : '需关注'}
+          </Badge>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function Diagnostics({ logs, telemetry, device, config, capabilities, exportPort, onAlertChange }: { logs: LogPort; telemetry?: TelemetryPort; device?: DevicePort; config?: DeviceConfig; capabilities?: DeviceCapabilities; exportPort?: DiagnosticsExportPort; onAlertChange?: (hasAlert: boolean) => void }) {
+  const [entries, setEntries] = useState<StructuredLogEntry[]>([]);
+  const [connection, setConnection] = useState<ConnectionSnapshot>();
+  const [resolvedConfig, setResolvedConfig] = useState(config);
+  const [resolvedCapabilities, setResolvedCapabilities] = useState(capabilities);
+  const telemetrySnapshot = useTelemetryRead(telemetry);
+  const [showRaw, setShowRaw] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [exportError, setExportError] = useState('');
+  const [disconnectCount, setDisconnectCount] = useState(0);
+  const prevConnectedRef = useRef<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    if (!telemetry) return;
+    prevConnectedRef.current = undefined;
+    return telemetry.subscribe(snapshot => {
+      if (prevConnectedRef.current === true && snapshot.connected === false) {
+        setDisconnectCount(c => c + 1);
+      }
+      prevConnectedRef.current = snapshot.connected;
+    });
+  }, [telemetry]);
+
+  useEffect(() => {
+    let active = true;
+    void logs.list(LOG_LIMIT).then(value => {
+      if (active) setEntries(value);
+    }).catch(cause => {
+      if (active) setLoadError(cause instanceof Error ? cause.message : '读取日志失败');
+    });
+    return () => { active = false; };
+  }, [logs]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.all([device?.getConnection(), device?.getConfig(), device?.getCapabilities()]).then(([nextConnection, nextConfig, nextCapabilities]) => {
+      if (!active) return;
+      if (nextConnection) setConnection(nextConnection);
+      if (nextConfig) setResolvedConfig(nextConfig);
+      if (nextCapabilities) setResolvedCapabilities(nextCapabilities);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [device]);
+
+  const checks = useMemo(() => buildConnectionChecks({ config: resolvedConfig, capabilities: resolvedCapabilities, connection, telemetry: telemetrySnapshot, logs: entries, nowMs: typeof performance !== 'undefined' ? performance.now() : undefined }), [connection, entries, resolvedCapabilities, resolvedConfig, telemetrySnapshot]);
+  useEffect(() => { if (onAlertChange) onAlertChange(checks.some(check => check.tone === 'error')); }, [checks, onAlertChange]);
+  const exportPackage = async () => {
+    setExportError('');
+    try {
+      const payload = JSON.stringify({ schemaVersion: 1, generatedAt: new Date().toISOString(), checks, logs: entries }, null, 2);
+      if (exportPort) await exportPort.exportJson(payload);
+      else browserDownloadDiagnostics(payload);
+    } catch (cause) {
+      setExportError(cause instanceof Error ? cause.message : '导出失败，请检查下载权限');
+    }
+  };
+
+  return (
+    <div className="stack diagnostics-feature">
+      <div className="page-heading">
+        <div>
+          <h1>诊断中心</h1>
+          <p>用确定性检查快速判断连接、遥测与日志状态。</p>
+        </div>
+        <button className="button button-secondary" onClick={() => void exportPackage()}>
+          <Download size={15} />导出诊断包
+        </button>
+      </div>
+      {loadError && <div className="diagnostic-error" role="alert">{loadError}</div>}
+      {exportError && <div className="diagnostic-error" role="alert">{exportError}</div>}
+      <div className="diagnostic-summary">
+        <Card>
+          <span className="metric-label">自检结果</span>
+          <div className="metric-lg">{checks.filter(check => check.tone === 'ok').length}<small> / {checks.length} 正常</small></div>
+          <Badge tone={checks.some(check => check.tone === 'error') ? 'red' : checks.some(check => check.tone === 'warn') ? 'amber' : 'green'}>
+            {checks.some(check => check.tone === 'error') ? '需要处理' : checks.some(check => check.tone === 'warn') ? '需关注' : '正常'}
+          </Badge>
+        </Card>
+        <Card>
+          <span className="metric-label">日志窗口</span>
+          <div className="metric-lg">{entries.length}<small> 条</small></div>
+          <Badge>有界输入</Badge>
+        </Card>
+        <Card>
+          <span className="metric-label">遥测点上限</span>
+          <div className="metric-lg">{MAX_POINTS}<small> 点</small></div>
+          <Badge>固定窗口</Badge>
+        </Card>
+      </div>
+      <TelemetryChart telemetry={telemetry} jointCount={resolvedCapabilities?.jointCount} />
+      <SafetyCard entries={entries} disconnectCount={disconnectCount} />
+      <Card className="self-check-card">
+        <div className="card-header">
+          <div>
+            <h2>连接自检</h2>
+            <span className="muted">只读检查注入端口，不直接访问设备</span>
+          </div>
+          <button className="button button-ghost" onClick={() => setShowRaw(value => !value)}>
+            <SlidersHorizontal size={14} />{showRaw ? '隐藏 raw 值' : '查看 raw 值'}<ChevronDown size={14} />
+          </button>
+        </div>
+        <CheckList checks={checks} />
+        {showRaw && <pre className="raw-drawer">{JSON.stringify({ telemetry: telemetrySnapshot, connection }, null, 2)}</pre>}
+      </Card>
+      <LogPanel logs={logs} entries={entries} setEntries={setEntries} />
+    </div>
+  );
 }

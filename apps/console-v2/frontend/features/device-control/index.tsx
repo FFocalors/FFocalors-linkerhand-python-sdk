@@ -36,25 +36,29 @@ interface DeviceControlProps {
   quickActions?: DeviceControlQuickAction[];
   loops?: DeviceControlLoop[];
   onNavigateToDiagnostics?: () => void;
+  debugMode?: boolean;
+  isPhysicalDevice?: boolean;
+  customPresets?: DeviceControlQuickAction[];
+  onCustomPresetsChange?: (presets: DeviceControlQuickAction[]) => void;
 }
 
 const clamp = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
-const toVector = (values: number[], length: number) => Array.from({ length }, (_, index) => clamp(values[index] ?? 0));
+export const toVector = (values: number[], length: number) => Array.from({ length }, (_, index) => clamp(values[index] ?? 0));
 const connectionLabels: Record<ConnectionSnapshot['state'], string> = { disconnected: '未连接', connecting: '连接中', connected: '已连接', reconnecting: '重连中', error: '连接错误' };
 function statusTone(state: ConnectionSnapshot['state']): 'blue' | 'green' | 'amber' | 'red' { if (state === 'connected') return 'green'; if (state === 'error') return 'red'; if (state === 'disconnected') return 'amber'; return 'blue'; }
 function errorText(error: unknown) { if (error instanceof Error) return error.message; return typeof error === 'string' ? error : '操作未完成，请查看诊断中心。'; }
 
 /** O6 joint display names (order must match capabilities.jointCount). Fall back to J{n} for other models. */
-const O6_JOINT_NAMES = ['大拇指弯曲', '大拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小拇指弯曲'];
+export const O6_JOINT_NAMES = ['大拇指弯曲', '大拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小拇指弯曲'];
 const CURVE_COLORS = ['#3568f2', '#208c60', '#a9680f', '#b65144', '#7450a7', '#0f9ba8'];
 const CURVE_MAX_POINTS = 160;
-const O6_BASIC_ACTIONS: DeviceControlQuickAction[] = [
+export const O6_BASIC_ACTIONS: DeviceControlQuickAction[] = [
   { id: 'open', label: '张开', category: 'basic', positions: Array(6).fill(250 / 255) },
   { id: 'fist', label: '握拳', category: 'basic', positions: [102 / 255, 18 / 255, 0, 0, 0, 0] },
   { id: 'ok', label: 'OK', category: 'basic', positions: [96 / 255, 100 / 255, 118 / 255, 250 / 255, 250 / 255, 250 / 255] },
   { id: 'thumbs-up', label: '点赞', category: 'basic', positions: [250 / 255, 79 / 255, 0, 0, 0, 0] },
 ];
-const O6_NUMBER_ACTIONS: DeviceControlQuickAction[] = [
+export const O6_NUMBER_ACTIONS: DeviceControlQuickAction[] = [
   { id: 'one', label: '壹', category: 'number', positions: [125 / 255, 18 / 255, 1, 0, 0, 0] },
   { id: 'two', label: '贰', category: 'number', positions: [92 / 255, 87 / 255, 1, 1, 0, 0] },
   { id: 'three', label: '叁', category: 'number', positions: [92 / 255, 87 / 255, 1, 1, 1, 0] },
@@ -95,7 +99,7 @@ const BASIC_ICON_PATHS: Record<string, ReactNode> = {
   ),
 };
 
-const BasicPresetIcon = ({ type }: { type: string }) => (
+export const BasicPresetIcon = ({ type }: { type: string }) => (
   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     {BASIC_ICON_PATHS[type] ?? null}
   </svg>
@@ -110,7 +114,7 @@ const NUMBER_ICON_BARS: Record<string, number[]> = {
 };
 const NUMBER_ICON_WIDTH: Record<string, number> = { one: 3, two: 3, three: 3, four: 2.4, five: 2 };
 
-const NumberPresetIcon = ({ id }: { id: string }) => {
+export const NumberPresetIcon = ({ id }: { id: string }) => {
   const bars = NUMBER_ICON_BARS[id] ?? [];
   const width = NUMBER_ICON_WIDTH[id] ?? 3;
   return (
@@ -332,7 +336,7 @@ function JointCurveChart({ telemetry, jointCount }: { telemetry?: TelemetryPort;
   </Card>;
 }
 
-export function DeviceControl({ device, telemetry, config, capabilities, locked = false, controller, quickActions = [{ id: 'safe-position', label: '回到安全位', detail: '由设备控制器执行' }], loops = [], onNavigateToDiagnostics }: DeviceControlProps) {
+export function DeviceControl({ device, telemetry, config, capabilities, locked = false, controller, quickActions = [{ id: 'safe-position', label: '回到安全位', detail: '由设备控制器执行' }], loops = [], onNavigateToDiagnostics, debugMode, isPhysicalDevice, customPresets: customPresetsProp, onCustomPresetsChange }: DeviceControlProps) {
   const jointCount = Math.max(0, capabilities.jointCount);
   const [values, setValues] = useState<number[]>(() => Array.from({ length: jointCount }, () => 250 / 255));
   const [live, setLive] = useState<TelemetrySnapshot>();
@@ -346,18 +350,21 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const [rawOpen, setRawOpen] = useState(false);
   const [submittingQuickAction, setSubmittingQuickAction] = useState<string>();
   const [submittingLoop, setSubmittingLoop] = useState<string>();
-  const [customPresets, setCustomPresets] = useState<DeviceControlQuickAction[]>([]);
+  const [customPresets, setCustomPresets] = useState<DeviceControlQuickAction[]>(() => customPresetsProp ?? []);
   const [presetName, setPresetName] = useState('');
   const [editingPresetId, setEditingPresetId] = useState<string>();
   const [editingPresetName, setEditingPresetName] = useState('');
   const valuesRef = useRef(values);
   const dragging = useRef(new Set<number>());
+  useEffect(() => { if (customPresetsProp !== undefined) setCustomPresets(customPresetsProp); }, [customPresetsProp]);
   const pendingVector = useRef<number[]>(values);
   const rafRef = useRef<number | undefined>(undefined);
   const commandNumber = useRef(0);
   const connectionRef = useRef(connection);
   const lockedRef = useRef(locked || safetyLocked);
   const isLocked = locked || safetyLocked;
+  const canOperate = (isPhysicalDevice ?? false) || (debugMode ?? false);
+  const virtualHand = Boolean(debugMode) && !(isPhysicalDevice ?? false);
   const twinCanvasRef = useRef<HTMLCanvasElement>(null);
   const [twinReady, setTwinReady] = useState(false);
   const [autoSpinOn, setAutoSpinOn] = useState(false);
@@ -568,24 +575,42 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   useEffect(() => { valuesRef.current = values; }, [values]);
   useEffect(() => { connectionRef.current = connection; }, [connection]);
   useEffect(() => { lockedRef.current = isLocked; }, [isLocked]);
-  useEffect(() => { let mounted = true; void device.getConnection().then(snapshot => { if (mounted) applyConnection(snapshot); }).catch(error => { if (mounted) setErrorMessage(errorText(error)); }); return () => { mounted = false; }; }, [applyConnection, device]);
+  useEffect(() => {
+    let mounted = true;
+    if (virtualHand) {
+      applyConnection({ schemaVersion: capabilities.schemaVersion, deviceId: 'virtual-hand', state: 'connected', attempt: 1, lastError: null });
+      return () => { mounted = false; };
+    }
+    void device.getConnection().then(snapshot => { if (mounted) applyConnection(snapshot); }).catch(error => { if (mounted && canOperate && !debugMode) setErrorMessage('未连接机械手，无法读取连接状态。'); else if (mounted && canOperate) setErrorMessage(errorText(error)); });
+    return () => { mounted = false; };
+  }, [applyConnection, capabilities, device, virtualHand, debugMode, canOperate]);
   useEffect(() => {
     let mounted = true;
     const mergeTelemetry = (snapshot: TelemetrySnapshot) => { setLive(snapshot); const next = toVector(pendingVector.current, jointCount); snapshot.positions.forEach((position, index) => { if (index < jointCount && !dragging.current.has(index)) next[index] = clamp(position); }); valuesRef.current = next; pendingVector.current = next; setValues(next); };
-    void telemetry.read().then(snapshot => { if (mounted) mergeTelemetry(snapshot); }).catch(error => { if (mounted) setErrorMessage(errorText(error)); });
+    if (virtualHand) {
+      let sequence = 0;
+      const timer = window.setInterval(() => {
+        if (!mounted) return;
+        const values = toVector(pendingVector.current, jointCount);
+        mergeTelemetry({ schemaVersion: capabilities.schemaVersion, deviceId: 'virtual-hand', sequence: ++sequence, monotonicTimeMs: performance.now(), positions: values, rawPosition: values.map(v => Math.round(v * 255)), rawCurrent: [], rawSpeed: [], rawTouch: [], connected: true });
+      }, 400);
+      return () => { mounted = false; clearInterval(timer); };
+    }
+    void telemetry.read().then(snapshot => { if (mounted) mergeTelemetry(snapshot); }).catch(error => { if (mounted && canOperate && !debugMode) setErrorMessage('未连接机械手，无法读取遥测。'); else if (mounted && canOperate) setErrorMessage(errorText(error)); });
     const unsubscribe = telemetry.subscribe(mergeTelemetry);
     return () => { mounted = false; unsubscribe(); };
-  }, [jointCount, telemetry]);
-  useEffect(() => { if (!controller) return undefined; const unsubscribeConnection = controller.subscribeConnection(applyConnection); const unsubscribeOperation = controller.subscribeOperation?.(snapshot => setOperation(snapshot)); return () => { unsubscribeConnection(); unsubscribeOperation?.(); }; }, [applyConnection, controller]);
+  }, [jointCount, telemetry, virtualHand, capabilities, canOperate, debugMode]);
+  useEffect(() => { if (!controller || virtualHand) return undefined; const unsubscribeConnection = controller.subscribeConnection(applyConnection); const unsubscribeOperation = controller.subscribeOperation?.(snapshot => setOperation(snapshot)); return () => { unsubscribeConnection(); unsubscribeOperation?.(); }; }, [applyConnection, controller, virtualHand]);
   useEffect(() => () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); }, []);
 
   const submitJointVector = useCallback(async (vector: number[], finalCommand: boolean) => {
-    if (!controller || lockedRef.current || connectionRef.current.state !== 'connected') return;
+    if (!controller || lockedRef.current || connectionRef.current.state !== 'connected' || !canOperate) return;
+    if (virtualHand) { if (finalCommand) setErrorMessage(''); return; }
     try {
       await controller.setJointTarget({ schemaVersion: 1, commandId: `manual-${++commandNumber.current}`, source: 'manual', positions: toVector(vector, jointCount), finalCommand });
       if (finalCommand) setErrorMessage('');
     } catch (error) { setErrorMessage(`关节目标未送达：${errorText(error)}`); }
-  }, [controller, jointCount]);
+  }, [controller, jointCount, canOperate, virtualHand]);
   const commitJointFrame = useCallback((finalCommand: boolean) => { if (rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } const vector = toVector(pendingVector.current, jointCount); valuesRef.current = vector; pendingVector.current = vector; setValues(vector); void submitJointVector(vector, finalCommand); }, [jointCount, submitJointVector]);
   const scheduleJointVector = useCallback((vector: number[]) => { pendingVector.current = toVector(vector, jointCount); if (rafRef.current !== undefined) return; rafRef.current = requestAnimationFrame(() => { rafRef.current = undefined; commitJointFrame(false); }); }, [commitJointFrame, jointCount]);
   const beginJoint = (index: number) => { dragging.current.add(index); };
@@ -593,17 +618,17 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const finishJoint = (index: number, force = false) => { if (!dragging.current.has(index) && !force) return; dragging.current.delete(index); commitJointFrame(true); };
   const runController = async (action: () => Promise<void>, success?: () => void) => { setBusy(true); setErrorMessage(''); try { await action(); success?.(); } catch (error) { setErrorMessage(errorText(error)); } finally { setBusy(false); } };
   const applyPreset = async (action: DeviceControlQuickAction) => {
-    if (!controller || isLocked || connection.state !== 'connected') return;
+    if (!controller || isLocked || connection.state !== 'connected' || !canOperate) return;
     try {
       if (action.positions && action.positions.length === jointCount) {
         const vector = toVector(action.positions, jointCount);
-        await controller.setJointTarget({ schemaVersion: 1, commandId: `preset-${action.id}-${Date.now()}`, source: 'manual', positions: vector, finalCommand: true });
+        if (!virtualHand) await controller.setJointTarget({ schemaVersion: 1, commandId: `preset-${action.id}-${Date.now()}`, source: 'manual', positions: vector, finalCommand: true });
         // Optimistic local update so the sliders/readouts move immediately instead of waiting for telemetry round-trip.
         valuesRef.current = vector;
         pendingVector.current = vector;
         setValues(vector);
       }
-      await controller.startQuickAction(action.id);
+      if (!virtualHand) await controller.startQuickAction(action.id);
     } catch (error) { setErrorMessage(`预设未送达：${errorText(error)}`); }
   };
   const saveCustomPreset = useCallback(() => {
@@ -615,32 +640,37 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
       category: 'custom',
     };
     setCustomPresets(prev => [...prev, newPreset]);
+    if (onCustomPresetsChange) onCustomPresetsChange([...customPresets, newPreset]);
     setPresetName('');
-  }, [presetName, controller, isLocked, connection.state, values, jointCount]);
+  }, [presetName, controller, isLocked, connection.state, values, jointCount, customPresets, onCustomPresetsChange]);
   const startEditPreset = useCallback((preset: DeviceControlQuickAction) => {
     setEditingPresetId(preset.id);
     setEditingPresetName(preset.label);
   }, []);
   const saveEditPreset = useCallback((presetId: string) => {
     if (!editingPresetName.trim()) return;
-    setCustomPresets(prev => prev.map(p => p.id === presetId ? { ...p, label: editingPresetName.trim(), positions: toVector(values, jointCount) } : p));
+    const next = customPresets.map(p => p.id === presetId ? { ...p, label: editingPresetName.trim(), positions: toVector(values, jointCount) } : p);
+    setCustomPresets(next);
+    if (onCustomPresetsChange) onCustomPresetsChange(next);
     setEditingPresetId(undefined);
     setEditingPresetName('');
-  }, [editingPresetName, values, jointCount]);
+  }, [editingPresetName, values, jointCount, customPresets, onCustomPresetsChange]);
   const cancelEditPreset = useCallback(() => {
     setEditingPresetId(undefined);
     setEditingPresetName('');
   }, []);
   const deletePreset = useCallback((presetId: string) => {
     if (submittingQuickAction === presetId) return;
-    setCustomPresets(prev => prev.filter(p => p.id !== presetId));
-  }, [submittingQuickAction]);
-  const connect = () => controller && runController(controller.connect);
-  const disconnect = () => controller && runController(controller.disconnect);
-  const reconnect = () => controller && runController(controller.reconnect);
-  const stopAll = async () => { lockedRef.current = true; if (rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } dragging.current.clear(); pendingVector.current = valuesRef.current; setSafetyLocked(true); setSubmittingQuickAction(undefined); setSubmittingLoop(undefined); setErrorMessage(''); try { await device.stopAll(); } catch (error) { setErrorMessage(`停止命令未送达：${errorText(error)}`); } };
-  const unlock = async () => { setBusy(true); setErrorMessage(''); try { await device.unlock(); if (connectionRef.current.state === 'connected') setSafetyLocked(false); else setErrorMessage('设备尚未回到可控状态，保持锁定；请先连接设备。'); } catch (error) { setErrorMessage(`恢复控制未完成：${errorText(error)}`); } finally { setBusy(false); } };
-  const setVectorCapability = (kind: 'speed' | 'torque', value: number) => { const length = kind === 'speed' ? capabilities.speedCommandLength : capabilities.torqueCommandLength ?? 0; if (!controller || length <= 0 || isLocked || connection.state !== 'connected') return; const command = { values: Array.from({ length }, () => clamp(value)), finalCommand: true }; void runController(() => kind === 'speed' ? controller.setSpeed(command) : controller.setTorque(command)); };
+    const next = customPresets.filter(p => p.id !== presetId);
+    setCustomPresets(next);
+    if (onCustomPresetsChange) onCustomPresetsChange(next);
+  }, [submittingQuickAction, customPresets, onCustomPresetsChange]);
+  const connect = () => { if (!controller) return; if (virtualHand) { applyConnection({ schemaVersion: capabilities.schemaVersion, deviceId: 'virtual-hand', state: 'connected', attempt: 1, lastError: null }); return; } runController(controller.connect); };
+  const disconnect = () => { if (!controller) return; if (virtualHand) { applyConnection({ schemaVersion: capabilities.schemaVersion, deviceId: 'virtual-hand', state: 'disconnected', attempt: 1, lastError: null }); return; } runController(controller.disconnect); };
+  const reconnect = () => { if (!controller) return; if (virtualHand) { applyConnection({ schemaVersion: capabilities.schemaVersion, deviceId: 'virtual-hand', state: 'connected', attempt: 1, lastError: null }); return; } runController(controller.reconnect); };
+  const stopAll = async () => { lockedRef.current = true; if (rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } dragging.current.clear(); pendingVector.current = valuesRef.current; setSafetyLocked(true); setSubmittingQuickAction(undefined); setSubmittingLoop(undefined); setErrorMessage(''); if (virtualHand) return; try { await device.stopAll(); } catch (error) { setErrorMessage(`停止命令未送达：${errorText(error)}`); } };
+  const unlock = async () => { setBusy(true); setErrorMessage(''); if (virtualHand) { setSafetyLocked(false); setBusy(false); return; } try { await device.unlock(); if (connectionRef.current.state === 'connected') setSafetyLocked(false); else setErrorMessage('设备尚未回到可控状态，保持锁定；请先连接设备。'); } catch (error) { setErrorMessage(`恢复控制未完成：${errorText(error)}`); } finally { setBusy(false); } };
+  const setVectorCapability = (kind: 'speed' | 'torque', value: number) => { const length = kind === 'speed' ? capabilities.speedCommandLength : capabilities.torqueCommandLength ?? 0; if (!controller || length <= 0 || isLocked || connection.state !== 'connected' || !canOperate) return; if (virtualHand) return; const command = { values: Array.from({ length }, () => clamp(value)), finalCommand: true }; void runController(() => kind === 'speed' ? controller.setSpeed(command) : controller.setTorque(command)); };
   const operationLabel = operation?.state === 'running' ? '执行中' : operation?.state === 'completed' ? '已完成' : operation?.state === 'error' ? '失败' : operation?.state;
   const operationActive = operation?.state === 'running' || operation?.state === 'stopping' || operation?.state === 'paused';
   const operationKind = operation?.kind.toLowerCase() ?? '';
@@ -663,6 +693,8 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   return <div className="stack device-control-page">
     <div className="page-heading"><div><h1>设备控制</h1><p className="muted">所有目标都通过设备控制器提交，硬件状态以实时遥测为准。</p></div><div className="heading-actions"><Badge tone={statusTone(connection.state)}>{connectionLabels[connection.state]}</Badge><button aria-label="设备安全锁" className={`button ${isLocked ? 'button-secondary' : 'button-primary'}`} onClick={isLocked ? unlock : stopAll} disabled={busy}>{isLocked ? '恢复控制' : '停止全部动作'}</button></div></div>
     {!controller && <div className="permission-note">未接入设备控制器：为避免伪造硬件执行，连接、关节、速度、扭矩和动作控制均已禁用。集成 runtime adapter 后可用。</div>}
+    {controller && !canOperate && <div className="permission-note">未连接机械手，设备控制不可用。请在设置中连接设备，或启用调试模式以使用虚拟机械手。</div>}
+    {controller && virtualHand && <div className="permission-note" role="status">调试模式：当前操作作用于虚拟调试机械手，不会发送到真实硬件。</div>}
     {errorMessage && <div className="lock-banner" role="alert"><span><strong>操作未完成</strong> {errorMessage}</span><button onClick={() => setErrorMessage('')}>关闭</button></div>}
     <div className="device-control-layout">
       <div className="device-twin-column">
@@ -702,9 +734,9 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
         <Card>
           <div className="card-header"><div><h2>连接管理</h2><span className="muted">第 {connection.attempt} 次尝试</span></div><Badge tone={controller ? statusTone(connection.state) : 'amber'}>{controller ? connectionLabels[connection.state] : '控制器未接入'}</Badge></div>
           <div className="grid grid-3" style={{ marginTop: 10 }}>
-            <button className="button button-primary" disabled={!controller || busy || connection.state === 'connected'} onClick={connect}>连接</button>
-            <button className="button button-secondary" disabled={!controller || busy || connection.state === 'disconnected'} onClick={disconnect}>断开</button>
-            <button className="button button-ghost" disabled={!controller || busy} onClick={reconnect}>重连</button>
+            <button className="button button-primary" disabled={!controller || busy || connection.state === 'connected' || !canOperate} onClick={connect}>连接</button>
+            <button className="button button-secondary" disabled={!controller || busy || connection.state === 'disconnected' || !canOperate} onClick={disconnect}>断开</button>
+            <button className="button button-ghost" disabled={!controller || busy || !canOperate} onClick={reconnect}>重连</button>
           </div>
           {connection.lastError && <p className="permission-note" style={{ marginTop: 8 }}>{connection.lastError.message}</p>}
         </Card>
@@ -713,7 +745,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
             <Card className="joint-target-card">
               <div className="card-header"><div><h2>关节目标</h2><span className="muted">归一化 · 0–100%</span></div><Badge>{jointCount} 关节</Badge></div>
               {jointCount === 0 && <p className="muted">当前能力未报告关节，控制不可用。</p>}
-              <div className="joint-list joint-list-single">{Array.from({ length: jointCount }, (_, index) => <JointSlider key={index} index={index} label={jointName(index, jointCount)} value={values[index] ?? 0} disabled={!controller || isLocked || connection.state !== 'connected'} onBegin={beginJoint} onInput={changeJoint} onFinish={finishJoint} />)}</div>
+              <div className="joint-list joint-list-single">{Array.from({ length: jointCount }, (_, index) => <JointSlider key={index} index={index} label={jointName(index, jointCount)} value={values[index] ?? 0} disabled={!controller || isLocked || connection.state !== 'connected' || !canOperate} onBegin={beginJoint} onInput={changeJoint} onFinish={finishJoint} />)}</div>
               <details open={rawOpen} onToggle={event => setRawOpen(event.currentTarget.open)}><summary className="button button-ghost" style={{ cursor: 'pointer' }}>高级诊断：原始值估算</summary><div className="grid grid-3" style={{ marginTop: 8 }}><span className="muted">raw 估算：{values.map(value => Math.round(value * (capabilities.position.range.max - capabilities.position.range.min) + capabilities.position.range.min)).join(', ') || '—'}</span><span className="muted">范围：{capabilities.position.range.min}–{capabilities.position.range.max}</span><span className="muted">遥测 raw：{live?.rawPosition.join(', ') || '—'}</span></div></details>
             </Card>
             <div className="device-twin-readouts">
@@ -727,7 +759,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
               <span className="preset-row-label">基本预设</span>
               <div className="grid grid-4">
                 {basicActions.map(action => (
-                  <button className="button button-preset-basic" key={action.id} disabled={!controller || isLocked || busy || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
+                  <button className="button button-preset-basic" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
                     <BasicPresetIcon type={action.id} />
                     {isQuickActionRunning(action) ? `${action.label} · 执行中` : action.label}
                   </button>
@@ -738,7 +770,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
               <span className="preset-row-label">数字预设</span>
               <div className="grid grid-5">
                 {numberActions.map(action => (
-                  <button className="button button-preset-number" key={action.id} disabled={!controller || isLocked || busy || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
+                  <button className="button button-preset-number" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
                     <NumberPresetIcon id={action.id} />
                     {isQuickActionRunning(action) ? `${action.label} · 执行中` : action.label}
                   </button>
@@ -750,7 +782,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                 <span className="preset-row-label">其他动作</span>
                 <div className="grid grid-3">
                   {otherQuickActions.map(action => (
-                    <button className="button button-secondary" key={action.id} disabled={!controller || isLocked || busy || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void runController(() => controller!.startQuickAction(action.id)).finally(() => setSubmittingQuickAction(undefined)); }}>
+                    <button className="button button-secondary" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void runController(() => controller!.startQuickAction(action.id)).finally(() => setSubmittingQuickAction(undefined)); }}>
                       {isQuickActionRunning(action) ? `${action.label} · 执行中` : action.label}
                     </button>
                   ))}
@@ -760,8 +792,8 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
             <div className="preset-row">
               <span className="preset-row-label">自定义预设</span>
               <div className="custom-preset-bar">
-                <input className="input" value={presetName} onChange={event => setPresetName(event.target.value)} placeholder="输入预设名称" disabled={!controller || isLocked || connection.state !== 'connected'} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveCustomPreset(); } }} />
-                <button className="button button-secondary" onClick={saveCustomPreset} disabled={!presetName.trim() || !controller || isLocked || connection.state !== 'connected'}>保存当前为预设</button>
+                <input className="input" value={presetName} onChange={event => setPresetName(event.target.value)} placeholder="输入预设名称" disabled={!controller || isLocked || connection.state !== 'connected' || !canOperate} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveCustomPreset(); } }} />
+                <button className="button button-secondary" onClick={saveCustomPreset} disabled={!presetName.trim() || !controller || isLocked || connection.state !== 'connected' || !canOperate}>保存当前为预设</button>
               </div>
               {customPresets.length === 0 && <p className="muted" style={{ marginTop: 4 }}>暂无自定义预设，调整关节后点击\u201c保存当前为预设\u201d</p>}
               <div className="custom-preset-list" style={{ marginTop: 8 }}>
@@ -786,7 +818,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                       <>
                         <button
                           className="button button-preset-custom"
-                          disabled={!controller || isLocked || busy || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)}
+                          disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)}
                           onClick={() => { setSubmittingQuickAction(preset.id); void applyPreset(preset).finally(() => setSubmittingQuickAction(undefined)); }}
                         >
                           {isQuickActionRunning(preset) ? `${preset.label} \u00b7 执行中` : preset.label}
@@ -806,14 +838,14 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
           <Card>
             <div className="card-header"><div><h2>速度</h2><span className="muted">{capabilities.speed.available && capabilities.speedCommandLength > 0 ? `${capabilities.speedCommandLength} 通道` : '能力不可用'}</span></div></div>
             <div className="metric-lg" style={{ margin: '8px 0' }}>{Math.round(speed * 100)}<small>%</small></div>
-            <input aria-label="速度" type="range" min="0" max="1" step="0.01" value={speed} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0} onChange={event => setSpeed(Number(event.target.value))} onPointerUp={() => setVectorCapability('speed', speed)} onBlur={() => setVectorCapability('speed', speed)} />
-            <button className="button button-ghost" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0} onClick={() => setVectorCapability('speed', speed)}>应用</button>
+            <input aria-label="速度" type="range" min="0" max="1" step="0.01" value={speed} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0 || !canOperate} onChange={event => setSpeed(Number(event.target.value))} onPointerUp={() => setVectorCapability('speed', speed)} onBlur={() => setVectorCapability('speed', speed)} />
+            <button className="button button-ghost" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0 || !canOperate} onClick={() => setVectorCapability('speed', speed)}>应用</button>
           </Card>
           <Card>
             <div className="card-header"><div><h2>扭矩</h2><span className="muted">{capabilities.torque.available && (capabilities.torqueCommandLength ?? 0) > 0 ? `${capabilities.torqueCommandLength ?? 0} 通道` : '能力不可用'}</span></div></div>
             <div className="metric-lg" style={{ margin: '8px 0' }}>{Math.round(torque * 100)}<small>%</small></div>
-            <input aria-label="扭矩" type="range" min="0" max="1" step="0.01" value={torque} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0} onChange={event => setTorque(Number(event.target.value))} onPointerUp={() => setVectorCapability('torque', torque)} onBlur={() => setVectorCapability('torque', torque)} />
-            <button className="button button-ghost" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0} onClick={() => setVectorCapability('torque', torque)}>应用</button>
+            <input aria-label="扭矩" type="range" min="0" max="1" step="0.01" value={torque} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0 || !canOperate} onChange={event => setTorque(Number(event.target.value))} onPointerUp={() => setVectorCapability('torque', torque)} onBlur={() => setVectorCapability('torque', torque)} />
+            <button className="button button-ghost" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0 || !canOperate} onClick={() => setVectorCapability('torque', torque)}>应用</button>
           </Card>
           <Card>
             <div className="card-header"><div><h2>操作</h2><span className="muted">{operationLabel ?? '等待状态'}</span></div><Badge tone={operation?.state === 'error' ? 'red' : operation?.state === 'running' ? 'blue' : 'green'}>{operationLabel ?? '空闲'}</Badge></div>

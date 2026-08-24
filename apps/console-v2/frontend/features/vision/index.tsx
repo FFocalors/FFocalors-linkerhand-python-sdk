@@ -17,6 +17,9 @@ export interface VisionMimicProps {
   proposalSink?: VisionProposalController;
   /** Kept for the shell contract; synchronisation uses only proposalController. */
   vision?: VisionPort;
+  debugMode?: boolean;
+  isPhysicalDevice?: boolean;
+  preferredCameraDeviceId?: string | null;
 }
 
 function runtimeLabel(snapshot: VisionRuntimeSnapshot | undefined): string {
@@ -131,7 +134,7 @@ const drawHand = (ctx: CanvasRenderingContext2D, hand: { landmarks: Landmark[]; 
   }
 };
 
-export function VisionMimic({ capabilities, locked, runtime, proposalController, proposalSink }: VisionMimicProps) {
+export function VisionMimic({ capabilities, locked, runtime, proposalController, proposalSink, debugMode, isPhysicalDevice, preferredCameraDeviceId }: VisionMimicProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -194,16 +197,13 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
   const preferredCameraIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('linkerhand-console-v2-preferred-camera');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        preferredCameraIdRef.current = parsed;
-        setSelectedCameraId(parsed);
-      }
-    } catch {}
+    const deviceId = preferredCameraDeviceId ?? localStorage.getItem('linkerhand-console-v2-camera-device-id');
+    if (deviceId) {
+      preferredCameraIdRef.current = deviceId;
+      setSelectedCameraId(deviceId);
+    }
     void enumerateCameras().then(setCameras).catch(() => {});
-  }, []);
+  }, [preferredCameraDeviceId]);
 
   const sink = proposalController ?? proposalSink;
   const controller = useMemo(() => runtime ? new VisionFeatureController(runtime, sink) : null, [runtime, sink]);
@@ -270,19 +270,22 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
         if (cams.length === 1) {
           deviceId = cams[0].deviceId;
           setSelectedCameraId(deviceId);
-          localStorage.setItem('linkerhand-console-v2-preferred-camera', JSON.stringify(deviceId));
+          localStorage.setItem('linkerhand-console-v2-camera-device-id', JSON.stringify(deviceId));
           preferredCameraIdRef.current = deviceId;
         } else if (cams.length > 1) {
           setActionError('检测到多个摄像头，请先在下方下拉列表选择要使用的摄像头');
           return;
-        } else {
-          throw new Error('未检测到摄像头设备');
         }
+        // 0 个摄像头：仍尝试 getUserMedia 触发权限申请，而不是直接报错
       }
 
-      await controller.start(videoRef.current, deviceId);
+      await controller.start(videoRef.current, deviceId ?? undefined);
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '视觉输入操作失败，请重试。');
+      if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError')) {
+        setActionError('摄像头权限被拒绝。请允许本应用访问摄像头后重试；如浏览器已记住拒绝，请在系统或浏览器设置中为本应用开启摄像头权限。');
+      } else {
+        setActionError(error instanceof Error ? error.message : '视觉输入操作失败，请重试。');
+      }
     }
   };
   const runStartOrStop = () => {
@@ -648,7 +651,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
                   onChange={async event => {
                     const value = event.target.value || null;
                     setSelectedCameraId(value);
-                    localStorage.setItem('linkerhand-console-v2-preferred-camera', JSON.stringify(value));
+                    localStorage.setItem('linkerhand-console-v2-camera-device-id', JSON.stringify(value));
                     preferredCameraIdRef.current = value;
                     if (value && (feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended')) {
                       await controller?.stop();
@@ -683,13 +686,14 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
               <Badge tone={feature?.authorized ? 'green' : 'amber'}>{feature?.authorized ? '同步中' : '已关闭'}</Badge>
             </div>
             <label className="vision-toggle" style={{ marginTop: 10 }}>
-              <input type="checkbox" checked={feature?.authorized ?? false} disabled={!controller || !canSyncModel || locked || feature?.runtime.state !== 'running'} onChange={event => controller?.setAuthorized(event.target.checked)} />
+              <input type="checkbox" checked={feature?.authorized ?? false} disabled={!controller || !canSyncModel || locked || feature?.runtime.state !== 'running' || !isPhysicalDevice} onChange={event => controller?.setAuthorized(event.target.checked)} />
               <span className="toggle-track"><span className="toggle-thumb" /></span>
               {feature?.authorized ? '正在将手部动作同步到机械手' : '打开后开始同步手部动作到机械手'}
             </label>
             {!canSyncModel && <p className="permission-note">当前型号 {capabilities.model} 可以预览和识别手势，但同步授权控件已禁用；只有 O6 支持完整六关节 VisionPoseProposal。</p>}
             {canSyncModel && !feature?.authorized && <p className="permission-note">开关关闭时仅进行识别预览，不会向机械手发送任何动作。</p>}
             {feature?.authorized && !feature.proposalAllowed && <p className="permission-note">开关已打开，等待运行和稳定置信度达到要求。</p>}
+            {debugMode && !isPhysicalDevice && <p className="permission-note">调试模式：视觉识别正常运行，但不会下发到机械手。</p>}
           </Card>
 
           <Card>

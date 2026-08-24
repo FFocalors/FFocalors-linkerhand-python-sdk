@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { Diagnostics, TactileMatrix, TelemetryChart, buildConnectionChecks } from './index';
+import { Diagnostics, TelemetryChart, buildConnectionChecks, SafetyCard } from './index';
 import type { DeviceCapabilities, DeviceConfig, LogPort, StructuredLogEntry, TelemetryPort } from '../../shared/contracts';
 
 const config: DeviceConfig = { schemaVersion: 1, deviceId: 'demo', name: 'Demo', model: 'O6', hand: 'left', transport: { type: 'can', channel: 'fake' }, autoReconnect: true };
@@ -8,22 +8,9 @@ const capabilities: DeviceCapabilities = { schemaVersion: 1, deviceId: 'demo', m
 const entry = (i: number, message = `消息 ${i}`): StructuredLogEntry => ({ schemaVersion: 1, id: String(i), monotonicTimeMs: i, level: i % 2 ? 'warn' : 'info', event: i % 2 ? 'connection.retry' : 'telemetry.sample', message, fields: {} });
 
 describe('diagnostics feature', () => {
-  it('explains an unavailable tactile capability without fabricating values', () => {
-    render(<TactileMatrix capabilities={capabilities} />);
-    expect(screen.getByText('当前设备没有触觉能力')).toBeInTheDocument();
-    expect(screen.queryByRole('grid')).not.toBeInTheDocument();
-  });
-
-  it('waits for a complete tactile frame before rendering a zero', () => {
-    const touchCapabilities = { ...capabilities, touch: { ...capabilities.touch, available: true } };
-    render(<TactileMatrix capabilities={touchCapabilities} />);
-    expect(screen.getByText('等待第一帧完整遥测')).toBeInTheDocument();
-    expect(screen.queryByRole('grid')).not.toBeInTheDocument();
-  });
-
   it('keeps all capability joints selectable, including J25', () => {
     render(<TelemetryChart jointCount={25} />);
-    expect(screen.getByRole('option', { name: 'J25' })).toBeInTheDocument();
+    expect(screen.getByText('J25')).toBeInTheDocument();
   });
 
   it('produces deterministic connection advice', () => {
@@ -64,5 +51,50 @@ describe('diagnostics feature', () => {
     expect(unsubscribe).toHaveBeenCalled();
     request.mockRestore(); cancel.mockRestore();
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
+  });
+
+  it('shows green safety badge when no errors exist', () => {
+    render(<SafetyCard entries={[]} disconnectCount={0} />);
+    expect(screen.getByText('正常')).toBeInTheDocument();
+    expect(screen.queryByText('最新错误')).not.toBeInTheDocument();
+  });
+
+  it('shows amber safety badge when errors exist but no recent ones', () => {
+    const oldEntries: StructuredLogEntry[] = [
+      { schemaVersion: 1, id: '1', monotonicTimeMs: 1000, level: 'error', event: 'test', message: '旧错误', fields: {} },
+      { schemaVersion: 1, id: '2', monotonicTimeMs: 500_000, level: 'info', event: 'test', message: '现在', fields: {} },
+    ];
+    render(<SafetyCard entries={oldEntries} disconnectCount={0} />);
+    expect(screen.getByText('需关注')).toBeInTheDocument();
+    expect(screen.getByText('旧错误')).toBeInTheDocument();
+  });
+
+  it('shows red safety badge when recent errors exist', () => {
+    const now = performance.now();
+    const recentEntries: StructuredLogEntry[] = [
+      { schemaVersion: 1, id: '1', monotonicTimeMs: Math.floor(now), level: 'error', event: 'test', message: '新错误', fields: {} }
+    ];
+    render(<SafetyCard entries={recentEntries} disconnectCount={0} />);
+    expect(screen.getByText('异常')).toBeInTheDocument();
+    expect(screen.getByText('新错误')).toBeInTheDocument();
+  });
+
+  it('displays telemetry disconnect count', () => {
+    render(<SafetyCard entries={[]} disconnectCount={3} />);
+    expect(screen.getByText('3')).toBeInTheDocument();
+  });
+
+  it('filters logs by time range', async () => {
+    const now = performance.now();
+    const logs: StructuredLogEntry[] = [
+      { schemaVersion: 1, id: '1', monotonicTimeMs: Math.floor(now - 30_000), level: 'info', event: 'test', message: '30秒前', fields: {} },
+      { schemaVersion: 1, id: '2', monotonicTimeMs: Math.floor(now - 120_000), level: 'info', event: 'test', message: '2分钟前', fields: {} },
+    ];
+    const list = vi.fn(async () => logs);
+    render(<Diagnostics logs={{ list }} config={config} capabilities={capabilities} />);
+    await waitFor(() => expect(screen.getByText('30秒前')).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('时间范围'), { target: { value: '1m' } });
+    expect(screen.getByText('30秒前')).toBeInTheDocument();
+    expect(screen.queryByText('2分钟前')).not.toBeInTheDocument();
   });
 });

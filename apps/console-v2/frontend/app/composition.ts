@@ -18,6 +18,7 @@ export type ConsoleComposition = ConsolePorts & {
   actionController: ActionController;
   graspController: GraspController;
   simulator: boolean;
+  isPhysicalDevice: boolean;
   visionRuntime: VisionRuntimeLike;
   visionProposalController: VisionProposalController;
   rpsActionController: RpsActionController;
@@ -82,6 +83,8 @@ function actionController(runtime: ConsolePorts, simulator: boolean): ActionCont
     async pausePlayback() { if (extras) { await extras.pause(); return; } set({ ...state, state: 'paused' }); },
     async resumePlayback() { if (extras) { await extras.resume(); return; } set({ ...state, state: 'playing' }); },
     async stop() { if (extras) { await extras.stop(); return; } set({ state: 'cancelled', progress: 0 }); },
+    async playLoop(loop, options) { if (extras) { await (extras as any).playLoop(loop, options); return; } set({ state: 'playing', actionId: loop.actionIds[0], progress: 0, detail: '浏览器模拟器循环执行中' }); },
+    async stopLoop() { if (extras) { await (extras as any).stopLoop(); return; } set({ state: 'idle', progress: 0 }); },
     getState: async () => state,
     subscribe(listener) { const remove = listeners.add(listener); const remote = extras?.subscribe(listener); return () => { remove(); remote?.(); }; },
   };
@@ -235,5 +238,5 @@ export function createComposition(): ConsoleComposition {
   // runtime until that snapshot is available.
   const createRps = (nextCapabilities: import('../shared/contracts').DeviceCapabilities) => createRpsActionController(runtime, nextCapabilities, simulator);
   const fallbackCapabilities = { schemaVersion: 1, deviceId: 'pending', model: 'O6' as const, hand: 'right' as const, transport: { type: 'can' as const, channel: 'pending' }, jointCount: 6, position: { length: 6, available: true, range: { min: 0, max: 255 } }, speed: { length: 6, available: true, range: { min: 0, max: 255 } }, current: { length: 6, available: true, range: { min: 0, max: 255 } }, torque: { length: 6, available: true, range: { min: 0, max: 255 } }, touch: { length: 0, available: false, range: { min: 0, max: 255 } }, speedCommandLength: 6, currentCommandLength: null, torqueCommandLength: 6, supportedOperations: ['setPosition' as const] };
-  return { ...runtime, simulator, visionRuntime, visionProposalController, rpsActionController: createRps(fallbackCapabilities), createRpsActionController: createRps, settingsController: createSettingsController(runtime, simulator), themePort: createThemePort(), deviceController: createDeviceController(runtime, simulator, simulator ? undefined : tauriRuntimeExtras.device), actionController: actionController(runtime, simulator), graspController: graspController(runtime, simulator) };
+  return { ...runtime, simulator, isPhysicalDevice: !simulator, visionRuntime, visionProposalController, rpsActionController: createRps(fallbackCapabilities), createRpsActionController: createRps, settingsController: createSettingsController(runtime, simulator), themePort: createThemePort(), deviceController: createDeviceController(runtime, simulator, simulator ? undefined : tauriRuntimeExtras.device), actionController: actionController(runtime, simulator), graspController: graspController(runtime, simulator) };
 }

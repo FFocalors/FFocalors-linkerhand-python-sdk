@@ -2,11 +2,12 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ThemeProvider } from '../../shared/theme';
 import { DEVICE_MODELS, Settings, type SettingsController, type SettingsSnapshot, type SettingsSaveResult, validateSettingsDraft, switchTransport } from './index';
+import type { LogLevel } from '../../shared/contracts';
 
 const snapshot: SettingsSnapshot = { config: { schemaVersion: 1, deviceId: 'test', name: '测试手', model: 'O6', hand: 'left', transport: { type: 'can', channel: 'can0' }, autoReconnect: true }, version: '2.0.0', build: 'test', cameraPermission: 'granted' };
 const result: SettingsSaveResult = { applied: true, reconnectRequired: false, restartRequired: false, errors: [] };
 function controller(overrides: Partial<SettingsController> = {}): SettingsController {
-  return { load: async () => snapshot, validate: draft => validateSettingsDraft(draft), save: async () => result, testSidecar: async () => ({ ok: true, message: 'sidecar 可用' }), checkOfflineAssets: async () => ({ ok: true, message: '资源完整' }), listCameras: async () => ({ permission: 'granted', cameras: [{ deviceId: 'cam-1', label: 'USB Camera' }] }), subscribe: () => () => undefined, ...overrides };
+  return { load: async () => snapshot, validate: draft => validateSettingsDraft(draft), save: async () => result, testSidecar: async () => ({ ok: true, message: 'sidecar 可用' }), checkOfflineAssets: async () => ({ ok: true, message: '资源完整' }), listCameras: async () => ({ permission: 'granted', cameras: [{ deviceId: 'cam-1', label: 'USB Camera' }] }), getConnectionState: async () => ({ state: 'disconnected' as const }), getFirmwareVersion: async () => ({ version: '0.0.0' }), getDebugMode: async () => false, setDebugMode: async () => undefined, getLogLevel: async () => 'info' as const, setLogLevel: async () => undefined, getLocale: async () => 'zh' as const, setLocale: async () => undefined, resetToFactory: async () => undefined, subscribe: () => () => undefined, ...overrides };
 }
 function renderSettings(next = controller()) { return render(<ThemeProvider><Settings model="O6" transport={{ type: 'can', channel: 'can0' }} controller={next} /></ThemeProvider>); }
 function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason?: unknown) => void; const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; }); return { promise, resolve, reject }; }
@@ -14,7 +15,7 @@ function deferred<T>() { let resolve!: (value: T) => void; let reject!: (reason?
 describe('settings feature boundary', () => {
   it('covers every supported model and validates transport drafts', () => {
     expect(DEVICE_MODELS).toHaveLength(8);
-    const draft = { model: 'O6' as const, hand: 'left' as const, transport: { type: 'rs485' as const, port: 'bad', baudrate: 1 }, preferredCameraDeviceId: null, advanced: { autoReconnect: true, connectionTimeoutMs: 5000, diagnostics: false } };
+    const draft = { model: 'O6' as const, hand: 'left' as const, transport: { type: 'rs485' as const, port: 'bad', baudrate: 1 }, preferredCameraDeviceId: null, advanced: { autoReconnect: true, connectionTimeoutMs: 5000, diagnostics: false, debugMode: false } };
     expect(validateSettingsDraft(draft).valid).toBe(false);
     expect(validateSettingsDraft({ ...draft, transport: { type: 'rs485', port: 'COM3', baudrate: 115200 } }).valid).toBe(true);
     expect(switchTransport({ ...draft, transport: { type: 'can', channel: 'can0' } }, 'rs485').transport).toEqual({ type: 'rs485', port: 'COM3', baudrate: 115200 });
@@ -23,7 +24,7 @@ describe('settings feature boundary', () => {
   it('loads camera state, saves a staged draft, and reports restart', async () => {
     const user = userEvent.setup(); const save = vi.fn(async () => ({ ...result, restartRequired: true }));
     renderSettings(controller({ save }));
-    await screen.findByText('版本 2.0.0 · 构建 test');
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     await user.click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(await screen.findByText('已发现 1 个摄像头。')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'RS485' }));
@@ -36,7 +37,7 @@ describe('settings feature boundary', () => {
   it('disables mutation and checks without a controller', () => {
     render(<ThemeProvider><Settings model="O6" transport={{ type: 'can', channel: 'can0' }} /></ThemeProvider>);
     expect(screen.getByText(/未注入 SettingsController/)).toBeInTheDocument();
-    expect(screen.getByText('版本 2.0.0-rc.1 · 构建 dev')).toBeInTheDocument();
+    expect(screen.getByText(/版本 2\.0\.0-rc\.1 · 构建 dev/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '保存设置' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '刷新摄像头' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '测试 sidecar' })).toBeDisabled();
@@ -54,7 +55,7 @@ describe('settings feature boundary', () => {
   it('locks editable fields during save and ignores a late result for a newer draft', async () => {
     const user = userEvent.setup(); const saveDeferred = deferred<SettingsSaveResult>(); const save = vi.fn(() => saveDeferred.promise);
     renderSettings(controller({ save }));
-    await screen.findByText('版本 2.0.0 · 构建 test');
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     await user.click(screen.getByRole('button', { name: 'RS485' }));
     const port = screen.getByLabelText('串口');
     await user.clear(port); await user.type(port, 'COM7');
@@ -74,7 +75,7 @@ describe('settings feature boundary', () => {
   it('reports camera permission denial with recovery guidance and allows retry', async () => {
     const listCameras = vi.fn(async () => ({ permission: 'denied' as const, cameras: [] }));
     renderSettings(controller({ listCameras }));
-    await screen.findByText('版本 2.0.0 · 构建 test');
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     await userEvent.setup().click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('请在系统设置中为本应用开启摄像头权限');
     expect(screen.getByRole('button', { name: '重试摄像头' })).toBeEnabled();
@@ -84,7 +85,7 @@ describe('settings feature boundary', () => {
   it('turns camera enumeration rejection into retryable error and suppresses updates after unmount', async () => {
     const cameraDeferred = deferred<{ permission: 'granted'; cameras: never[] }>(); const listCameras = vi.fn(() => cameraDeferred.promise);
     const { unmount } = renderSettings(controller({ listCameras }));
-    await screen.findByText('版本 2.0.0 · 构建 test');
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     const user = userEvent.setup(); await user.click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(screen.getByRole('button', { name: '枚举中…' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '枚举中…' }));
@@ -98,7 +99,7 @@ describe('settings feature boundary', () => {
     const unhandled: unknown[] = []; const onUnhandled = (reason: unknown) => unhandled.push(reason); process.on('unhandledRejection', onUnhandled);
     const save = vi.fn(async () => { throw new Error('sidecar unavailable'); }); const testSidecar = vi.fn(async () => ({ ok: false, message: 'sidecar 不可用' }));
     renderSettings(controller({ save, testSidecar }));
-    await screen.findByText('版本 2.0.0 · 构建 test');
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     const user = userEvent.setup(); await user.click(screen.getByRole('button', { name: 'RS485' }));
     await user.click(screen.getByRole('button', { name: '测试 sidecar' }));
     expect(await screen.findByText('检查未通过：sidecar 不可用')).toBeInTheDocument();
@@ -106,5 +107,81 @@ describe('settings feature boundary', () => {
     await user.click(screen.getByRole('button', { name: '保存设置' }));
     expect(await screen.findByText('保存失败：sidecar unavailable')).toBeInTheDocument();
     expect(unhandled).toHaveLength(0); process.off('unhandledRejection', onUnhandled);
+  });
+
+  it('shows live connection state with status indicator', async () => {
+    const getConnectionState = vi.fn(async () => ({ state: 'connected' as const, since: Date.now() - 60000 }));
+    renderSettings(controller({ getConnectionState }));
+    await screen.findByText('已连接');
+    expect(screen.getByText('已连接')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(/已连接时长 \d+分\d+秒/)).toBeInTheDocument());
+    await userEvent.setup().click(screen.getByRole('button', { name: '保存设置' }));
+    await waitFor(() => expect(getConnectionState).toHaveBeenCalled());
+  });
+
+  it('shows firmware version alongside app version', async () => {
+    const getFirmwareVersion = vi.fn(async () => ({ version: '1.2.3', buildDate: '2024-01-15' }));
+    renderSettings(controller({ getFirmwareVersion }));
+    await screen.findByText(/固件 v1\.2\.3/);
+    await userEvent.setup().click(screen.getByRole('button', { name: '保存设置' }));
+    await waitFor(() => expect(getFirmwareVersion).toHaveBeenCalled());
+  });
+
+  it('resets to factory defaults with confirmation', async () => {
+    const user = userEvent.setup();
+    const load = vi.fn(async () => ({ ...snapshot, logLevel: 'warn' as const, locale: 'en' as const }));
+    const resetToFactory = vi.fn(async () => undefined);
+    renderSettings(controller({ load, resetToFactory }));
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    await user.click(screen.getByRole('button', { name: /高级设置/ }));
+    await user.click(screen.getByRole('button', { name: '恢复默认设置' }));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('确定要恢复所有设置为出厂默认值吗');
+    await user.click(screen.getByRole('button', { name: '确认恢复' }));
+    await waitFor(() => expect(resetToFactory).toHaveBeenCalled());
+    await waitFor(() => expect(load).toHaveBeenCalled());
+    expect(await screen.findByText('已恢复出厂设置。')).toBeInTheDocument();
+    expect(screen.getByLabelText('日志级别')).toHaveValue('warn');
+    expect(screen.getByRole('button', { name: 'English' }).className).toContain('selected');
+  });
+
+  it('changes log level and updates draft', async () => {
+    const user = userEvent.setup();
+    const setLogLevel = vi.fn(async () => undefined);
+    renderSettings(controller({ setLogLevel }));
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    await user.click(screen.getByRole('button', { name: /高级设置/ }));
+    await user.selectOptions(screen.getByLabelText('日志级别'), 'warn');
+    expect(screen.getByLabelText('日志级别')).toHaveValue('warn');
+    expect(setLogLevel).toHaveBeenCalledWith('warn');
+    expect(screen.getByText('未保存')).toBeInTheDocument();
+  });
+
+  it('toggles locale and updates draft', async () => {
+    const user = userEvent.setup();
+    const setLocale = vi.fn(async () => undefined);
+    const getLocale = vi.fn(async () => 'zh' as const);
+    renderSettings(controller({ setLocale, getLocale }));
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    await user.click(screen.getByRole('button', { name: 'English' }));
+    expect(screen.getByRole('button', { name: 'English' }).className).toContain('selected');
+    expect(setLocale).toHaveBeenCalledWith('en');
+    await user.click(screen.getByRole('button', { name: '中文' }));
+    expect(setLocale).toHaveBeenCalledWith('zh');
+  });
+
+  it('toggles debug mode in advanced settings', async () => {
+    const user = userEvent.setup();
+    const setDebugMode = vi.fn(async () => undefined);
+    const getDebugMode = vi.fn(async () => true);
+    const load = vi.fn(async () => ({ ...snapshot, advanced: { debugMode: true } }));
+    renderSettings(controller({ setDebugMode, getDebugMode, load }));
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    await user.click(screen.getByRole('button', { name: /高级设置/ }));
+    const checkbox = screen.getByLabelText(/调试模式/);
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+    expect(checkbox).not.toBeChecked();
+    expect(setDebugMode).toHaveBeenCalledWith(false);
+    expect(screen.getByText('未保存')).toBeInTheDocument();
   });
 });

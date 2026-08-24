@@ -137,6 +137,8 @@ export function SmartGrasp({
   model = 'O6',
   controller,
   jointCount = 6,
+  debugMode,
+  isPhysicalDevice,
 }: {
   grasp: GraspPort;
   telemetry?: TelemetryPort;
@@ -145,6 +147,8 @@ export function SmartGrasp({
   model?: Model;
   controller?: GraspController;
   jointCount?: number;
+  debugMode?: boolean;
+  isPhysicalDevice?: boolean;
 }) {
   const [presets, setPresets] = useState<{ id: string; name: string; description: string }[]>([]);
   const [selected, setSelected] = useState<string>();
@@ -154,6 +158,7 @@ export function SmartGrasp({
   const [liveLoads, setLiveLoads] = useState<number[]>(() => Array(jointCount).fill(0));
 
   const available = supportedModels.includes(model);
+  const canOperate = (isPhysicalDevice ?? false) || (debugMode ?? false);
 
   useEffect(() => {
     void grasp.listPresets().then(setPresets).catch(() => setError('抓取预设暂时不可用，请检查运行时接线。'));
@@ -179,15 +184,15 @@ export function SmartGrasp({
 
   const controllerReady = Boolean(controller);
   // 空载标定：可随时重新标定（仅空闲/已标定时可操作）
-  const canCalibrate = controllerReady && available && !locked && (state.phase === 'idle' || state.phase === 'calibrated');
+  const canCalibrate = controllerReady && available && canOperate && !locked && (state.phase === 'idle' || state.phase === 'calibrated');
   // 预抓取定位：必须先完成标定（会话缓存）
-  const canApproach = controllerReady && available && !locked && state.calibrated && (state.phase === 'idle' || state.phase === 'calibrated');
+  const canApproach = controllerReady && available && canOperate && !locked && state.calibrated && (state.phase === 'idle' || state.phase === 'calibrated');
   // 开始抓取：首次必须标定，之后缓存标定可直接开始
-  const canGrasp = controllerReady && available && !locked && state.calibrated && Boolean(selected) && (state.phase === 'approaching' || state.phase === 'calibrated' || state.phase === 'idle');
+  const canGrasp = controllerReady && available && canOperate && !locked && state.calibrated && Boolean(selected) && (state.phase === 'approaching' || state.phase === 'calibrated' || state.phase === 'idle');
   const isRunning = state.phase !== 'idle' && state.phase !== 'calibrated' && state.phase !== 'success' && state.phase !== 'aborted' && state.phase !== 'failed';
-  const canAbort = controllerReady && isRunning;
+  const canAbort = controllerReady && canOperate && isRunning;
   // 释放 = 急停：任何运行/保持/成功状态均可立即回到张开姿态
-  const canRelease = controllerReady && (isRunning || state.phase === 'holding' || state.phase === 'success');
+  const canRelease = controllerReady && canOperate && (isRunning || state.phase === 'holding' || state.phase === 'success');
 
   const invoke = async (operation: () => Promise<void>, failure: string) => {
     setError(undefined);
@@ -233,6 +238,11 @@ export function SmartGrasp({
       {!controllerReady && (
         <div className="permission-note" role="status">
           抓取控制器尚未接线；标定、逼近、抓取和中止已禁用。
+        </div>
+      )}
+      {controllerReady && !canOperate && (
+        <div className="permission-note" role="status">
+          未连接机械手，智能抓取不可用。
         </div>
       )}
       {!available && (
@@ -325,7 +335,7 @@ export function SmartGrasp({
               <div className="grasp-preset-grid">
                 {presets.map(p => (
                   <button key={p.id} className={`grasp-preset-btn ${selected === p.id ? 'selected' : ''}`}
-                    disabled={locked || !available || !controllerReady}
+                    disabled={locked || !available || !controllerReady || !canOperate}
                     onClick={() => setSelected(p.id)} aria-pressed={selected === p.id}>
                     <span className="grasp-preset-icon">{p.id.includes('soft') ? '\u25cc' : p.id.includes('cube') ? '\u25c7' : '\u2301'}</span>
                     <div className="grasp-preset-info">

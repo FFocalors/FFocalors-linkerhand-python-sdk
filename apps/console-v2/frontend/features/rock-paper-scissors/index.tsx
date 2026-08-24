@@ -84,6 +84,9 @@ export type RockPaperScissorsProps = {
   actionController?: RpsActionController;
   scheduler?: RpsScheduler;
   random?: () => number;
+  debugMode?: boolean;
+  isPhysicalDevice?: boolean;
+  preferredCameraDeviceId?: string | null;
 };
 
 function runtimeLabel(snapshot: VisionRuntimeSnapshot | undefined): string {
@@ -91,7 +94,7 @@ function runtimeLabel(snapshot: VisionRuntimeSnapshot | undefined): string {
   return labels[snapshot?.state ?? 'idle'];
 }
 
-export function RockPaperScissors({ capabilities, locked, runtime, actionController, scheduler, random }: RockPaperScissorsProps) {
+export function RockPaperScissors({ capabilities, locked, runtime, actionController, scheduler, random, debugMode, isPhysicalDevice, preferredCameraDeviceId }: RockPaperScissorsProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -136,15 +139,14 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
   };
 
   useEffect(() => {
-    const stored = localStorage.getItem('linkerhand-console-v2-preferred-camera');
-    if (stored) {
+    const deviceId = preferredCameraDeviceId ?? localStorage.getItem('linkerhand-console-v2-camera-device-id');
+    if (deviceId) {
       try {
-        const parsed = JSON.parse(stored);
-        setSelectedCameraId(parsed);
+        setSelectedCameraId(deviceId);
       } catch {}
     }
     void enumerateCameras().then(setCameras).catch(() => {});
-  }, []);
+  }, [preferredCameraDeviceId]);
 
   useEffect(() => {
     const stage = stageRef.current;
@@ -203,7 +205,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
   }, [controller, controllerVersion]);
 
   const hardwareEligible = capabilities.model === 'O6' && capabilities.supportedOperations.includes('setPosition');
-  const hardwareConnected = hardwareEligible && Boolean(actionController);
+  const hardwareConnected = hardwareEligible && Boolean(actionController) && (isPhysicalDevice ?? true);
   const hardwareReady = Boolean(controller?.snapshot().hardwareAuthorized);
   const cameraRunning = controller?.snapshot().cameraState === 'running';
   const canControl = Boolean(controller && !locked);
@@ -213,7 +215,13 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
   const gameActive = Boolean(phaseNow && phaseNow !== 'idle' && phaseNow !== 'cameraReady');
   const runAsync = (operation: () => Promise<unknown>) => {
     setActionError(null);
-    void operation().catch(error => setActionError(error instanceof Error ? error.message : '猜拳操作失败，请重试。'));
+    void operation().catch(error => {
+      if (error instanceof DOMException && (error.name === 'NotAllowedError' || error.name === 'SecurityError')) {
+        setActionError('摄像头权限被拒绝。请允许本应用访问摄像头后重试；如浏览器已记住拒绝，请在系统或浏览器设置中为本应用开启摄像头权限。');
+      } else {
+        setActionError(error instanceof Error ? error.message : '猜拳操作失败，请重试。');
+      }
+    });
   };
 
   const state = controller?.snapshot();
@@ -301,7 +309,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
                   onChange={async event => {
                     const value = event.target.value || null;
                     setSelectedCameraId(value);
-                    localStorage.setItem('linkerhand-console-v2-preferred-camera', JSON.stringify(value));
+                    localStorage.setItem('linkerhand-console-v2-camera-device-id', JSON.stringify(value));
                     if (value && (state?.cameraState === 'running' || state?.cameraState === 'suspended')) {
                       await controller?.stop();
                       setTimeout(() => { if (controller) runAsync(() => controller.startCamera()); }, 150);
@@ -338,12 +346,13 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
               <input
                 type="checkbox"
                 checked={hardwareReady}
-                disabled={!controller || state?.action.status === 'disabled' || locked || !cameraRunning}
+                disabled={!controller || state?.action.status === 'disabled' || locked || !cameraRunning || !isPhysicalDevice}
                 onChange={event => { if (controller) runAsync(() => (event.target.checked ? controller.authorizeHardware() : controller.revokeHardware())); }}
               />
               <span className="toggle-track"><span className="toggle-thumb" /></span>
               {hardwareReady ? '揭晓后机械手将同步出拳姿态' : state?.action.status === 'disabled' ? '当前无可用动作控制器，仅进行识别与记分' : '打开后机械手将在揭晓时回应出拳'}
             </label>
+            {debugMode && !isPhysicalDevice && <p className="permission-note">调试模式：视觉识别正常运行，但不会下发到机械手。</p>}
           </Card>
 
           <Card>
