@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { GraspPort, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
-import { Badge, Card } from '../../shared/ui';
+import { Badge, Banner, Button, Card, NumberValue } from '../../shared/ui';
 import { useI18n } from '../../shared/i18n';
+import './styles.css';
 
 // ── Phase & joint state types ──
 
@@ -218,7 +219,7 @@ export function SmartGrasp({
   }, [state.joints, liveLoads]);
 
   return (
-    <div className="stack">
+    <div className="stack smart-grasp">
       <div className="page-heading">
         <div>
           <h1>{t('grasp.title')}</h1>
@@ -232,25 +233,25 @@ export function SmartGrasp({
       </div>
 
       {!state.calibrated && controllerReady && available && (
-        <div className="permission-note" role="status">
+        <Banner tone="warn" className="permission-note">
           {locale === 'en' ? 'Complete no-load calibration before the first grasp. Results are cached for this session only and cleared on exit.' : '首次抓取需先完成空载标定；标定结果仅在本次会话内缓存，应用关闭后自动清除，不占用磁盘空间。'}
-        </div>
+        </Banner>
       )}
 
       {!controllerReady && (
-        <div className="permission-note" role="status">
+        <Banner tone="warn" className="permission-note">
           {locale === 'en' ? 'The grasp controller is not wired; calibration, approach, grasp, and abort are disabled.' : '抓取控制器尚未接线；标定、逼近、抓取和中止已禁用。'}
-        </div>
+        </Banner>
       )}
       {controllerReady && !canOperate && (
-        <div className="permission-note" role="status">
+        <Banner tone="warn" className="permission-note">
           {locale === 'en' ? 'The hand is not connected; smart grasp is unavailable.' : '未连接机械手，智能抓取不可用。'}
-        </div>
+        </Banner>
       )}
       {!available && (
-        <div className="permission-note" role="alert">
-          <strong>{locale === 'en' ? `${model} does not support adaptive grasping.` : `${model} 不支持智能自适应抓取。`}</strong> {locale === 'en' ? 'Supported models: O6, L6, L7, L10, L20.' : '当前支持 O6、L6、L7、L10、L20。'}
-        </div>
+        <Banner tone="danger" className="permission-note" title={locale === 'en' ? `${model} does not support adaptive grasping.` : `${model} 不支持智能自适应抓取。`}>
+          {locale === 'en' ? 'Supported models: O6, L6, L7, L10, L20.' : '当前支持 O6、L6、L7、L10、L20。'}
+        </Banner>
       )}
 
       {/* ── Flow visualization (compact) ── */}
@@ -268,9 +269,9 @@ export function SmartGrasp({
               {PHASE_LABEL[state.phase]}
             </Badge>
             {canAbort && (
-              <button className="button button-ghost" onClick={() => invoke(() => controller!.abort(), '中止请求失败')}>
+              <Button variant="ghost" size="sm" onClick={() => invoke(() => controller!.abort(), '中止请求失败')}>
                 {t('grasp.abort')}
-              </button>
+              </Button>
             )}
           </div>
         </div>
@@ -302,22 +303,22 @@ export function SmartGrasp({
         </div>
 
         <div className="grid grid-4" style={{ marginTop: 10 }}>
-          <button className="button button-calibrate" disabled={!canCalibrate}
+          <Button type="button" variant="secondary" className="button-calibrate" size="sm" disabled={!canCalibrate}
             onClick={() => invoke(() => controller!.calibrate(), '标定启动失败')}>
             1. {t('grasp.calibrate')}
-          </button>
-          <button className="button button-approach" disabled={!canApproach}
+          </Button>
+          <Button type="button" variant="secondary" className="button-approach" size="sm" disabled={!canApproach}
             onClick={() => invoke(() => controller!.approach(), '逼近启动失败')}>
             2. {t('grasp.approach')}
-          </button>
-          <button className="button button-grasp-start" disabled={!canGrasp || !selected}
+          </Button>
+          <Button type="button" variant="primary" className="button-grasp-start" size="sm" disabled={!canGrasp || !selected}
             onClick={() => { if (!controller || !selected) return; void invoke(() => controller.startGrasp(selected, degraded), '抓取未启动'); }}>
             3. {t('grasp.start')}
-          </button>
-          <button className="button button-release" disabled={!canRelease}
+          </Button>
+          <Button type="button" variant="danger" className="button-release" size="sm" disabled={!canRelease}
             onClick={() => invoke(() => controller!.release(), '释放请求失败')}>
             {t('grasp.release')}
-          </button>
+          </Button>
         </div>
         <p className="muted" style={{ marginTop: 6, fontSize: '9px' }}>
           释放为急停操作：点击后立即回到张开姿态，无需等待分步回退。
@@ -336,7 +337,7 @@ export function SmartGrasp({
             ) : (
               <div className="grasp-preset-grid">
                 {presets.map(p => (
-                  <button key={p.id} className={`grasp-preset-btn ${selected === p.id ? 'selected' : ''}`}
+                  <Button type="button" key={p.id} variant="ghost" size="sm" className={`grasp-preset-btn ${selected === p.id ? 'selected' : ''}`}
                     disabled={locked || !available || !controllerReady || !canOperate}
                     onClick={() => setSelected(p.id)} aria-pressed={selected === p.id}>
                     <span className="grasp-preset-icon">{p.id.includes('soft') ? '\u25cc' : p.id.includes('cube') ? '\u25c7' : '\u2301'}</span>
@@ -345,7 +346,7 @@ export function SmartGrasp({
                       <span>{p.description}</span>
                     </div>
                     {selected === p.id && <Badge tone="green">已选</Badge>}
-                  </button>
+                  </Button>
                 ))}
               </div>
             )}
@@ -386,7 +387,7 @@ export function SmartGrasp({
                         : JOINT_CURVE_COLORS[i % JOINT_CURVE_COLORS.length],
                     }} />
                   </div>
-                  <span className="grasp-load-value">{joint.load}</span>
+                  <NumberValue value={joint.load} className="grasp-load-value telemetry-value" ariaLabel={`${joint.name} 当前负载`} />
                 </div>
                 {joint.contactScore > 0 && (
                   <div className="grasp-contact-score">
@@ -402,10 +403,10 @@ export function SmartGrasp({
       </div>
 
       {failureMessage && (
-        <div className="lock-banner" role="alert">
+        <Banner tone="danger" className="lock-banner">
           <span><strong>操作未完成</strong> {failureMessage}</span>
-          <button onClick={() => setError(undefined)}>关闭</button>
-        </div>
+          <Button variant="quiet" size="sm" onClick={() => setError(undefined)}>关闭</Button>
+        </Banner>
       )}
     </div>
   );

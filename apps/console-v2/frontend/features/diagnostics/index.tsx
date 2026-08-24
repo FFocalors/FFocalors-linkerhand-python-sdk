@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Check, ChevronDown, Download, Pause, Play, RotateCcw, Shield, SlidersHorizontal } from 'lucide-react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, LogLevel, LogPort, StructuredLogEntry, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
-import { Badge, Card } from '../../shared/ui';
+import { Badge, Button, Card, NumberValue, Select, TextField } from '../../shared/ui';
 import { useI18n } from '../../shared/i18n';
 import type { VirtualTelemetryPort } from '../../shared/telemetry/virtual';
 import './diagnostics.css';
@@ -160,29 +160,26 @@ export function TelemetryChart({ telemetry, jointCount = 0, virtual = false }: {
           <span className="muted">固定 {MAX_POINTS} 点 · 仅绘制可见窗口</span>
         </div>
         <div className="chart-controls">
-          <button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>
+          <Button variant="ghost" size="sm" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>
             <RotateCcw size={14} />{t('common.button.clear')}
-          </button>
-          <button className="button button-ghost" onClick={() => setPaused(value => !value)}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setPaused(value => !value)}>
             {paused ? <Play size={14} /> : <Pause size={14} />}
             {paused ? t('common.button.resume') : t('common.button.pause')}
-          </button>
+          </Button>
         </div>
       </div>
       <div className="chart-toolbar">
-        <label>
-          时间窗{' '}
-          <select value={windowMs} onChange={event => setWindowMs(Number(event.target.value))}>
+        <Select label="时间窗" value={windowMs} onChange={event => setWindowMs(Number(event.target.value))}>
             <option value={10_000}>10 秒</option>
             <option value={30_000}>30 秒</option>
             <option value={60_000}>60 秒</option>
-          </select>
-        </label>
+        </Select>
         <span className="muted">{virtual ? '调试虚拟遥测' : telemetry ? (paused ? '已暂停采样' : '实时采样') : '遥测端口未注入，等待运行时'}</span>
       </div>
       <div className="curve-legend">
         {Array.from({ length: effectiveJointCount }, (_, index) => (
-          <button
+          <Button
             key={index}
             type="button"
             className={`curve-legend-item ${visibleJoints.has(index) ? '' : 'curve-legend-hidden'}`}
@@ -191,7 +188,7 @@ export function TelemetryChart({ telemetry, jointCount = 0, virtual = false }: {
           >
             <i style={{ background: visibleJoints.has(index) ? CURVE_COLORS[index % CURVE_COLORS.length] : 'transparent' }} />
             {jointName(index, effectiveJointCount)}
-          </button>
+          </Button>
         ))}
       </div>
       <canvas ref={canvasRef} className="telemetry-canvas" aria-label="关节遥测曲线" />
@@ -293,41 +290,29 @@ function LogPanel({ logs, entries, setEntries }: { logs: LogPort; entries: Struc
           <span className="muted">窗口化显示 · 最多载入 {LOG_LIMIT} 条</span>
         </div>
         <div className="heading-actions">
-          <button className="button button-ghost" onClick={() => void refresh()}>
+          <Button variant="ghost" size="sm" onClick={() => void refresh()}>
             <RotateCcw size={14} />{t('common.button.refresh')}
-          </button>
-          <button className="button button-secondary" disabled={exporting} onClick={() => void exportLogs()}>
+          </Button>
+          <Button variant="secondary" size="sm" disabled={exporting} onClick={() => void exportLogs()}>
             <Download size={14} />{exporting ? (locale === 'en' ? 'Exporting…' : '导出中…') : (locale === 'en' ? 'Export JSON' : '导出 JSON')}
-          </button>
+          </Button>
         </div>
       </div>
       <div className="log-filters">
-        <label>
-          级别{' '}
-          <select value={level} onChange={value => setLevel(value.target.value as LogLevel | 'all')}>
+        <Select label="级别" value={level} onChange={value => setLevel(value.target.value as LogLevel | 'all')}>
             <option value="all">全部</option>
             {(['trace', 'debug', 'info', 'warn', 'error'] as const).map(item => <option key={item} value={item}>{item}</option>)}
-          </select>
-        </label>
-        <label>
-          事件{' '}
-          <select value={event} onChange={value => setEvent(value.target.value)}>
+        </Select>
+        <Select label="事件" value={event} onChange={value => setEvent(value.target.value)}>
             <option value="">全部事件</option>
             {events.map(item => <option key={item} value={item}>{item}</option>)}
-          </select>
-        </label>
-        <label>
-          时间范围{' '}
-          <select value={timeRange} onChange={value => setTimeRange(value.target.value as TimeRange)}>
+        </Select>
+        <Select label="时间范围" value={timeRange} onChange={value => setTimeRange(value.target.value as TimeRange)}>
             <option value="all">全部</option>
             <option value="5m">最近5分钟</option>
             <option value="1m">最近1分钟</option>
-          </select>
-        </label>
-        <label className="keyword-filter">
-          关键词{' '}
-          <input value={keyword} onChange={value => setKeyword(value.target.value)} placeholder="搜索事件或消息" />
-        </label>
+        </Select>
+        <TextField label="关键词" className="keyword-filter" value={keyword} onChange={value => setKeyword(value.target.value)} placeholder="搜索事件或消息" />
       </div>
       {error && <p className="diagnostic-error" role="alert">{error}</p>}
       <LogTable entries={filtered} />
@@ -470,28 +455,28 @@ export function Diagnostics({ logs, telemetry, device, config, capabilities, exp
           <h1>{t('diagnostics.title')}</h1>
           <p>{locale === 'en' ? 'Use deterministic checks to assess connection, telemetry, and log state.' : '用确定性检查快速判断连接、遥测与日志状态。'}</p>
         </div>
-        <button className="button button-secondary" onClick={() => void exportPackage()}>
+        <Button variant="secondary" onClick={() => void exportPackage()}>
           <Download size={15} />{locale === 'en' ? 'Export diagnostics' : '导出诊断包'}
-        </button>
+        </Button>
       </div>
       {loadError && <div className="diagnostic-error" role="alert">{loadError}</div>}
       {exportError && <div className="diagnostic-error" role="alert">{exportError}</div>}
       <div className="diagnostic-summary">
         <Card>
           <span className="metric-label">自检结果</span>
-          <div className="metric-lg">{checks.filter(check => check.tone === 'ok').length}<small> / {checks.length} 正常</small></div>
+          <div className="metric-lg"><NumberValue value={checks.filter(check => check.tone === 'ok').length} /><small> / {checks.length} 正常</small></div>
           <Badge tone={checks.some(check => check.tone === 'error') ? 'red' : checks.some(check => check.tone === 'warn') ? 'amber' : 'green'}>
             {checks.some(check => check.tone === 'error') ? '需要处理' : checks.some(check => check.tone === 'warn') ? '需关注' : '正常'}
           </Badge>
         </Card>
         <Card>
           <span className="metric-label">日志窗口</span>
-          <div className="metric-lg">{entries.length}<small> 条</small></div>
+          <div className="metric-lg"><NumberValue value={entries.length} /><small> 条</small></div>
           <Badge>有界输入</Badge>
         </Card>
         <Card>
           <span className="metric-label">遥测点上限</span>
-          <div className="metric-lg">{MAX_POINTS}<small> 点</small></div>
+          <div className="metric-lg"><NumberValue value={MAX_POINTS} /><small> 点</small></div>
           <Badge>固定窗口</Badge>
         </Card>
       </div>
@@ -503,9 +488,9 @@ export function Diagnostics({ logs, telemetry, device, config, capabilities, exp
             <h2>{t('diagnostics.connection.title')}</h2>
             <span className="muted">{locale === 'en' ? 'Read-only checks of injected ports; does not access the device directly' : '只读检查注入端口，不直接访问设备'}</span>
           </div>
-          <button className="button button-ghost" onClick={() => setShowRaw(value => !value)}>
+          <Button variant="ghost" size="sm" onClick={() => setShowRaw(value => !value)}>
             <SlidersHorizontal size={14} />{showRaw ? (locale === 'en' ? 'Hide raw values' : '隐藏 raw 值') : t('diagnostics.raw.toggle')}<ChevronDown size={14} />
-          </button>
+          </Button>
         </div>
         <CheckList checks={checks} />
         {showRaw && <pre className="raw-drawer">{JSON.stringify({ telemetry: telemetrySnapshot, connection }, null, 2)}</pre>}

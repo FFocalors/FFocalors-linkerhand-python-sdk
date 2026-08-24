@@ -5,13 +5,100 @@ import type { ConnectionSnapshot, ConsolePorts, JointTargetCommand, OperationSna
 import { isTauriRuntime, tauriRuntime } from '../shared/contracts';
 import { tauriRuntimeExtras } from '../shared/contracts/tauri-runtime';
 import { mockRuntime } from '../shared/contracts/mock-runtime';
-import { VisionRuntime } from '../shared/vision-runtime';
 import { createRpsActionController, createVisionProposalController } from './controllers';
 import { createSettingsController, createThemePort } from './settings';
 import type { SettingsController, ThemePort } from '../features/settings';
 import type { VisionProposalController, VisionRuntimeLike } from '../features/vision';
 import type { RpsActionController } from '../features/rock-paper-scissors/types';
-import VisionWorker from '../workers/vision-worker/index?worker&classic';
+import type { VisionLandmarkResult, VisionRuntimeSnapshot } from '../shared/vision-runtime';
+
+const IDLE_VISION_SNAPSHOT: VisionRuntimeSnapshot = { state: 'idle', owner: null, cameraDeviceId: null, model: 'unloaded', frameSequence: 0, fps: null, droppedFrames: 0, inflight: 0, lastError: null };
+
+/**
+ * The camera runtime and its classic MediaPipe worker are loaded only when a
+ * vision feature starts. Keeping this seam in the composition layer means the
+ * safety stop path can continue to use one shared runtime without pulling the
+ * worker or MediaPipe into the initial shell chunk.
+ */
+type VisionRuntimeLoader = () => Promise<VisionRuntimeLike>;
+
+export class LazyVisionRuntime implements VisionRuntimeLike {
+  private readonly loader: VisionRuntimeLoader;
+  private delegate: VisionRuntimeLike | null = null;
+  private loading: Promise<VisionRuntimeLike> | null = null;
+  private disposed = false;
+  private lifecycleGeneration = 0;
+  private currentSnapshot = IDLE_VISION_SNAPSHOT;
+  private readonly listeners = new Set<(snapshot: VisionRuntimeSnapshot) => void>();
+  private readonly resultListeners = new Set<(result: VisionLandmarkResult) => void>();
+
+  constructor(loader: VisionRuntimeLoader = LazyVisionRuntime.loadDefault) {
+    this.loader = loader;
+  }
+
+  snapshot(): VisionRuntimeSnapshot { return this.currentSnapshot; }
+
+  subscribe(listener: (snapshot: VisionRuntimeSnapshot) => void): () => void {
+    this.listeners.add(listener);
+    listener(this.currentSnapshot);
+    return () => this.listeners.delete(listener);
+  }
+
+  onResult(listener: (result: VisionLandmarkResult) => void): () => void {
+    this.resultListeners.add(listener);
+    return () => this.resultListeners.delete(listener);
+  }
+
+  async start(video: HTMLVideoElement, source: 'vision' | 'rps', deviceId?: string): Promise<void> {
+    if (this.disposed) throw new Error('视觉 Runtime 已释放');
+    const generation = this.lifecycleGeneration;
+    const runtime = await this.load();
+    // dispose() can run while the dynamic imports are pending. Never start a
+    // delegate that became available after its owner was disposed.
+    if (this.disposed || generation !== this.lifecycleGeneration) throw new Error('视觉 Runtime 已释放');
+    await runtime.start(video, source, deviceId);
+  }
+
+  async stop(): Promise<void> {
+    const generation = this.lifecycleGeneration;
+    if (this.loading) await this.loading.catch(() => undefined);
+    if (this.disposed || generation !== this.lifecycleGeneration) return;
+    await this.delegate?.stop();
+  }
+
+  async dispose(): Promise<void> {
+    this.disposed = true;
+    this.lifecycleGeneration += 1;
+    if (this.loading) await this.loading.catch(() => undefined);
+    await this.delegate?.dispose?.();
+    this.listeners.clear();
+    this.resultListeners.clear();
+  }
+
+  private load(): Promise<VisionRuntimeLike> {
+    if (this.delegate) return Promise.resolve(this.delegate);
+    if (!this.loading) {
+      this.loading = this.loader().then(runtime => {
+        this.delegate = runtime;
+        runtime.subscribe(snapshot => {
+          this.currentSnapshot = snapshot;
+          this.listeners.forEach(listener => listener(snapshot));
+        });
+        runtime.onResult(result => this.resultListeners.forEach(listener => listener(result)));
+        return runtime;
+      });
+    }
+    return this.loading;
+  }
+
+  private static async loadDefault(): Promise<VisionRuntimeLike> {
+    const [runtimeModule, workerModule] = await Promise.all([
+      import('../shared/vision-runtime'),
+      import('../workers/vision-worker/index?worker&classic'),
+    ]);
+    return new runtimeModule.VisionRuntime({}, { workerFactory: () => new workerModule.default() });
+  }
+}
 
 export type ConsoleComposition = ConsolePorts & {
   deviceController: DeviceControlController;
@@ -265,7 +352,7 @@ export function createComposition(): ConsoleComposition {
       },
     }
     : tauriRuntime;
-  const visionRuntime = new VisionRuntime({}, { workerFactory: () => new VisionWorker() });
+  const visionRuntime = new LazyVisionRuntime();
   const visionProposalController = createVisionProposalController(runtime, simulator);
   // In Tauri capabilities are loaded asynchronously by Shell. The app uses
   // O6 for the simulator and creates the RPS sink lazily with the authoritative

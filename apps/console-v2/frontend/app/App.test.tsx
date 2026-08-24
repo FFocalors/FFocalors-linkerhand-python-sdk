@@ -38,7 +38,7 @@ describe('console shell', () => {
     await screen.findByRole('heading', { name: '设备控制' });
     await user.click(screen.getByRole('button', { name: '设置' }));
     await screen.findByRole('heading', { name: '设置' });
-    await user.click(screen.getByRole('button', { name: 'English' }));
+    await user.click(screen.getByRole('radio', { name: 'English' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument());
     expect(screen.getByRole('button', { name: 'Device control' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Action center' }));
@@ -51,7 +51,7 @@ describe('console shell', () => {
     await screen.findByRole('heading', { name: 'Device control' });
     await user.click(screen.getByRole('button', { name: 'Settings' }));
     await screen.findByRole('heading', { name: 'Settings' });
-    await user.click(screen.getByRole('button', { name: '中文' }));
+    await user.click(screen.getByRole('radio', { name: '中文' }));
     await waitFor(() => expect(screen.getByRole('heading', { name: '设置' })).toBeInTheDocument());
     expect(localStorage.getItem('linkerhand-console-v2-locale')).toBe('zh');
   });

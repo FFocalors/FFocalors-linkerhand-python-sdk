@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeviceCapabilities, VisionPort } from '../../shared/contracts';
 import type { VisionRuntimeSnapshot, Landmark } from '../../shared/vision-runtime';
 import type { CameraDevice } from '../settings';
-import { Badge, Card, Progress } from '../../shared/ui';
+import { Badge, Banner, Button, Card, Checkbox, NumberValue, Progress, SegmentedControl, Select, TextField } from '../../shared/ui';
 import { useI18n } from '../../shared/i18n';
 import { VisionFeatureController, type VisionProposalController, type VisionRuntimeLike } from './controller';
 import { DEFAULT_MAPPER_SETTINGS, type MapperSettings, mapLandmarksToO6 } from './model';
+import './styles.css';
 
 export * from './controller';
 export * from './model';
@@ -615,7 +616,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
   const hand = feature?.lastResult?.hands[0];
 
   return (
-    <div className="stack">
+    <div className="stack vision-feature">
       <div className="page-heading">
         <div>
           <h1>{t('vision.title')}</h1>
@@ -638,8 +639,8 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
               {!hand && (feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended') && playState === 'idle' && <span>HAND: NO</span>}
             </div>
             <div className="vision-stage-status">
-              <span>FPS {feature?.runtime.fps === null || feature?.runtime.fps === undefined ? '—' : feature.runtime.fps.toFixed(1)}</span>
-              <span>DROP {feature?.runtime.droppedFrames ?? 0}</span>
+              <span>FPS <NumberValue value={feature?.runtime.fps === null || feature?.runtime.fps === undefined ? '—' : feature.runtime.fps.toFixed(1)} className="telemetry-value" /></span>
+              <span>DROP <NumberValue value={feature?.runtime.droppedFrames ?? 0} className="telemetry-value" /></span>
             </div>
           </div>
 
@@ -647,7 +648,8 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
             <div className="card-header">
               <div><h2>{t('vision.camera.title')}</h2></div>
               <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                <select
+                <Select
+                  aria-label={t('vision.camera.title')}
                   value={selectedCameraId ?? ''}
                   disabled={!canStart}
                   onChange={async event => {
@@ -660,22 +662,21 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
                       setTimeout(() => void startOrStop(), 150);
                     }
                   }}
-                  style={{ fontSize: 10 }}
                 >
                   <option value="">{t('common.camera.autoSelect')}</option>
                   {cameras.map(cam => <option key={cam.deviceId} value={cam.deviceId}>{cam.label || cam.deviceId}</option>)}
-                </select>
-                <button className="button button-secondary" disabled={!canStart} onClick={async () => { const cams = await enumerateCameras(); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>{t('common.button.refresh')}</button>
-                <button className="button button-primary" disabled={!canStart} onClick={runStartOrStop}>
+                </Select>
+                <Button variant="secondary" size="sm" disabled={!canStart} onClick={async () => { const cams = await enumerateCameras(); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>{t('common.button.refresh')}</Button>
+                <Button variant="primary" size="sm" disabled={!canStart} onClick={runStartOrStop}>
                   {feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended' ? t('common.camera.stopPreview') : feature?.runtime.state === 'error' || feature?.runtime.state === 'device-lost' || feature?.runtime.state === 'permission-denied' ? t('common.camera.reconnect') : t('common.camera.startPreview')}
-                </button>
+                </Button>
               </div>
             </div>
             {(feature?.lastError || feature?.runtime.lastError || actionError) && (
-              <div role="alert" className="permission-note">
+              <Banner tone="danger" className="permission-note">
                 {[feature?.lastError, feature?.runtime.lastError?.message, actionError].filter((m, i, arr): m is string => Boolean(m) && arr.indexOf(m) === i).map(m => <p key={m}>{m}</p>)}
                 <span>{locale === 'en' ? 'Check camera permission and vision assets, then retry.' : '请检查摄像头权限和视觉资源后重试。'}</span>
-              </div>
+              </Banner>
             )}
           </Card>
         </div>
@@ -687,10 +688,10 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
               <div><h2>{t('vision.output.title')}</h2><span className="muted">{t('vision.output.subtitle')}</span></div>
               <Badge tone={feature?.authorized ? 'green' : 'amber'}>{feature?.authorized ? '同步中' : '已关闭'}</Badge>
             </div>
-            <button type="button" className="vision-toggle" style={{ marginTop: 10 }} aria-label="同步动作" aria-pressed={feature?.authorized ?? false} disabled={!controller || !canSyncModel || locked || feature?.runtime.state !== 'running' || !isPhysicalDevice} onClick={() => controller?.setAuthorized(!(feature?.authorized ?? false))}>
+            <Button type="button" variant="ghost" size="sm" className="vision-toggle" style={{ marginTop: 10 }} aria-label="同步动作" aria-pressed={feature?.authorized ?? false} disabled={!controller || !canSyncModel || locked || feature?.runtime.state !== 'running' || !isPhysicalDevice} onClick={() => controller?.setAuthorized(!(feature?.authorized ?? false))}>
               <span className="toggle-track"><span className="toggle-thumb" /></span>
               {feature?.authorized ? (locale === 'en' ? 'Hand motion is syncing to the hand' : '正在将手部动作同步到机械手') : (locale === 'en' ? 'Turn on to sync hand motion to the hand' : '打开后开始同步手部动作到机械手')}
-            </button>
+            </Button>
             {!canSyncModel && <p className="permission-note">当前型号支持预览和识别手势（{capabilities.model}），但同步授权控件已禁用；只有 O6 支持完整六关节 VisionPoseProposal。</p>}
             {canSyncModel && !feature?.authorized && <p className="permission-note">开关关闭时仅进行识别预览，不会向机械手发送任何动作。</p>}
             {feature?.authorized && !feature.proposalAllowed && <p className="permission-note">开关已打开，等待运行和稳定置信度达到要求。</p>}
@@ -703,7 +704,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
               <Badge tone={feature?.calibration.complete ? 'green' : 'amber'}>{feature?.calibration.complete ? '已完成' : feature?.calibration.phase === 'open' ? '请张开手掌' : feature?.calibration.phase === 'fist' ? '请握拳' : '未开始'}</Badge>
             </div>
             <p className="muted" style={{ lineHeight: 1.6 }}>保持手掌在画面中央，按当前提示保持姿势。每 0.5 秒自动采集一帧，共需 3 帧。校准会让张开/握拳的映射更贴合你的手部范围。</p>
-            <button className="button button-secondary" disabled={!controller || feature?.runtime.state !== 'running' || locked} onClick={() => controller?.beginCalibration()}>{feature?.calibration.phase === 'idle' || feature?.calibration.phase === 'complete' ? t('vision.calibration.start') : t('vision.calibration.restart')}</button>
+            <Button variant="secondary" size="sm" disabled={!controller || feature?.runtime.state !== 'running' || locked} onClick={() => controller?.beginCalibration()}>{feature?.calibration.phase === 'idle' || feature?.calibration.phase === 'complete' ? t('vision.calibration.start') : t('vision.calibration.restart')}</Button>
             <p className="muted" aria-live="polite">{feature?.calibration.phase === 'open' ? `张开手掌：${feature.calibration.openSamples}/3` : feature?.calibration.phase === 'fist' ? `握拳：${feature.calibration.fistSamples}/3` : feature?.calibration.complete ? '手势范围已记录。' : '不校准也能直接同步连续姿态。'}</p>
             {feature?.calibration.complete && (() => {
               const names = ['拇指弯','拇指摆','食指','中指','无名','小指'];
@@ -750,10 +751,9 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
             <Card>
               <div className="grid grid-3">
                 {([['deadZone', '死区', 0.001, 0.2, 0.005], ['emaAlpha', 'EMA 平滑系数', 0.05, 1, 0.05], ['maxDeltaPerFrame', '单帧最大变化率', 0.01, 1, 0.01]] as const).map(([key, label, min, max, step]) => (
-                  <label key={key} style={{ display: 'grid', gap: 5, fontSize: 10 }}>
-                    {label}
-                    <input type="number" min={min} max={max} step={step} value={mapperSettings[key]} onChange={event => updateSetting(key, Number(event.target.value))} />
-                  </label>
+                  <div key={key} style={{ display: 'grid', gap: 5, fontSize: 10 }}>
+                    <TextField type="number" min={min} max={max} step={step} value={mapperSettings[key]} label={label} onChange={event => updateSetting(key, Number(event.target.value))} />
+                  </div>
                 ))}
               </div>
               <p className="muted">输出始终为 0..1 的完整六关节向量；EMA、死区和单帧限幅仅影响建议，不改变共享视觉输入。</p>
@@ -763,9 +763,9 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
           <Card>
             <div className="card-header"><div><h2>{t('vision.recording.title')}</h2></div></div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, marginBottom: 8 }}>
-              <button className="button button-secondary" disabled={!canRecord} onClick={startRecording}>{isRecording ? t('vision.recording.recording') : t('vision.recording.start')}</button>
-              <button className="button button-secondary" disabled={recState !== 'recording'} onClick={stopRecording}>{t('vision.recording.stop')}</button>
-              <button className="button button-secondary" disabled={recState === 'idle'} onClick={resetRecording}>{t('vision.recording.clear')}</button>
+              <Button variant="secondary" size="sm" disabled={!canRecord} onClick={startRecording}>{isRecording ? t('vision.recording.recording') : t('vision.recording.start')}</Button>
+              <Button variant="secondary" size="sm" disabled={recState !== 'recording'} onClick={stopRecording}>{t('vision.recording.stop')}</Button>
+              <Button variant="secondary" size="sm" disabled={recState === 'idle'} onClick={resetRecording}>{t('vision.recording.clear')}</Button>
             </div>
             <p className="muted" style={{ marginTop: 6 }}>
               {recState === 'recording' ? `正在录制 · 已记录 ${recordedFramesRef.current.length} 帧` : recState === 'stopped' ? `已停止 · ${recordedFramesRef.current.length} 帧 · ${recordedFramesRef.current[recordedFramesRef.current.length - 1]?.t?.toFixed(2) || 0}s` : '未录制'}
@@ -779,21 +779,21 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
                     <div key={`${saved.createdAt}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', border: `1px solid ${active ? 'var(--green)' : 'var(--line)'}`, borderRadius: 6, background: active ? 'var(--green-soft)' : 'var(--surface-2)' }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         {editingNameIndex === index ? (
-                          <input
+                          <TextField
                             autoFocus
                             value={editingName}
                             onChange={e => setEditingName(e.target.value)}
                             onBlur={() => confirmRename(index)}
                             onKeyDown={e => { if (e.key === 'Enter') confirmRename(index); if (e.key === 'Escape') setEditingNameIndex(null); }}
-                            style={{ width: '100%', fontSize: 10, padding: '2px 6px', border: '1px solid var(--blue)', borderRadius: 4, background: 'var(--surface)', color: 'var(--text)' }}
+                            className="vision-rename-field"
                           />
                         ) : (
                           <div style={{ fontSize: 10, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', cursor: 'text' }} title="点击重命名" onClick={() => startRename(index)}>{saved.name}</div>
                         )}
                         <div style={{ fontSize: 9, color: 'var(--muted)' }}>{saved.frames.length} 帧 · {saved.duration.toFixed(2)}s</div>
                       </div>
-                      <button className="button button-secondary" style={{ minHeight: 26, padding: '3px 8px', fontSize: 9 }} onClick={() => loadSavedRecording(saved, index)}>加载</button>
-                      <button className="button button-secondary" style={{ minHeight: 26, padding: '3px 8px', fontSize: 9 }} onClick={() => deleteSavedRecording(index)}>删除</button>
+                      <Button variant="secondary" size="sm" onClick={() => loadSavedRecording(saved, index)}>加载</Button>
+                      <Button variant="secondary" size="sm" onClick={() => deleteSavedRecording(index)}>删除</Button>
                     </div>
                   );
                 })}
@@ -804,25 +804,21 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
           <Card>
             <div className="card-header"><div><h2>{t('vision.playback.title')}</h2></div></div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 6, marginBottom: 8 }}>
-              <button className="button button-primary" disabled={!canPlay} onClick={startPlayback}>{playState === 'paused' ? t('vision.playback.resume') : t('vision.playback.start')}</button>
-              <button className="button button-secondary" disabled={playState !== 'playing' && playState !== 'paused'} onClick={pausePlayback}>{t('vision.playback.pause')}</button>
-              <button className="button button-secondary" disabled={playState === 'idle'} onClick={stopPlayback}>{t('vision.playback.stop')}</button>
+              <Button variant="primary" size="sm" disabled={!canPlay} onClick={startPlayback}>{playState === 'paused' ? t('vision.playback.resume') : t('vision.playback.start')}</Button>
+              <Button variant="secondary" size="sm" disabled={playState !== 'playing' && playState !== 'paused'} onClick={pausePlayback}>{t('vision.playback.pause')}</Button>
+              <Button variant="secondary" size="sm" disabled={playState === 'idle'} onClick={stopPlayback}>{t('vision.playback.stop')}</Button>
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <label style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <input type="checkbox" checked={playLoop} onChange={e => setPlayLoop(e.target.checked)} />
-                循环回放
-              </label>
-              <label style={{ fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
-                速度
-                <select value={playSpeed} onChange={e => setPlaySpeed(Number(e.target.value))} style={{ fontSize: 10 }}>
-                  <option value="0.5">0.5x</option>
-                  <option value="1">1.0x</option>
-                  <option value="1.5">1.5x</option>
-                  <option value="2">2.0x</option>
-                </select>
-              </label>
-              <span className="muted">{playState === 'idle' ? '未回放' : playState === 'playing' ? '回放中' : '已暂停'} · {playInfo.idx}/{playInfo.total} · {playInfo.percent}%</span>
+              <Checkbox label="循环回放" checked={playLoop} onChange={e => setPlayLoop(e.target.checked)} />
+              <div className="vision-speed-control">
+                <span className="muted">速度</span>
+                <SegmentedControl
+                  value={String(playSpeed)}
+                  onChange={value => setPlaySpeed(Number(value))}
+                  options={[{ value: '0.5', label: '0.5x' }, { value: '1', label: '1.0x' }, { value: '1.5', label: '1.5x' }, { value: '2', label: '2.0x' }]}
+                />
+              </div>
+              <span className="muted">{playState === 'idle' ? '未回放' : playState === 'playing' ? '回放中' : '已暂停'} · <NumberValue value={`${playInfo.idx}/${playInfo.total}`} /> · <NumberValue value={`${playInfo.percent}%`} /></span>
             </div>
           </Card>
         </div>

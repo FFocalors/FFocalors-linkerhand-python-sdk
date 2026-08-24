@@ -1,9 +1,9 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { CameraPermissionStatus, DeviceConfig, ConnectionSnapshot, LogLevel } from '../shared/contracts';
 import type { SettingsController, SettingsDraft, SettingsSnapshot, SettingsSaveResult, SidecarCheckResult, OfflineAssetsCheckResult, CameraDevice, CameraPermission, ThemePort, ThemePreference, ConnectionStateInfo, FirmwareVersion } from '../features/settings';
-import { draftFromSnapshot, validateSettingsDraft } from '../features/settings';
 import type { ConsolePorts } from '../shared/contracts';
-import { visionAssetUrl } from '../shared/vision-runtime';
+import { visionAssetUrl } from '../shared/vision-runtime/asset-paths';
+import { validateSettingsDraft } from './settings-validation';
 
 const CONFIG_KEY = 'linkerhand-console-v2-config';
 const THEME_KEY = 'linkerhand-console-v2-theme';

@@ -27,7 +27,7 @@ describe('settings feature boundary', () => {
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     await user.click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(await screen.findByText('已发现 1 个摄像头。')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'RS485' }));
+    await user.click(screen.getByRole('radio', { name: 'RS485' }));
     await user.clear(screen.getByLabelText('串口')); await user.type(screen.getByLabelText('串口'), 'COM7');
     await user.click(screen.getByRole('button', { name: '保存设置' }));
     await waitFor(() => expect(save).toHaveBeenCalled());
@@ -56,7 +56,7 @@ describe('settings feature boundary', () => {
     const user = userEvent.setup(); const saveDeferred = deferred<SettingsSaveResult>(); const save = vi.fn(() => saveDeferred.promise);
     renderSettings(controller({ save }));
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
-    await user.click(screen.getByRole('button', { name: 'RS485' }));
+    await user.click(screen.getByRole('radio', { name: 'RS485' }));
     const port = screen.getByLabelText('串口');
     await user.clear(port); await user.type(port, 'COM7');
     await user.click(screen.getByRole('button', { name: '保存设置' }));
@@ -118,7 +118,7 @@ describe('settings feature boundary', () => {
     const save = vi.fn(async () => { throw new Error('sidecar unavailable'); }); const testSidecar = vi.fn(async () => ({ ok: false, message: 'sidecar 不可用' }));
     renderSettings(controller({ save, testSidecar }));
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
-    const user = userEvent.setup(); await user.click(screen.getByRole('button', { name: 'RS485' }));
+    const user = userEvent.setup(); await user.click(screen.getByRole('radio', { name: 'RS485' }));
     await user.click(screen.getByRole('button', { name: '测试 sidecar' }));
     expect(await screen.findByText('检查未通过：sidecar 不可用')).toBeInTheDocument();
     await user.clear(screen.getByLabelText('串口')); await user.type(screen.getByLabelText('串口'), 'COM9');
@@ -159,7 +159,7 @@ describe('settings feature boundary', () => {
     await waitFor(() => expect(load).toHaveBeenCalled());
     expect(await screen.findByText('已恢复出厂设置。')).toBeInTheDocument();
     expect(screen.getByLabelText('日志级别')).toHaveValue('warn');
-    expect(screen.getByRole('button', { name: 'English' }).className).toContain('selected');
+    expect(screen.getByRole('radio', { name: 'English' }).className).toContain('selected');
   });
 
   it('changes log level and updates draft', async () => {
@@ -180,10 +180,10 @@ describe('settings feature boundary', () => {
     const getLocale = vi.fn(async () => 'zh' as const);
     renderSettings(controller({ setLocale, getLocale }));
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
-    await user.click(screen.getByRole('button', { name: 'English' }));
-    expect(screen.getByRole('button', { name: 'English' }).className).toContain('selected');
+    await user.click(screen.getByRole('radio', { name: 'English' }));
+    expect(screen.getByRole('radio', { name: 'English' }).className).toContain('selected');
     expect(setLocale).toHaveBeenCalledWith('en');
-    await user.click(screen.getByRole('button', { name: '中文' }));
+    await user.click(screen.getByRole('radio', { name: '中文' }));
     expect(setLocale).toHaveBeenCalledWith('zh');
   });
 

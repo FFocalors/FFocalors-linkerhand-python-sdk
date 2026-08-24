@@ -1,10 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createActionController, createDeviceController } from './composition';
+import { createActionController, createDeviceController, LazyVisionRuntime } from './composition';
 import { mockRuntime } from '../shared/contracts/mock-runtime';
 import type { ConnectionSnapshot, ConsolePorts, OperationSnapshot } from '../shared/contracts';
 import type { PosePreset, ProgrammedAction } from '../features/actions';
+import type { VisionRuntimeLike } from '../features/vision';
+import type { VisionRuntimeSnapshot } from '../shared/vision-runtime';
 
 describe('runtime composition adapters', () => {
+  const idleSnapshot: VisionRuntimeSnapshot = { state: 'idle', owner: null, cameraDeviceId: null, model: 'unloaded', frameSequence: 0, fps: null, droppedFrames: 0, inflight: 0, lastError: null };
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => { resolve = resolvePromise; reject = rejectPromise; });
+    return { promise, resolve, reject };
+  };
+  const fakeVisionRuntime = (overrides: Partial<VisionRuntimeLike> = {}): VisionRuntimeLike => ({
+    start: vi.fn(async () => undefined),
+    stop: vi.fn(async () => undefined),
+    dispose: vi.fn(async () => undefined),
+    snapshot: () => idleSnapshot,
+    subscribe: listener => { listener(idleSnapshot); return () => undefined; },
+    onResult: () => () => undefined,
+    ...overrides,
+  });
+
+  it('never starts a vision delegate when dispose wins while imports are loading', async () => {
+    const pending = deferred<VisionRuntimeLike>();
+    const delegate = fakeVisionRuntime();
+    const runtime = new LazyVisionRuntime(() => pending.promise);
+    const start = runtime.start(document.createElement('video'), 'vision');
+    const dispose = runtime.dispose();
+    pending.resolve(delegate);
+    await dispose;
+    await expect(start).rejects.toThrow('视觉 Runtime 已释放');
+    expect(delegate.start).not.toHaveBeenCalled();
+    expect(delegate.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('waits for an in-flight vision load before stopping the delegate', async () => {
+    const pending = deferred<VisionRuntimeLike>();
+    const delegate = fakeVisionRuntime();
+    const runtime = new LazyVisionRuntime(() => pending.promise);
+    const start = runtime.start(document.createElement('video'), 'vision');
+    const stop = runtime.stop();
+    pending.resolve(delegate);
+    await start;
+    await stop;
+    expect(delegate.start).toHaveBeenCalledOnce();
+    expect(delegate.stop).toHaveBeenCalledOnce();
+  });
+
   it('explicitly delegates real connection, vector and channel lifecycle to Tauri extras', async () => {
     const connection: ConnectionSnapshot = { schemaVersion: 1, deviceId: 'real-1', state: 'connected', attempt: 2, lastError: null };
     const operation: OperationSnapshot = { schemaVersion: 1, operationId: 'op', kind: 'motion', state: 'running', progress: 0, detail: null };

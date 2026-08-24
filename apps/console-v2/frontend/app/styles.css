@@ -27,6 +27,48 @@
   --page-ease: cubic-bezier(.22, .8, .28, 1);
   --theme-duration: 180ms;
   --preset-number: #c7521a;
+
+  /* Shared UI semantic contract. Product surfaces should consume these names. */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-line-strong: #b7c3d4;
+  --color-interaction: var(--blue);
+  --color-interaction-subtle: var(--blue-soft);
+  --color-telemetry: #53657d;
+  --color-success: var(--green);
+  --color-success-subtle: var(--green-soft);
+  --color-warn: var(--amber);
+  --color-warn-subtle: var(--amber-soft);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-soft);
+  --color-focus: var(--focus-ring);
+  --color-disabled-text: color-mix(in srgb, var(--text) 45%, var(--surface));
+  --color-disabled-bg: color-mix(in srgb, var(--line) 32%, var(--surface));
+  --color-disabled-border: color-mix(in srgb, var(--line) 70%, var(--surface));
+  --font-size-xs: 9px;
+  --font-size-sm: 10px;
+  --font-size-md: 12px;
+  --font-size-lg: 16px;
+  --space-1: 4px;
+  --space-2: 6px;
+  --space-3: 10px;
+  --space-4: 14px;
+  --space-5: 20px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-control: 0 4px 10px color-mix(in srgb, var(--blue) 18%, transparent);
+  --motion-fast: 120ms;
+  --motion-normal: 180ms;
+  --motion-ease: var(--page-ease);
+  --control-height-sm: 30px;
+  --control-height-md: 36px;
+  --control-height-lg: 44px;
 }
 
 :root[data-theme="dark"] {
@@ -51,6 +93,8 @@
   --focus-ring: #9eb5ff;
   --shadow: 0 12px 36px rgba(0, 0, 0, .2);
   --preset-number: #e8945c;
+  --color-line-strong: #52627a;
+  --color-telemetry: #b4c2d5;
 }
 
 * { box-sizing: border-box; }

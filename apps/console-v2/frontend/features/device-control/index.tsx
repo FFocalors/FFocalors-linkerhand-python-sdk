@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, KeyboardEvent, ReactNode } from 'react';
 import type { ConnectionSnapshot, DeviceCapabilities, DeviceConfig, DevicePort, JointTargetCommand, OperationSnapshot, TelemetryPort, TelemetrySnapshot } from '../../shared/contracts';
-import { Badge, Card } from '../../shared/ui';
+import { Badge, Button, Card, NumberValue, Slider, TextField } from '../../shared/ui';
 import { useI18n } from '../../shared/i18n';
 import { Pencil, Trash2, X } from 'lucide-react';
 import * as THREE from 'three';
@@ -219,7 +219,7 @@ interface JointSliderProps {
 /** Keeps pointer-move feedback local. The parent only receives a ref update and one RAF commit. */
 export const JointSlider = memo(function JointSlider({ index, value, disabled, label, onBegin, onInput, onFinish }: JointSliderProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const outputRef = useRef<HTMLOutputElement>(null);
+  const outputRef = useRef<HTMLSpanElement>(null);
   const draggingRef = useRef(false);
   useEffect(() => {
     if (draggingRef.current) return;
@@ -232,7 +232,7 @@ export const JointSlider = memo(function JointSlider({ index, value, disabled, l
     if (outputRef.current) outputRef.current.textContent = formatJointPercent(next);
     onInput(index, next);
   };
-  return <label className="joint-row"><span className="joint-name">{label ?? `J${index + 1}`}</span><input ref={inputRef} aria-label={`${label ?? `J${index + 1}`} 目标`} type="range" min="0" max="1" step="0.001" defaultValue={value} disabled={disabled} onPointerDown={() => { draggingRef.current = true; onBegin(index); }} onPointerUp={() => { draggingRef.current = false; onFinish(index); }} onPointerCancel={() => { draggingRef.current = false; onFinish(index); }} onBlur={() => { if (draggingRef.current) { draggingRef.current = false; onFinish(index); } }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); draggingRef.current = false; onFinish(index, true); } }} onChange={handleChange} /><output ref={outputRef}>{formatJointPercent(value)}</output></label>;
+  return <label className="joint-row"><span className="joint-name">{label ?? `J${index + 1}`}</span><input ref={inputRef} className="ui-slider" aria-label={`${label ?? `J${index + 1}`} 目标`} type="range" min="0" max="1" step="0.001" defaultValue={value} disabled={disabled} onPointerDown={() => { draggingRef.current = true; onBegin(index); }} onPointerUp={() => { draggingRef.current = false; onFinish(index); }} onPointerCancel={() => { draggingRef.current = false; onFinish(index); }} onBlur={() => { if (draggingRef.current) { draggingRef.current = false; onFinish(index); } }} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); draggingRef.current = false; onFinish(index, true); } }} onChange={handleChange} /><NumberValue value={<span ref={outputRef}>{formatJointPercent(value)}</span>} ariaLabel={`${label ?? `J${index + 1}`} 目标值`} /></label>;
 });
 
 /** Live 6-joint position curve on a canvas, styled after the legacy console waveform. */
@@ -343,8 +343,8 @@ function JointCurveChart({ telemetry, jointCount, virtual, sample, subscribeTele
   }, [scheduleDraw]);
 
   return <Card className="joint-curve-card">
-    <div className="card-header"><div><h2>实时关节曲线</h2><span className="muted">最近 {CURVE_MAX_POINTS} 个采样点 · 0–255</span></div><div className="heading-actions"><Badge tone={virtual ? 'blue' : sourceTelemetry ? 'green' : 'amber'}>{virtual ? '调试虚拟遥测' : sourceTelemetry ? '实时采样' : '遥测未接入'}</Badge><button className="button button-ghost" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>清空</button></div></div>
-    <div className="joint-curve-legend">{Array.from({ length: jointCount }, (_, index) => <button key={index} className={`curve-legend-item ${visibleJoints.has(index) ? '' : 'curve-legend-hidden'}`} onClick={() => toggleJoint(index)} title={visibleJoints.has(index) ? `点击隐藏 ${jointName(index, jointCount)}` : `点击显示 ${jointName(index, jointCount)}`}><i style={{ background: visibleJoints.has(index) ? CURVE_COLORS[index % CURVE_COLORS.length] : 'transparent' }} />{jointName(index, jointCount)}</button>)}</div>
+    <div className="card-header"><div><h2>实时关节曲线</h2><span className="muted">最近 {CURVE_MAX_POINTS} 个采样点 · 0–255</span></div><div className="heading-actions"><Badge tone={virtual ? 'blue' : sourceTelemetry ? 'green' : 'amber'}>{virtual ? '调试虚拟遥测' : sourceTelemetry ? '实时采样' : '遥测未接入'}</Badge><Button variant="ghost" size="sm" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>清空</Button></div></div>
+    <div className="joint-curve-legend">{Array.from({ length: jointCount }, (_, index) => <Button key={index} variant="quiet" size="sm" className={`curve-legend-item ${visibleJoints.has(index) ? '' : 'curve-legend-hidden'}`} onClick={() => toggleJoint(index)} title={visibleJoints.has(index) ? `点击隐藏 ${jointName(index, jointCount)}` : `点击显示 ${jointName(index, jointCount)}`}><i style={{ background: visibleJoints.has(index) ? CURVE_COLORS[index % CURVE_COLORS.length] : 'transparent' }} />{jointName(index, jointCount)}</Button>)}</div>
     <div className="joint-curve-plot"><canvas ref={canvasRef} className="joint-curve-canvas" aria-label="6 关节实时位置曲线" /></div>
   </Card>;
 }
@@ -716,11 +716,11 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const positionTrend = live && live.positions.length > 0 ? `${Math.round(live.positions.reduce((sum, value) => sum + value, 0) / live.positions.length * 100)}% 平均目标` : '等待遥测';
 
   return <div className="stack device-control-page">
-    <div className="page-heading"><div><h1>{t('device.title')}</h1><p className="muted">{t('device.subtitle')}</p></div><div className="heading-actions"><Badge tone={statusTone(connection.state)}>{localizedConnectionLabel(connection.state)}</Badge><button aria-label={locale === 'en' ? 'Device safety lock' : '设备安全锁'} className={`button ${isLocked ? 'button-secondary' : 'button-primary'}`} onClick={isLocked ? unlock : stopAll} disabled={busy}>{isLocked ? t('app.safety.restore') : t('app.safety.stopAll')}</button></div></div>
+    <div className="page-heading"><div><h1>{t('device.title')}</h1><p className="muted">{t('device.subtitle')}</p></div><div className="heading-actions"><Badge tone={statusTone(connection.state)}>{localizedConnectionLabel(connection.state)}</Badge><Button aria-label={locale === 'en' ? 'Device safety lock' : '设备安全锁'} variant={isLocked ? 'secondary' : 'primary'} onClick={isLocked ? unlock : stopAll} disabled={busy}>{isLocked ? t('app.safety.restore') : t('app.safety.stopAll')}</Button></div></div>
     {!controller && <div className="permission-note">{locale === 'en' ? 'No device controller is wired; connection, joints, speed, torque, and actions are disabled to avoid pretending to run hardware.' : '未接入设备控制器：为避免伪造硬件执行，连接、关节、速度、扭矩和动作控制均已禁用。集成 runtime adapter 后可用。'}</div>}
     {controller && !canOperate && <div className="permission-note">{locale === 'en' ? 'The hand is not connected, so device control is unavailable. Connect it in Settings or enable debug mode for a virtual hand.' : '未连接机械手，设备控制不可用。请在设置中连接设备，或启用调试模式以使用虚拟机械手。'}</div>}
     {controller && virtualHand && <div className="permission-note" role="status">{locale === 'en' ? 'Debug mode: actions target a virtual hand and are not sent to real hardware.' : '调试模式：当前操作作用于虚拟调试机械手，不会发送到真实硬件。'}</div>}
-    {errorMessage && <div className="lock-banner" role="alert"><span><strong>{locale === 'en' ? 'Operation incomplete' : '操作未完成'}</strong> {errorMessage}</span><button onClick={() => setErrorMessage('')}>{t('common.button.close')}</button></div>}
+    {errorMessage && <div className="lock-banner" role="alert"><span><strong>{locale === 'en' ? 'Operation incomplete' : '操作未完成'}</strong> {errorMessage}</span><Button variant="quiet" size="sm" onClick={() => setErrorMessage('')}>{t('common.button.close')}</Button></div>}
     <div className="device-control-layout">
       <div className="device-twin-column">
         <Card className="device-twin-stage">
@@ -733,14 +733,14 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
           <div className="device-twin-overlay">
             <span className="device-twin-badge">DIGITAL TWIN · {config.model}</span>
           </div>
-          <button
+          <Button
             className="device-twin-reset"
             onClick={() => twinControlsRef.current?.reset()}
             aria-label="复位视角"
             title="复位视角"
           >
             复位视角
-          </button>
+          </Button>
           {autoSpinOn && (
             <span className="device-twin-spin-badge">⟳ 自动旋转</span>
           )}
@@ -759,9 +759,9 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
         <Card>
           <div className="card-header"><div><h2>{t('device.connection.title')}</h2><span className="muted">{t('device.connection.attempt', { count: connection.attempt })}</span></div><Badge tone={controller ? statusTone(connection.state) : 'amber'}>{controller ? localizedConnectionLabel(connection.state) : t('device.connection.controllerMissing')}</Badge></div>
           <div className="grid grid-3" style={{ marginTop: 10 }}>
-            <button className="button button-primary" disabled={!controller || busy || connection.state === 'connected' || !canOperate} onClick={connect}>连接</button>
-            <button className="button button-secondary" disabled={!controller || busy || connection.state === 'disconnected' || !canOperate} onClick={disconnect}>断开</button>
-            <button className="button button-ghost" disabled={!controller || busy || !canOperate} onClick={reconnect}>重连</button>
+            <Button variant="primary" disabled={!controller || busy || connection.state === 'connected' || !canOperate} onClick={connect}>连接</Button>
+            <Button variant="secondary" disabled={!controller || busy || connection.state === 'disconnected' || !canOperate} onClick={disconnect}>断开</Button>
+            <Button variant="ghost" disabled={!controller || busy || !canOperate} onClick={reconnect}>重连</Button>
           </div>
           {connection.lastError && <p className="permission-note" style={{ marginTop: 8 }}>{connection.lastError.message}</p>}
         </Card>
@@ -784,10 +784,10 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
               <span className="preset-row-label">基本预设</span>
               <div className="grid grid-4">
                 {basicActions.map(action => (
-                  <button className="button button-preset-basic" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
+                  <Button variant="secondary" className="button-preset-basic" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
                     <BasicPresetIcon type={action.id} />
                     {isQuickActionRunning(action) ? `${action.label} · 执行中` : action.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -795,10 +795,10 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
               <span className="preset-row-label">数字预设</span>
               <div className="grid grid-5">
                 {numberActions.map(action => (
-                  <button className="button button-preset-number" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
+                  <Button variant="secondary" className="button-preset-number" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void applyPreset(action).finally(() => setSubmittingQuickAction(undefined)); }}>
                     <NumberPresetIcon id={action.id} />
                     {isQuickActionRunning(action) ? `${action.label} · 执行中` : action.label}
-                  </button>
+                  </Button>
                 ))}
               </div>
             </div>
@@ -807,9 +807,9 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                 <span className="preset-row-label">其他动作</span>
                 <div className="grid grid-3">
                   {otherQuickActions.map(action => (
-                    <button className="button button-secondary" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void runController(() => controller!.startQuickAction(action.id)).finally(() => setSubmittingQuickAction(undefined)); }}>
+                    <Button variant="secondary" key={action.id} disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)} onClick={() => { setSubmittingQuickAction(action.id); void runController(() => controller!.startQuickAction(action.id)).finally(() => setSubmittingQuickAction(undefined)); }}>
                       {isQuickActionRunning(action) ? `${action.label} · 执行中` : action.label}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               </div>
@@ -821,14 +821,14 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                   {loops.map(loop => {
                     const running = submittingLoop === loop.id || (loopOperationActive && (singleLoopOperation || operation?.operationId === loop.id));
                     return (
-                      <button
+                      <Button
                         className="button button-secondary"
                         key={loop.id}
                         disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)}
                         onClick={() => { setSubmittingLoop(loop.id); void runController(() => controller!.startLoop(loop.id)).finally(() => setSubmittingLoop(undefined)); }}
                       >
                         {running ? `${loop.label} · 执行中` : loop.label}
-                      </button>
+                      </Button>
                     );
                   })}
                 </div>
@@ -837,8 +837,8 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
             <div className="preset-row">
               <span className="preset-row-label">自定义预设</span>
               <div className="custom-preset-bar">
-                <input className="input" value={presetName} onChange={event => setPresetName(event.target.value)} placeholder="输入预设名称" disabled={!controller || isLocked || connection.state !== 'connected' || !canOperate} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveCustomPreset(); } }} />
-                <button className="button button-secondary" onClick={saveCustomPreset} disabled={!presetName.trim() || !controller || isLocked || connection.state !== 'connected' || !canOperate}>保存当前为预设</button>
+                <TextField className="input" aria-label="输入预设名称" value={presetName} onChange={event => setPresetName(event.target.value)} placeholder="输入预设名称" disabled={!controller || isLocked || connection.state !== 'connected' || !canOperate} onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); void saveCustomPreset(); } }} />
+                <Button variant="secondary" onClick={saveCustomPreset} disabled={!presetName.trim() || !controller || isLocked || connection.state !== 'connected' || !canOperate}>保存当前为预设</Button>
               </div>
               {customPresets.length === 0 && <p className="muted" style={{ marginTop: 4 }}>暂无自定义预设，调整关节后点击\u201c保存当前为预设\u201d</p>}
               <div className="custom-preset-list" style={{ marginTop: 8 }}>
@@ -846,8 +846,9 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                   <div className={`custom-preset-chip ${editingPresetId === preset.id ? 'custom-preset-editing' : ''}`} key={preset.id}>
                     {editingPresetId === preset.id ? (
                       <>
-                        <input
+                        <TextField
                           className="input preset-edit-input"
+                          aria-label="编辑预设名称"
                           value={editingPresetName}
                           onChange={event => setEditingPresetName(event.target.value)}
                           onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
@@ -856,20 +857,20 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
                           }}
                           autoFocus
                         />
-                        <button className="icon-button preset-action-btn" onClick={() => saveEditPreset(preset.id)} title="保存" aria-label="保存"><Pencil size={12} /></button>
-                        <button className="icon-button preset-action-btn" onClick={cancelEditPreset} title="取消" aria-label="取消"><X size={12} /></button>
+                        <Button variant="quiet" size="sm" className="icon-button preset-action-btn" onClick={() => saveEditPreset(preset.id)} title="保存" aria-label="保存"><Pencil size={12} /></Button>
+                        <Button variant="quiet" size="sm" className="icon-button preset-action-btn" onClick={cancelEditPreset} title="取消" aria-label="取消"><X size={12} /></Button>
                       </>
                     ) : (
                       <>
-                        <button
+                        <Button
                           className="button button-preset-custom"
                           disabled={!controller || isLocked || busy || !canOperate || Boolean(submittingQuickAction || submittingLoop || quickOperationActive || loopOperationActive)}
                           onClick={() => { setSubmittingQuickAction(preset.id); void applyPreset(preset).finally(() => setSubmittingQuickAction(undefined)); }}
                         >
                           {isQuickActionRunning(preset) ? `${preset.label} \u00b7 执行中` : preset.label}
-                        </button>
-                        <button className="icon-button preset-action-btn" onClick={() => startEditPreset(preset)} title="编辑名称并覆盖当前位置" aria-label="编辑"><Pencil size={12} /></button>
-                        <button className="icon-button preset-action-btn preset-action-delete" onClick={() => deletePreset(preset.id)} title="删除预设" aria-label="删除"><Trash2 size={12} /></button>
+                        </Button>
+                        <Button variant="quiet" size="sm" className="icon-button preset-action-btn" onClick={() => startEditPreset(preset)} title="编辑名称并覆盖当前位置" aria-label="编辑"><Pencil size={12} /></Button>
+                        <Button variant="quiet" size="sm" className="icon-button preset-action-btn preset-action-delete" onClick={() => deletePreset(preset.id)} title="删除预设" aria-label="删除"><Trash2 size={12} /></Button>
                       </>
                     )}
                   </div>
@@ -883,20 +884,22 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
           <Card>
             <div className="card-header"><div><h2>速度</h2><span className="muted">{capabilities.speed.available && capabilities.speedCommandLength > 0 ? `${capabilities.speedCommandLength} 通道` : '能力不可用'}</span></div></div>
             <div className="metric-lg" style={{ margin: '8px 0' }}>{Math.round(speed * 100)}<small>%</small></div>
-            <input aria-label="速度" type="range" min="0" max="1" step="0.01" value={speed} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0 || !canOperate} onChange={event => setSpeed(Number(event.target.value))} onPointerUp={() => setVectorCapability('speed', speed)} onBlur={() => setVectorCapability('speed', speed)} />
-            <button className="button button-ghost" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0 || !canOperate} onClick={() => setVectorCapability('speed', speed)}>应用</button>
+            <NumberValue value={Math.round(speed * 100)} unit="%" ariaLabel="速度当前值" />
+            <Slider aria-label="速度" min="0" max="1" step="0.01" value={speed} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0 || !canOperate} onChange={event => setSpeed(Number(event.target.value))} onPointerUp={() => setVectorCapability('speed', speed)} onBlur={() => setVectorCapability('speed', speed)} />
+            <Button variant="ghost" size="sm" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.speed.available || capabilities.speedCommandLength <= 0 || !canOperate} onClick={() => setVectorCapability('speed', speed)}>应用</Button>
           </Card>
           <Card>
             <div className="card-header"><div><h2>扭矩</h2><span className="muted">{capabilities.torque.available && (capabilities.torqueCommandLength ?? 0) > 0 ? `${capabilities.torqueCommandLength ?? 0} 通道` : '能力不可用'}</span></div></div>
             <div className="metric-lg" style={{ margin: '8px 0' }}>{Math.round(torque * 100)}<small>%</small></div>
-            <input aria-label="扭矩" type="range" min="0" max="1" step="0.01" value={torque} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0 || !canOperate} onChange={event => setTorque(Number(event.target.value))} onPointerUp={() => setVectorCapability('torque', torque)} onBlur={() => setVectorCapability('torque', torque)} />
-            <button className="button button-ghost" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0 || !canOperate} onClick={() => setVectorCapability('torque', torque)}>应用</button>
+            <NumberValue value={Math.round(torque * 100)} unit="%" ariaLabel="扭矩当前值" />
+            <Slider aria-label="扭矩" min="0" max="1" step="0.01" value={torque} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0 || !canOperate} onChange={event => setTorque(Number(event.target.value))} onPointerUp={() => setVectorCapability('torque', torque)} onBlur={() => setVectorCapability('torque', torque)} />
+            <Button variant="ghost" size="sm" style={{ marginTop: 6 }} disabled={!controller || isLocked || connection.state !== 'connected' || !capabilities.torque.available || (capabilities.torqueCommandLength ?? 0) <= 0 || !canOperate} onClick={() => setVectorCapability('torque', torque)}>应用</Button>
           </Card>
           <Card>
             <div className="card-header"><div><h2>操作</h2><span className="muted">{operationLabel ?? '等待状态'}</span></div><Badge tone={operation?.state === 'error' ? 'red' : operation?.state === 'running' ? 'blue' : 'green'}>{operationLabel ?? '空闲'}</Badge></div>
             <p className="muted" style={{ margin: '8px 0' }}>{operation?.detail ?? '等待控制器返回真实动作状态。'}</p>
             {operation && <div className="progress"><span style={{ width: `${Math.max(0, Math.min(100, operation.progress * 100))}%` }} /></div>}
-            <button className="button button-ghost" style={{ marginTop: 6 }} onClick={onNavigateToDiagnostics}>诊断中心 ↗</button>
+            <Button variant="ghost" size="sm" style={{ marginTop: 6 }} onClick={onNavigateToDiagnostics}>诊断中心 ↗</Button>
           </Card>
         </div>
       </div>
