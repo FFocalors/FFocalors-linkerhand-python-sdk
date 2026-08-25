@@ -35,10 +35,25 @@ describe('device control', () => {
   });
   it('uses a fine-grained target slider and keeps a virtual curve in debug mode', async () => {
     const fixtureValue = fixture(1);
-    render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(1)} config={config} capabilities={capabilities(1)} controller={fixtureValue.controller} debugMode isPhysicalDevice={false} virtualTelemetry={createVirtualTelemetry(1)} />);
+    const virtualSource = createVirtualTelemetry(1, [0.42]);
+    const subscribe = vi.spyOn(virtualSource, 'subscribe');
+    render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(1)} config={config} capabilities={capabilities(1)} controller={fixtureValue.controller} debugMode isPhysicalDevice={false} virtualTelemetry={virtualSource} />);
     const slider = await screen.findByRole('slider', { name: '大拇指弯曲 目标' });
     expect(slider).toHaveAttribute('step', '0.001');
     expect(await screen.findByText('调试虚拟遥测')).toBeInTheDocument();
+    await waitFor(() => expect(subscribe.mock.calls.length).toBeGreaterThanOrEqual(2));
+    expect((await virtualSource.read()).rawPosition).toEqual([107]);
+    expect((await virtualSource.read()).rawPosition).toEqual([107]);
+  });
+  it('shows one value for each capability and keeps preset groups visually distinct', async () => {
+    const fixtureValue = fixture(6);
+    render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(6)} config={{ ...config, model: 'O6' }} capabilities={{ ...capabilities(6), model: 'O6' }} controller={fixtureValue.controller} debugMode isPhysicalDevice={false} virtualTelemetry={createVirtualTelemetry(6)} />);
+    expect(await screen.findByLabelText('速度当前值')).toHaveTextContent('100%');
+    expect(screen.getAllByLabelText('速度当前值')).toHaveLength(1);
+    expect(screen.getAllByLabelText('扭矩当前值')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '张开' })).toHaveClass('button-preset-basic');
+    expect(screen.getByRole('button', { name: '壹' })).toHaveClass('button-preset-number');
+    expect(screen.getByRole('button', { name: '复位视角' }).parentElement).toHaveClass('device-twin-tools');
   });
   it('coalesces rapid changes into at most one non-final command per frame', async () => {
     const { controller } = renderControl(2); const slider = await screen.findByRole('slider', { name: '大拇指弯曲 目标' });
@@ -64,13 +79,15 @@ describe('device control', () => {
     const fixtureValue = renderControl(2); fireEvent.click(await screen.findByRole('button', { name: '重连' })); expect(fixtureValue.controller.reconnect).toHaveBeenCalled(); cleanup(); const isolated = fixture(1);
     render(<DeviceControl device={isolated.device} telemetry={telemetry(1)} config={config} capabilities={capabilities(1)} />); expect(await screen.findByText(/未接入设备控制器/)).toBeInTheDocument(); expect(screen.getByRole('slider', { name: '大拇指弯曲 目标' })).toBeDisabled();
   });
-  it('locks immediately on stopAll and unlocks only after the shared calls complete', async () => {
-    const { controller, device } = renderControl(1); fireEvent.click(await screen.findByRole('button', { name: '设备安全锁' })); await waitFor(() => expect(device.stopAll).toHaveBeenCalled()); expect(screen.getByRole('slider', { name: '大拇指弯曲 目标' })).toBeDisabled(); fireEvent.click(screen.getByRole('button', { name: '设备安全锁' })); await waitFor(() => expect(device.unlock).toHaveBeenCalled()); expect(controller.setJointTarget).not.toHaveBeenCalled();
-  });
-  it('cancels a pending RAF before it can submit after stopAll', async () => {
-    const { controller, device } = renderControl(1); const slider = await screen.findByRole('slider', { name: '大拇指弯曲 目标' });
-    fireEvent.pointerDown(slider); fireEvent.change(slider, { target: { value: '0.7' } }); fireEvent.click(screen.getByRole('button', { name: '设备安全锁' })); await new Promise(resolve => requestAnimationFrame(resolve)); await waitFor(() => expect(device.stopAll).toHaveBeenCalled());
-    expect(controller.setJointTarget).not.toHaveBeenCalled();
+  it('restores the O6 open pose without invoking the safety stop', async () => {
+    const fixtureValue = fixture(6);
+    render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(6)} config={{ ...config, model: 'O6' }} capabilities={{ ...capabilities(6), model: 'O6' }} controller={fixtureValue.controller} debugMode={false} isPhysicalDevice />);
+    fireEvent.click(await screen.findByRole('button', { name: '恢复初始状态' }));
+    await waitFor(() => expect(fixtureValue.controller.setJointTarget).toHaveBeenCalled());
+    expect(fixtureValue.controller.setJointTarget).toHaveBeenCalledWith(expect.objectContaining({ positions: Array(6).fill(250 / 255), finalCommand: true }));
+    expect(fixtureValue.controller.startQuickAction).toHaveBeenCalledWith('open');
+    expect(fixtureValue.device.stopAll).not.toHaveBeenCalled();
+    expect(screen.queryByText(/停止全部动作是软件锁定/)).not.toBeInTheDocument();
   });
   it('derives quick action and loop mutual exclusion from operation states', async () => {
     const fixtureValue = fixture(1); render(<DeviceControl device={fixtureValue.device} telemetry={telemetry(1)} config={config} capabilities={capabilities(1)} controller={fixtureValue.controller} loops={[{ id: 'cycle', label: '循环' }]} debugMode={false} isPhysicalDevice={true} />);
@@ -98,5 +115,7 @@ describe('device control', () => {
     expect(screen.getByRole('button', { name: '张开' })).toBeDisabled();
     expect(screen.getByRole('slider', { name: '速度' })).toBeDisabled();
     expect(screen.getByRole('slider', { name: '扭矩' })).toBeDisabled();
+    expect(screen.getByText('实时关节曲线')).toBeInTheDocument();
+    expect(screen.getByText('遥测未接入')).toBeInTheDocument();
   });
 });

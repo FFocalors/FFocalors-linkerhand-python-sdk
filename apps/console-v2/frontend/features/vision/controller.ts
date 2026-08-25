@@ -1,9 +1,10 @@
 import type { DeviceModel, VisionPoseProposal } from '../../shared/contracts';
 import type { HandLandmark, VisionLandmarkResult, VisionRuntimeSnapshot, VisionRuntimeState } from '../../shared/vision-runtime';
-import { classifyGesture, GestureStabilizer, MIN_STABLE_GESTURE_CONFIDENCE, PoseMapper, SessionCalibration, type Gesture, type MapperSettings } from './model';
+import { classifyGesture, PoseMapper, SessionCalibration, type Gesture, type MapperSettings } from './model';
 
 export const MIN_PROPOSAL_CONFIDENCE = 0.7;
 export const VISION_RUNTIME_STOP_TIMEOUT_MS = 1000;
+export const TRACKING_LOSS_GRACE_MS = 150;
 
 export interface VisionRuntimeLike {
   start(video: HTMLVideoElement, source: 'vision' | 'rps', deviceId?: string): Promise<void>;
@@ -122,7 +123,6 @@ export interface ProposalEligibility {
 export function canSubmitProposal(input: ProposalEligibility): boolean {
   return input.model === 'O6'
     && input.authorized
-    && input.calibrated
     && input.confidence >= MIN_PROPOSAL_CONFIDENCE
     && !input.locked
     && input.runtimeState === 'running'
@@ -133,7 +133,6 @@ export class VisionFeatureController {
   private readonly runtime: VisionRuntimeLike;
   private readonly sink: VisionProposalController;
   private readonly calibration = new SessionCalibration();
-  private readonly stabilizer = new GestureStabilizer();
   private readonly mapper: PoseMapper;
   private readonly dispatcher: LatestWinsProposalDispatcher;
   private readonly listeners = new Set<FeatureListener>();
@@ -149,6 +148,7 @@ export class VisionFeatureController {
   private lastProposal: VisionPoseProposal | null = null;
   private lastResult: VisionLandmarkResult | null = null;
   private lastPositions: number[] | null = null;
+  private lastTrackedAtMonotonicMs: number | null = null;
   private playbackMode = false;
   private revokedReason: string | null = null;
   private lastError: string | null = null;
@@ -164,7 +164,10 @@ export class VisionFeatureController {
     this.runtimeSnapshot = runtime.snapshot();
     this.unsubscribeRuntime = runtime.subscribe(snapshot => {
       this.runtimeSnapshot = snapshot;
-      if (!isActiveRuntime(snapshot)) this.revoke('视觉运行已停止');
+      if (!isActiveRuntime(snapshot)) {
+        this.clearTracking();
+        this.revoke('视觉运行已停止');
+      }
       this.emit();
     });
     this.unsubscribeResult = runtime.onResult(result => this.handleResult(result));
@@ -234,7 +237,6 @@ export class VisionFeatureController {
 
   beginCalibration(): void {
     this.calibration.begin();
-    this.stabilizer.reset();
     this.gesture = 'unknown';
     this.confidence = 0;
     this.mapper.reset();
@@ -257,6 +259,7 @@ export class VisionFeatureController {
   async start(video: HTMLVideoElement, deviceId?: string): Promise<void> {
     this.lastError = null;
     this.stopped = false;
+    this.clearTracking();
     try {
       await this.runtime.start(video, 'vision', deviceId);
       this.runtimeSnapshot = this.runtime.snapshot();
@@ -273,6 +276,7 @@ export class VisionFeatureController {
     this.stopped = true;
     this.authorized = false;
     this.playbackMode = false;
+    this.clearTracking();
     this.revoke('视觉输入已停止');
     await this.stopOwnedRuntime();
     this.runtimeSnapshot = this.runtime.snapshot();
@@ -284,6 +288,7 @@ export class VisionFeatureController {
     this.authorized = false;
     this.lastProposal = null;
     this.playbackMode = false;
+    this.clearTracking();
     this.dispatcher.dispose('视觉页面已离开');
     this.unsubscribeResult();
     this.unsubscribeRuntime();
@@ -314,24 +319,27 @@ export class VisionFeatureController {
       this.emit();
       return;
     }
-    this.lastResult = result;
     const hand = this.bestHand(result.hands);
     if (!hand) {
       this.gesture = 'unknown';
       this.confidence = 0;
-      this.lastResult = null;
+      if (this.lastTrackedAtMonotonicMs === null || result.monotonicTimeMs - this.lastTrackedAtMonotonicMs > TRACKING_LOSS_GRACE_MS) {
+        this.clearTracking();
+      }
+      // Stop real-device output immediately, while retaining the last overlay
+      // for a very short detector gap so a single missed frame cannot flash.
       this.revoke('未检测到手');
       this.emit();
       return;
     }
 
     const classification = classifyGesture(hand);
-    const stable = this.stabilizer.update(classification.gesture, classification.confidence);
-    this.gesture = stable.gesture;
-    // Keep the detector's hand confidence as the proposal gate. The gesture
-    // classifier confidence also reflects openness margin, which can be lower
-    // for a valid fist fixture even when the detector is confident.
-    this.confidence = stable.gesture === 'unknown' ? 0 : hand.confidence;
+    this.gesture = classification.gesture;
+    // MediaPipe's handedness score is not a presence score. Keep every valid
+    // 21-point result visible and use this confidence only for hardware output.
+    this.confidence = hand.confidence;
+    this.lastResult = { ...result, hands: [hand] };
+    this.lastTrackedAtMonotonicMs = result.monotonicTimeMs;
 
     this.calibration.accept(hand.landmarks);
     const positions = this.mapper.map(hand.landmarks, this.calibration.snapshot().complete ? this.calibration.snapshot() : undefined);
@@ -339,12 +347,6 @@ export class VisionFeatureController {
     if (hand.confidence < MIN_PROPOSAL_CONFIDENCE) {
       this.lastProposal = null;
       this.revoke('手势置信度不足');
-      this.emit();
-      return;
-    }
-    if (stable.gesture === 'unknown') {
-      this.lastProposal = null;
-      this.revoke('手势未稳定');
       this.emit();
       return;
     }
@@ -360,7 +362,7 @@ export class VisionFeatureController {
       const proposal: VisionPoseProposal = {
         schemaVersion: 1,
         id: `vision-${result.frameSequence}`,
-        label: stable.gesture === 'fist' ? '握拳' : '连续姿态',
+        label: classification.gesture === 'fist' ? '握拳' : '连续姿态',
         confidence: this.confidence,
         positions,
         expiresAtMonotonicMs: result.monotonicTimeMs + 500,
@@ -376,10 +378,17 @@ export class VisionFeatureController {
     return hands.filter(hand => hand.landmarks.length === 21).reduce<HandLandmark | null>((best, hand) => !best || hand.confidence > best.confidence ? hand : best, null);
   }
 
-  private revoke(reason: string): void {
-    if (this.revokedReason === reason && this.lastProposal === null && this.lastResult === null) return;
-    this.lastProposal = null;
+  private clearTracking(): void {
     this.lastResult = null;
+    this.lastPositions = null;
+    this.lastTrackedAtMonotonicMs = null;
+    this.gesture = 'unknown';
+    this.confidence = 0;
+  }
+
+  private revoke(reason: string): void {
+    if (this.revokedReason === reason && this.lastProposal === null) return;
+    this.lastProposal = null;
     this.revokedReason = reason;
     this.dispatcher.revoke(reason);
   }

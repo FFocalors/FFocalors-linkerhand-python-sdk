@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
-import { VisionMimic } from './index';
+import { containVideoViewport, VisionMimic } from './index';
 import type { VisionPort } from '../../shared/contracts';
 import type { VisionRuntimeLike } from './controller';
 import type { VisionRuntimeSnapshot } from '../../shared/vision-runtime';
@@ -13,6 +13,12 @@ function runtimeWithStart(start: VisionRuntimeLike['start']): VisionRuntimeLike 
   const wrappedStart: VisionRuntimeLike['start'] = async (video, source, deviceId) => { await start(video, source, deviceId); snapshot = runtimeSnapshot({ state: 'running', owner: 'vision', model: 'ready' }); };
   return { start: vi.fn(wrappedStart), stop: vi.fn(async () => { snapshot = runtimeSnapshot(); }), snapshot: () => snapshot, subscribe: listener => { listener(snapshot); return () => undefined; }, onResult: () => () => undefined };
 }
+describe('vision overlay geometry', () => {
+  it('matches the video object-fit contain rectangle instead of stretching landmarks', () => {
+    expect(containVideoViewport(1600, 900, 640, 480)).toEqual({ x: 200, y: 0, width: 1200, height: 900 });
+    expect(containVideoViewport(640, 480, 1920, 1080)).toEqual({ x: 0, y: 60, width: 640, height: 360 });
+  });
+});
 describe('vision permissions', () => {
   it('allows preview but disables sync for non O6 models', async () => {
     render(<VisionMimic vision={vision} capabilities={{ schemaVersion: 1, deviceId: 'x', model: 'L7', hand: 'left', transport: { type: 'can', channel: 'fake' }, jointCount: 7, position: { length: 7, available: true, range: { min: 0, max: 255 } }, speed: { length: 7, available: true, range: { min: 0, max: 255 } }, current: { length: 7, available: true, range: { min: 0, max: 255 } }, torque: { length: 7, available: true, range: { min: 0, max: 255 } }, touch: { length: 7, available: true, range: { min: 0, max: 255 } }, speedCommandLength: 7, currentCommandLength: null, torqueCommandLength: 7, supportedOperations: [] }} locked={false} />);

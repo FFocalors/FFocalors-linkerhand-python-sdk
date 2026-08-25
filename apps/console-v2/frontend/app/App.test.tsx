@@ -70,6 +70,12 @@ describe('console shell', () => {
     await screen.findByRole('heading', { name: '姿态编辑器' });
     const actionSlider = screen.getByRole('slider', { name: '大拇指弯曲 目标' });
     fireEvent.change(actionSlider, { target: { value: '0.42' } });
+    await user.click(screen.getByRole('button', { name: /保存当前姿态/ }));
+    await user.type(screen.getByLabelText('姿态名称'), '调试准备姿态');
+    const savePose = screen.getByRole('button', { name: '保存到自定义姿态' });
+    await waitFor(() => expect(savePose).toBeEnabled());
+    await user.click(savePose);
+    expect(screen.getByText('调试准备姿态')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '设备控制' }));
     const deviceSlider = await screen.findByRole('slider', { name: '大拇指弯曲 目标' });
     await waitFor(() => expect(deviceSlider).toHaveValue('0.42'));

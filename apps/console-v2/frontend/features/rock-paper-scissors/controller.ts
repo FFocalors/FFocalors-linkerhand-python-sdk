@@ -50,11 +50,11 @@ export class RpsGameController {
     this.unsubscribeResults = this.runtime.onResult(result => this.onResult(result));
   }
 
-  async startCamera(): Promise<void> {
+  async startCamera(deviceId?: string): Promise<void> {
     if (this.disposed || !this.video) return;
     const token = this.generation;
     this.startGeneration = token;
-    try { await this.runtime.start(this.video, 'rps'); }
+    try { await this.runtime.start(this.video, 'rps', deviceId); }
     catch (error) { if (this.isCurrent(token)) this.emit({ cameraError: error as RpsState['cameraError'] }); }
     finally {
       if (this.startGeneration === token) {

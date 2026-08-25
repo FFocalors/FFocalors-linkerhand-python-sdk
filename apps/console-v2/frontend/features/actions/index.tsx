@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckSquare, Hand, Hash, ListOrdered, Save } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ListOrdered, Save } from 'lucide-react';
 import type { ActionPort, ActionRecording, DeviceCapabilities, MotionPort, TelemetryPort } from '../../shared/contracts';
 import { Badge, Button, Card, Checkbox, EmptyState, Progress, Select, TextField } from '../../shared/ui';
 import { useI18n } from '../../shared/i18n';
-import { O6_BASIC_ACTIONS, O6_NUMBER_ACTIONS, JointSlider, O6_JOINT_NAMES, type DeviceControlQuickAction } from '../device-control';
+import { O6_BASIC_ACTIONS, O6_NUMBER_ACTIONS, O6_JOINT_NAMES, type DeviceControlQuickAction } from '../../shared/action-models';
+import { JointSlider } from '../../shared/ui/JointSlider';
 import './actions.css';
 
 export type PlaybackMode = 'single' | 'loop';
@@ -95,11 +96,10 @@ const PLAYBACK_SPEEDS: PlaybackSpeed[] = [0.25, 0.5, 0.75, 1];
 const normalizeSpeed = (value: number): PlaybackSpeed => PLAYBACK_SPEEDS.reduce((closest, candidate) => Math.abs(candidate - value) < Math.abs(closest - value) ? candidate : closest, 1 as PlaybackSpeed);
 const normalizePlayback = (options: PlaybackOptions): PlaybackOptions => ({ ...options, speed: normalizeSpeed(options.speed), loopCount: options.mode === 'single' ? 1 : options.loopCount });
 const asPose = (action: DeviceControlQuickAction, source: PosePreset['source']): PosePreset => ({ kind: 'pose', id: action.id, name: action.label, source, positions: action.positions, category: action.category, detail: action.detail });
-const asLegacyProgrammedAction = (recording: ActionRecording): ProgrammedAction => ({ kind: 'sequence', id: recording.id, name: recording.name, source: 'local', poseIds: [], poses: [], playback: defaultPlayback(), frames: recording.frames, durationMs: recording.durationMs, steps: recording.steps, createdAt: recording.updatedAt, updatedAt: recording.updatedAt });
 const legacyOptions = (options: PlaybackOptions) => ({ speed: options.speed, loopCount: options.mode === 'single' ? 1 : options.loopCount, ...(options.direction === 'reverse' ? { direction: 'reverse' as const } : {}) });
 
 export function ActionCenter({
-  actions, motion: _motion, locked, controller, customPresets, localPresets, onLocalPresetsChange, programmedActions, onProgrammedActionsChange, capabilities, telemetry, debugMode, isPhysicalDevice, onVirtualPoseChange,
+  actions: _actions, motion: _motion, locked, controller, customPresets, localPresets, onLocalPresetsChange, programmedActions, onProgrammedActionsChange, capabilities, telemetry, debugMode, isPhysicalDevice, onVirtualPoseChange,
 }: {
   actions: ActionPort;
   motion: MotionPort;
@@ -122,8 +122,6 @@ export function ActionCenter({
   onVirtualPoseChange?: (positions: number[]) => void;
 }) {
   const { t, locale } = useI18n();
-  const [legacyRecordings, setLegacyRecordings] = useState<ActionRecording[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<Tab>('all');
   const [playback, setPlayback] = useState<PlaybackOptions>(defaultPlayback);
@@ -140,14 +138,6 @@ export function ActionCenter({
   const [draftBaseline, setDraftBaseline] = useState<number[]>([]);
   const [draftDirty, setDraftDirty] = useState(false);
   const [previewedPose, setPreviewedPose] = useState<PosePreset>();
-  const [recordingDrafting, setRecordingDrafting] = useState(false);
-  const [recordingName, setRecordingName] = useState('');
-
-  const refreshLegacy = useCallback(async () => {
-    setLoading(true); setError(undefined);
-    try { setLegacyRecordings(await actions.list()); } catch { setError('动作列表暂时不可用，请稍后重试。'); } finally { setLoading(false); }
-  }, [actions]);
-  useEffect(() => { void refreshLegacy(); }, [refreshLegacy]);
   useEffect(() => { if (localPresets !== undefined) setLocalPoseState(localPresets); }, [localPresets]);
   useEffect(() => { if (programmedActions !== undefined) setLocalActionState(programmedActions); }, [programmedActions]);
   useEffect(() => {
@@ -174,8 +164,8 @@ export function ActionCenter({
   }, [telemetry, capabilities, draftDirty]);
 
   useEffect(() => {
-    if (debugMode) onVirtualPoseChange?.([...draftValues]);
-  }, [debugMode, draftValues, onVirtualPoseChange]);
+    if (debugMode && isPhysicalDevice !== true) onVirtualPoseChange?.([...draftValues]);
+  }, [debugMode, draftValues, isPhysicalDevice, onVirtualPoseChange]);
 
   const builtinPoses = useMemo(() => [...O6_BASIC_ACTIONS, ...O6_NUMBER_ACTIONS].map(action => asPose(action, 'builtin')), []);
   const homepagePoses = useMemo(() => (customPresets ?? []).map(action => asPose(action, 'homepage')), [customPresets]);
@@ -186,7 +176,9 @@ export function ActionCenter({
   const poseById = useMemo(() => new Map(allPoses.map(pose => [pose.id, pose])), [allPoses]);
   const controllerReady = Boolean(controller);
   const canExecute = Boolean(debugMode || isPhysicalDevice === true || (debugMode === undefined && isPhysicalDevice === undefined));
-  const physicalSafetyPath = Boolean(isPhysicalDevice === true && !debugMode);
+  // A detected physical hand always wins over debug mode. Debug mode must never
+  // bypass the preview -> apply gate when a real device is connected.
+  const physicalSafetyPath = isPhysicalDevice === true;
   const recording = controllerState.state === 'recording' || controllerState.state === 'recordingPaused';
   const playing = controllerState.state === 'playing' || controllerState.state === 'paused';
   const active = controllerState.actionId ? [...allPoses, ...effectiveActions].find(item => item.id === controllerState.actionId) : undefined;
@@ -208,7 +200,13 @@ export function ActionCenter({
   };
   const togglePose = (id: string) => setSelectedPoseIds(previous => previous.includes(id) ? previous.filter(itemId => itemId !== id) : [...previous, id]);
   const openComposer = () => { setSelectionMode(true); setSelectedPoseIds([]); setComposer({ name: '', order: [], playback: { ...playback } }); };
-  const openComposerDraft = () => { if (selectedPoseIds.length < 1) return; setComposer({ name: '', order: [...selectedPoseIds], playback: { ...playback } }); };
+  const closeComposer = () => { setComposer(null); setSelectionMode(false); setSelectedPoseIds([]); };
+  const addSelectedToComposer = () => setComposer(previous => {
+    if (!previous) return previous;
+    const order = [...previous.order, ...selectedPoseIds.filter(id => !previous.order.includes(id))];
+    setSelectedPoseIds([]);
+    return { ...previous, order };
+  });
   const moveComposerItem = (index: number, delta: -1 | 1) => setComposer(previous => {
     if (!previous) return previous;
     const target = index + delta; if (target < 0 || target >= previous.order.length) return previous;
@@ -237,7 +235,12 @@ export function ActionCenter({
   };
   const updateDraftValue = (index: number, value: number) => {
     setDraftDirty(true);
-    setDraftValues(previous => { const next = [...previous]; next[index] = value; return next; });
+    setDraftValues(previous => {
+      const length = capabilities?.jointCount ?? Math.max(previous.length, index + 1);
+      const next = Array.from({ length }, (_, itemIndex) => previous[itemIndex] ?? sliderValues[itemIndex] ?? 0);
+      next[index] = value;
+      return next;
+    });
   };
   const readCurrentPosition = async () => {
     if (!telemetry || !capabilities) return;
@@ -260,44 +263,52 @@ export function ActionCenter({
     runPose(previewedPose);
     setPreviewedPose(undefined);
   };
-  const startRecording = () => { if (!canExecute || !controller?.startRecording || !recordingName.trim()) return; void invoke(() => controller.startRecording!(recordingName.trim()), '录制未启动，请确认运行时已连接。'); };
-  const cancelRecording = () => { if (!controller?.cancelRecording) return; void invoke(() => controller.cancelRecording!().then(() => setRecordingDrafting(false)), '取消录制失败。'); };
-  const finishRecording = () => { if (!controller?.finishRecording) return; void invoke(() => controller.finishRecording!().then(refreshLegacy), '完成录制失败。'); };
   const visiblePoses = tab === 'builtin' ? builtinPoses : tab === 'custom' ? customPoses : allPoses;
-  const basicBuiltins = builtinPoses.filter(pose => pose.category === 'basic');
-  const numberBuiltins = builtinPoses.filter(pose => pose.category === 'number');
   const showJointSliderCard = Boolean(capabilities && capabilities.jointCount > 0);
-  const editorReady = draftValues.length === (capabilities?.jointCount ?? 0) && draftValues.length > 0;
+  const editorReady = Boolean(capabilities && capabilities.jointCount > 0 && (draftValues.length >= capabilities.jointCount || sliderValues.length >= capabilities.jointCount));
   const builtInName = (pose: PosePreset) => locale === 'en' ? ({ open: 'Open', fist: 'Fist', ok: 'OK', 'thumbs-up': 'Thumbs up', one: 'One', two: 'Two', three: 'Three', four: 'Four', five: 'Five' } as Record<string, string>)[pose.id] ?? pose.name : pose.name;
 
   const requestPose = (pose: PosePreset) => { if (physicalSafetyPath) setPreviewedPose(pose); else runPose(pose); };
-  const renderPoseButton = (pose: PosePreset) => <Button variant="secondary" className="preset-button" key={pose.id} disabled={!controller || locked || !canExecute} onClick={() => requestPose(pose)}>{pose.category === 'number' ? <Hash size={16} /> : <Hand size={16} />}<span>{builtInName(pose)}</span></Button>;
+  const poseSaveReason = !poseName.trim() ? '请输入姿态名称' : !editorReady ? '请先调整关节或读取当前位置' : locked ? '控制已锁定' : undefined;
   const renderPoseRow = (pose: PosePreset) => <div className={`table-row actions-table-row ${selectionMode ? 'loop-mode' : ''}`} key={`${pose.source}:${pose.id}`}>
     {selectionMode && <Checkbox checked={selectedPoseIds.includes(pose.id)} onChange={() => togglePose(pose.id)} aria-label={`${locale === 'en' ? 'Select' : '选择'} ${builtInName(pose)}`} />}
-    <strong>{builtInName(pose)}</strong><span><Badge tone={pose.source === 'builtin' ? 'blue' : pose.source === 'homepage' ? 'amber' : 'green'}>{pose.source === 'builtin' ? (locale === 'en' ? 'Built-in' : '内置') : pose.source === 'homepage' ? (locale === 'en' ? 'Homepage' : '首页') : (locale === 'en' ? 'Action center' : '动作中心')}</Badge></span><span>{locale === 'en' ? 'Static pose' : '静止姿态'}</span><span>{locale === 'en' ? 'Keyframe' : '关键帧'}</span>
+    <strong>{builtInName(pose)}</strong><span><Badge tone={pose.source === 'builtin' ? 'blue' : pose.source === 'homepage' ? 'amber' : 'green'}>{pose.source === 'builtin' ? (locale === 'en' ? 'Built-in' : '内置') : pose.source === 'homepage' ? (locale === 'en' ? 'Homepage' : '首页') : (locale === 'en' ? 'Action center' : '动作中心')}</Badge></span><span>{locale === 'en' ? (pose.category === 'number' ? 'Number preset' : pose.category === 'basic' ? 'Basic preset' : 'Custom pose') : (pose.category === 'number' ? '数字预设' : pose.category === 'basic' ? '基础预设' : '自定义姿态')}</span><span>{locale === 'en' ? 'Keyframe' : '关键帧'}</span>
      <div className="heading-actions"><Button variant="ghost" disabled={locked || !controllerReady || !canExecute || selectionMode} onClick={() => requestPose(pose)}>{physicalSafetyPath ? '预览' : t('common.button.play')}</Button>{pose.source === 'local' && <Button variant="ghost" disabled={locked} onClick={() => removePose(pose)}>{t('common.button.delete')}</Button>}</div>
   </div>;
 
-  return <div className="stack">
-    <div className="page-heading"><div><h1>{t('actions.title')}</h1><p className="muted">{t('actions.subtitle')}</p></div><div className="heading-actions">{selectionMode ? <><Button variant="ghost" onClick={() => { setSelectionMode(false); setSelectedPoseIds([]); setComposer(null); }}>{t('actions.select.cancel')}</Button>{selectedPoseIds.length > 0 && <Button variant="primary" onClick={openComposerDraft}><ListOrdered size={14} />{t('actions.compose')}</Button>}</> : <Button variant="primary" onClick={openComposer}>{t('actions.new')}</Button>}<Button variant="secondary" onClick={() => setRecordingDrafting(true)} disabled={!controllerReady || !canExecute || recording}>{t('actions.record.compatible')}</Button></div></div>
+  return <div className="stack actions-page">
+    <div className="page-heading"><div><h1>{t('actions.title')}</h1><p className="muted">{t('actions.subtitle')}</p></div><div className="heading-actions">{composer ? <Button variant="ghost" onClick={closeComposer}>{t('actions.select.cancel')}</Button> : <Button variant="primary" onClick={openComposer}><ListOrdered size={14} />{t('actions.new')}</Button>}</div></div>
     {debugMode && <Badge tone="amber">{t('common.status.debug')}</Badge>}
-    {showJointSliderCard && <Card className="joint-slider-card">
-      <div className="card-header"><div><h2>姿态编辑器</h2><span className="muted">{capabilities!.jointCount} 个关节 · {debugMode ? '调试草稿不会发送到真实设备' : '先读取当前位置，再预览或应用'}</span></div><div className="heading-actions"><Badge tone={debugMode ? 'blue' : 'amber'}>{debugMode ? '虚拟机械手' : '安全预览'}</Badge><Button variant="ghost" onClick={() => void readCurrentPosition()}>读取当前位置</Button><Button variant="ghost" onClick={resetDraft} disabled={!editorReady}>重置草稿</Button></div></div>
-      {debugMode && <div className="permission-note" role="status">调试模式：滑块与未保存姿态同步虚拟机械手，不会发送真实硬件命令。</div>}
-      {poseDrafting && <div className="settings-row pose-draft"><TextField label="姿态名称" id="pose-name" value={poseName} onChange={event => setPoseName(event.target.value)} placeholder="例如：准备姿态" /><Button variant="ghost" onClick={() => setPoseDrafting(false)}>取消</Button><Button variant="primary" disabled={!poseName.trim() || !editorReady} onClick={savePose}>保存到动作中心</Button></div>}
-      <div className="joint-slider-grid">{Array.from({ length: capabilities!.jointCount }, (_, index) => <div className="joint-slider-item" key={index}><JointSlider index={index} label={O6_JOINT_NAMES[index]} value={draftValues[index] ?? sliderValues[index] ?? 0} disabled={!debugMode || locked} onBegin={() => undefined} onInput={updateDraftValue} onFinish={() => undefined} /><span className="visually-hidden">{Math.round((draftValues[index] ?? sliderValues[index] ?? 0) * 100)}%</span></div>)}</div>
-      <div className="heading-actions pose-editor-actions"><Button variant="ghost" disabled={!editorReady || locked || !canExecute} onClick={previewDraft}>预览当前姿态</Button>{previewedPose && <><span className="muted">已预览：{previewedPose.name}</span><Button variant="primary" disabled={!physicalSafetyPath || locked || !canExecute} onClick={applyPreview}>应用到设备</Button></>}</div>
-      <div className="heading-actions"><Button variant="ghost" onClick={() => setPoseDrafting(true)}><Save size={14} />保存当前姿态为自定义姿态</Button></div>
-    </Card>}
-    {previewedPose && !showJointSliderCard && <Card className="pose-preview-card"><div className="card-header"><div><h2>姿态预览</h2><span className="muted">{previewedPose.name} 尚未发送到设备。</span></div><Button variant="primary" disabled={!physicalSafetyPath || locked} onClick={applyPreview}>应用到设备</Button></div></Card>}
     {!controllerReady && <div className="permission-note" role="status">{t('actions.controllerMissing')}</div>}
     {controllerReady && !canExecute && <div className="permission-note" role="status">未连接真实机械手：请先连接设备，或在设置中启用调试模式。</div>}
-    {composer && <Card className="composer-card"><div className="card-header"><div><h2>编排动作</h2><span className="muted">候选仅包含静止姿态，按选择顺序形成 ProgrammedAction。</span></div><Button variant="ghost" onClick={() => setComposer(null)}>关闭</Button></div><div className="settings-row"><TextField label="动作名称" id="action-name" value={composer.name} onChange={event => setComposer(previous => previous ? { ...previous, name: event.target.value } : null)} placeholder="例如：迎宾动作" /></div><div className="loop-order-section"><div className="card-header"><span className="muted">关键帧顺序（{composer.order.length} 项）</span><Button variant="ghost" disabled={!composer.order.length} onClick={() => setComposer(previous => previous ? { ...previous, order: [] } : null)}>清空</Button></div>{composer.order.map((id, index) => { const pose = poseById.get(id); return <div className="loop-order-item" key={`${id}-${index}`}><span>{index + 1}. {pose?.name ?? id}</span><div className="heading-actions"><Button variant="ghost" aria-label={`上移 ${pose?.name ?? id}`} disabled={index === 0} onClick={() => moveComposerItem(index, -1)}>↑</Button><Button variant="ghost" aria-label={`下移 ${pose?.name ?? id}`} disabled={index === composer.order.length - 1} onClick={() => moveComposerItem(index, 1)}>↓</Button><Button variant="ghost" onClick={() => setComposer(previous => previous ? { ...previous, order: previous.order.filter((_, itemIndex) => itemIndex !== index) } : null)}>移除</Button></div></div>; })}</div><div className="settings-row"><Select label="播放模式" id="composer-mode" value={composer.playback.mode} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, mode: event.target.value as PlaybackMode } } : null)}><option value="single">单次</option><option value="loop">循环</option></Select><Select label="倍速" id="composer-speed" value={composer.playback.speed} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, speed: normalizeSpeed(Number(event.target.value)) } } : null)}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option></Select><Select label="方向" id="composer-direction" value={composer.playback.direction} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, direction: event.target.value as PlaybackDirection } } : null)}><option value="forward">正放</option><option value="reverse">倒放</option></Select>{composer.playback.mode === 'loop' && <Select label="循环次数" id="composer-loops" value={composer.playback.loopCount === null ? '0' : String(composer.playback.loopCount)} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, loopCount: event.target.value === '0' ? null : Number(event.target.value) } } : null)}><option value="1">1 次</option><option value="3">3 次</option><option value="5">5 次</option><option value="10">10 次</option><option value="0">无限</option></Select>}</div><div className="heading-actions" style={{ justifyContent: 'flex-end' }}><Button variant="ghost" onClick={() => setComposer(null)}>取消</Button><Button variant="primary" disabled={!composer.name.trim() || composer.order.length === 0} onClick={saveProgrammedAction}>保存动作</Button></div></Card>}
-    {playing && <Card><div className="card-header"><div><h2>正在播放：{active?.name ?? controllerState.actionId ?? '动作'}</h2><span className="muted">{playback.direction === 'reverse' ? '倒放' : '正放'} · {playback.speed.toFixed(2)}× · {playback.mode === 'single' ? '单次' : playback.loopCount === null ? '无限循环' : `${playback.loopCount} 次循环`}</span></div><div className="heading-actions"><Badge tone={controllerState.state === 'paused' ? 'amber' : 'blue'}>{controllerState.state === 'paused' ? '已暂停' : '运行中'}</Badge><Button variant="ghost" onClick={() => void invoke(() => controller?.stop ? controller.stop() : Promise.reject(new Error('stop unavailable')), '停止失败。')}>停止</Button></div></div><Progress value={controllerState.progress} /><span className="muted">{Math.round(controllerState.progress)}% · {controllerState.detail ?? '等待运行时状态'}</span></Card>}
-    <Card><div className="card-header"><div><div className="heading-actions"><Button variant={tab === 'all' ? 'secondary' : 'ghost'} onClick={() => setTab('all')}>{t('actions.tabs.all')}</Button><Button variant={tab === 'builtin' ? 'secondary' : 'ghost'} onClick={() => setTab('builtin')}>{t('actions.tabs.builtin')}</Button><Button variant={tab === 'custom' ? 'secondary' : 'ghost'} onClick={() => setTab('custom')}>{t('actions.tabs.custom')}</Button></div><span className="muted">{t('actions.tabs.summary')}</span></div><div className="heading-actions"><Select label={t('common.label.speed')} id="speed" value={playback.speed} onChange={event => setPlayback(previous => ({ ...previous, speed: normalizeSpeed(Number(event.target.value)) }))} disabled={!controllerReady}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option></Select><Select label={t('common.label.direction')} id="direction" value={playback.direction} onChange={event => setPlayback(previous => ({ ...previous, direction: event.target.value as PlaybackDirection }))} disabled={!controllerReady}><option value="forward">{t('common.label.forward')}</option><option value="reverse">{t('common.label.reverse')}</option></Select><Select label={locale === 'en' ? 'Playback mode' : '播放模式'} id="playback-mode" value={playback.mode} onChange={event => setPlayback(previous => ({ ...previous, mode: event.target.value as PlaybackMode }))} disabled={!controllerReady}><option value="single">{t('common.label.single')}</option><option value="loop">{t('common.label.loop')}</option></Select></div></div>{tab === 'builtin' ? <div><div className="preset-section"><strong>{t('actions.tabs.builtin')}</strong><div className="preset-grid preset-grid-basic">{basicBuiltins.map(renderPoseButton)}</div></div><div className="preset-section"><strong>{locale === 'en' ? 'Number presets' : '数字预设'}</strong><div className="preset-grid preset-grid-number">{numberBuiltins.map(renderPoseButton)}</div></div></div> : loading ? <div className="empty"><span>{t('common.status.loading')}</span></div> : error ? <div className="permission-note" role="alert">{error}</div> : visiblePoses.length === 0 ? <EmptyState title={t('actions.empty.title')} detail={t('actions.empty.detail')} /> : <><div className={`table-head actions-table-head ${selectionMode ? 'loop-mode' : ''}`}>{selectionMode && <span>{locale === 'en' ? 'Select' : '选择'}</span>}<span>{locale === 'en' ? 'Name' : '名称'}</span><span>{locale === 'en' ? 'Source' : '来源'}</span><span>{locale === 'en' ? 'Type' : '类型'}</span><span>{locale === 'en' ? 'Duration' : '时长'}</span><span /></div>{visiblePoses.map(renderPoseRow)}</>}</Card>
-    {effectiveActions.length > 0 && <Card className="programmed-actions-card"><div className="card-header"><div><h2>动作</h2><span className="muted">已编排的 ProgrammedAction；不作为姿态候选。</span></div></div>{effectiveActions.map(action => <div className="table-row sequence-row" key={action.id}><strong>{action.name}</strong><span>{action.poseIds.length || action.steps || action.frames?.length || 0} 个姿态</span><span>{action.playback.mode === 'single' ? '单次' : action.playback.loopCount === null ? '无限循环' : `${action.playback.loopCount} 次循环`}</span><span>{action.playback.direction === 'reverse' ? '倒放' : '正放'} · {action.playback.speed}×</span><div className="heading-actions"><Button variant="ghost" className="button button-ghost" disabled={!controllerReady || !canExecute || locked} onClick={() => runProgrammedAction(action)}>播放</Button><Button variant="ghost" className="button button-ghost" disabled={locked} onClick={() => removeProgrammedAction(action)}>删除</Button></div></div>)}</Card>}
-    {legacyRecordings.length > 0 && <Card className="legacy-actions-card"><details><summary className="card-header"><div><h2>录制兼容区</h2><span className="muted">旧版 ActionRecording 仅用于兼容回放，不参与姿态编排。</span></div><span className="button button-ghost">展开</span></summary><div className="heading-actions" style={{ justifyContent: 'flex-end', marginTop: 8 }}><Button variant="ghost" onClick={() => setRecordingDrafting(true)} disabled={!controllerReady || recording}>录制</Button></div>{legacyRecordings.map(recording => <div className="table-row sequence-row" key={recording.id}><strong>{recording.name}</strong><span>{recording.steps} 帧</span><span>{(recording.durationMs / 1000).toFixed(1)} 秒</span><div className="heading-actions"><Button variant="ghost" disabled={!controllerReady || locked || !controller?.play} onClick={() => void invoke(() => controller!.play!(recording.id, legacyOptions(playback)), '兼容动作播放失败。')}>播放</Button></div></div>)}</details></Card>}
-    {recordingDrafting && <Card><div className="card-header"><div><h2>录制兼容动作</h2><span className="muted">录制结果仅进入兼容区，不会成为姿态候选。</span></div></div><div className="settings-row"><TextField label="动作名称" id="recording-name" value={recordingName} onChange={event => setRecordingName(event.target.value)} /><Button variant="ghost" onClick={() => setRecordingDrafting(false)}>取消</Button><Button variant="primary" disabled={!recordingName.trim() || !controller?.startRecording} onClick={startRecording}>开始录制</Button>{recording && <><Button variant="ghost" onClick={cancelRecording}>取消录制</Button><Button variant="primary" onClick={finishRecording}>完成录制</Button></>}</div></Card>}
-    <Card className="tip-card"><Badge>操作提示</Badge><span>动作中心本地姿态和动作通过受控 props/onChange 保持；首页姿态始终只读单向同步。</span></Card>
+    {error && <div className="permission-note" role="alert">{error}</div>}
+    <div className="actions-scroll-region">
+    <div className="actions-workspace">
+      <section className="actions-pane actions-pane-left" aria-label="姿态管理">
+        {showJointSliderCard && <Card className="joint-slider-card">
+          <div className="card-header"><div><h2>姿态编辑器</h2><span className="muted">{capabilities!.jointCount} 个关节 · {isPhysicalDevice === true ? '真机优先：必须预览后再应用' : debugMode ? '无真机时使用虚拟机械手调试' : '先读取当前位置，再预览或应用'}</span></div><div className="heading-actions"><Badge tone={isPhysicalDevice === true ? 'amber' : debugMode ? 'blue' : 'amber'}>{isPhysicalDevice === true ? '真机安全预览' : debugMode ? '虚拟机械手' : '安全预览'}</Badge><Button variant="ghost" onClick={() => void readCurrentPosition()}>读取当前位置</Button><Button variant="ghost" onClick={resetDraft} disabled={!editorReady}>重置草稿</Button></div></div>
+          {debugMode && <div className="permission-note" role="status">{isPhysicalDevice === true ? '已检测到真实机械手：真机优先，调试模式不会绕过预览→应用安全门槛。' : '无真实机械手：调试滑块与未保存姿态同步虚拟机械手，不会发送真实硬件命令。'}</div>}
+          {poseDrafting && <div className="settings-row pose-draft"><TextField label="姿态名称" id="pose-name" value={poseName} onChange={event => setPoseName(event.target.value)} placeholder="例如：准备姿态" /><Button variant="ghost" onClick={() => setPoseDrafting(false)}>取消</Button><Button variant="primary" disabled={Boolean(poseSaveReason)} onClick={savePose}>保存到自定义姿态</Button>{poseSaveReason && <span className="muted pose-save-reason" role="status">{poseSaveReason}</span>}</div>}
+          <div className="joint-slider-grid">{Array.from({ length: capabilities!.jointCount }, (_, index) => <div className="joint-slider-item" key={index}><JointSlider index={index} label={O6_JOINT_NAMES[index]} value={draftValues[index] ?? sliderValues[index] ?? 0} disabled={!debugMode || locked} onBegin={() => undefined} onInput={updateDraftValue} onFinish={() => undefined} /><span className="visually-hidden">{Math.round((draftValues[index] ?? sliderValues[index] ?? 0) * 100)}%</span></div>)}</div>
+          <div className="heading-actions pose-editor-actions"><Button variant="ghost" disabled={!editorReady || locked || !canExecute} onClick={previewDraft}>预览当前姿态</Button>{previewedPose && <><span className="muted">已预览：{previewedPose.name}</span><Button variant="primary" disabled={!physicalSafetyPath || locked || !canExecute} onClick={applyPreview}>应用到设备</Button></>}</div>
+          <div className="heading-actions"><Button variant="ghost" onClick={() => setPoseDrafting(true)}><Save size={14} />保存当前姿态为自定义姿态</Button></div>
+        </Card>}
+        {previewedPose && !showJointSliderCard && <Card className="pose-preview-card"><div className="card-header"><div><h2>姿态预览</h2><span className="muted">{previewedPose.name} 尚未发送到设备。</span></div><Button variant="primary" disabled={!physicalSafetyPath || locked} onClick={applyPreview}>应用到设备</Button></div></Card>}
+        <Card className="pose-library-card"><div className="card-header"><div><h2>姿态库</h2><span className="muted">先选择姿态，再添加到右侧动作序列。首页姿态只读。</span></div>{composer && <Button variant="primary" disabled={selectedPoseIds.length === 0} onClick={addSelectedToComposer}>添加到动作{selectedPoseIds.length ? `（${selectedPoseIds.length}）` : ''}</Button>}</div>
+          <div className="heading-actions pose-tabs"><Button variant={tab === 'all' ? 'secondary' : 'ghost'} onClick={() => setTab('all')}>{t('actions.tabs.all')}</Button><Button variant={tab === 'builtin' ? 'secondary' : 'ghost'} onClick={() => setTab('builtin')}>{t('actions.tabs.builtin')}</Button><Button variant={tab === 'custom' ? 'secondary' : 'ghost'} onClick={() => setTab('custom')}>{t('actions.tabs.custom')}</Button></div>
+          <span className="muted">{t('actions.tabs.summary')}</span>
+          {visiblePoses.length === 0 ? <EmptyState title={t('actions.empty.title')} detail={t('actions.empty.detail')} /> : <><div className={`table-head actions-table-head ${selectionMode ? 'loop-mode' : ''}`}>{selectionMode && <span>选择</span>}<span>名称</span><span>来源</span><span>类型</span><span>时长</span><span /></div>{visiblePoses.map(renderPoseRow)}</>}
+        </Card>
+      </section>
+      <section className="actions-pane actions-pane-right" aria-label="动作编辑">
+        <Card className="composer-card action-editor-card"><div className="card-header"><div><h2>动作编辑</h2><span className="muted">从左侧姿态库添加关键帧，然后设置播放顺序与方式。</span></div>{!composer && <Button variant="primary" onClick={openComposer}>从姿态库创建</Button>}</div>
+          {!composer ? <EmptyState title="尚未编辑动作" detail="点击“新建动作”，再从左侧姿态库添加姿态。" /> : <><div className="settings-row"><TextField label="动作名称" id="action-name" value={composer.name} onChange={event => setComposer(previous => previous ? { ...previous, name: event.target.value } : null)} placeholder="例如：迎宾动作" /></div><div className="loop-order-section"><div className="card-header"><span className="muted">关键帧顺序（{composer.order.length} 项）</span><Button variant="ghost" disabled={!composer.order.length} onClick={() => setComposer(previous => previous ? { ...previous, order: [] } : null)}>清空</Button></div>{composer.order.length === 0 && <span className="muted">请在左侧勾选姿态并点击“添加到动作”。</span>}{composer.order.map((id, index) => { const pose = poseById.get(id); return <div className="loop-order-item" key={`${id}-${index}`}><span>{index + 1}. {pose?.name ?? id}</span><div className="heading-actions"><Button variant="ghost" aria-label={`上移 ${pose?.name ?? id}`} disabled={index === 0} onClick={() => moveComposerItem(index, -1)}>↑</Button><Button variant="ghost" aria-label={`下移 ${pose?.name ?? id}`} disabled={index === composer.order.length - 1} onClick={() => moveComposerItem(index, 1)}>↓</Button><Button variant="ghost" onClick={() => setComposer(previous => previous ? { ...previous, order: previous.order.filter((_, itemIndex) => itemIndex !== index) } : null)}>移除</Button></div></div>; })}</div><div className="settings-row"><Select label="播放模式" id="composer-mode" value={composer.playback.mode} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, mode: event.target.value as PlaybackMode } } : null)}><option value="single">单次</option><option value="loop">循环</option></Select><Select label="倍速" id="composer-speed" value={composer.playback.speed} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, speed: normalizeSpeed(Number(event.target.value)) } } : null)}><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1">1×</option></Select><Select label="方向" id="composer-direction" value={composer.playback.direction} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, direction: event.target.value as PlaybackDirection } } : null)}><option value="forward">正放</option><option value="reverse">倒放</option></Select>{composer.playback.mode === 'loop' && <Select label="循环次数" id="composer-loops" value={composer.playback.loopCount === null ? '0' : String(composer.playback.loopCount)} onChange={event => setComposer(previous => previous ? { ...previous, playback: { ...previous.playback, loopCount: event.target.value === '0' ? null : Number(event.target.value) } } : null)}><option value="1">1 次</option><option value="3">3 次</option><option value="5">5 次</option><option value="10">10 次</option><option value="0">无限</option></Select>}</div><div className="heading-actions action-editor-footer"><Button variant="ghost" onClick={closeComposer}>取消</Button><Button variant="primary" disabled={!composer.name.trim() || composer.order.length === 0} onClick={saveProgrammedAction}>保存动作</Button><span className="muted">{!composer.name.trim() ? '请输入动作名称' : composer.order.length === 0 ? '至少添加一个姿态' : '动作已就绪，可保存'}</span></div></>}
+        </Card>
+        {playing && <Card><div className="card-header"><div><h2>正在播放：{active?.name ?? controllerState.actionId ?? '动作'}</h2><span className="muted">{playback.direction === 'reverse' ? '倒放' : '正放'} · {playback.speed.toFixed(2)}× · {playback.mode === 'single' ? '单次' : playback.loopCount === null ? '无限循环' : `${playback.loopCount} 次循环`}</span></div><div className="heading-actions"><Badge tone={controllerState.state === 'paused' ? 'amber' : 'blue'}>{controllerState.state === 'paused' ? '已暂停' : '运行中'}</Badge><Button variant="ghost" onClick={() => void invoke(() => controller?.stop ? controller.stop() : Promise.reject(new Error('stop unavailable')), '停止失败。')}>停止</Button></div></div><Progress value={controllerState.progress} /><span className="muted">{Math.round(controllerState.progress)}% · {controllerState.detail ?? '等待运行时状态'}</span></Card>}
+        <Card className="programmed-actions-card"><div className="card-header"><div><h2>已保存动作</h2><span className="muted">动作由多个姿态组成，可单独播放或删除。</span></div></div>{effectiveActions.length === 0 ? <EmptyState title="暂无自定义动作" detail="从左侧选择姿态并保存一个动作。" /> : effectiveActions.map(action => <div className="table-row sequence-row" key={action.id}><strong>{action.name}</strong><span>{action.poseIds.length || action.steps || action.frames?.length || 0} 个姿态</span><span>{action.playback.mode === 'single' ? '单次' : action.playback.loopCount === null ? '无限循环' : `${action.playback.loopCount} 次循环`}</span><span>{action.playback.direction === 'reverse' ? '倒放' : '正放'} · {action.playback.speed}×</span><div className="heading-actions"><Button variant="ghost" className="button button-ghost" disabled={!controllerReady || !canExecute || locked} onClick={() => runProgrammedAction(action)}>播放</Button><Button variant="ghost" className="button button-ghost" disabled={locked} onClick={() => removeProgrammedAction(action)}>删除</Button></div></div>)}</Card>
+      </section>
+    </div>
+    <Card className="tip-card"><Badge>操作提示</Badge><span>先在左侧编辑或选择姿态，再添加到右侧动作序列。动作中心本地姿态和动作通过受控 props/onChange 保持；旧版录制运行时接口仍保留，但不再在此页面展示。</span></Card>
+    </div>
   </div>;
 }

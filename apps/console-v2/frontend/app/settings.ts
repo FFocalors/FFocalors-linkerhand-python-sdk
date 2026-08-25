@@ -1,14 +1,17 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import type { CameraPermissionStatus, DeviceConfig, ConnectionSnapshot, LogLevel } from '../shared/contracts';
-import type { SettingsController, SettingsDraft, SettingsSnapshot, SettingsSaveResult, SidecarCheckResult, OfflineAssetsCheckResult, CameraDevice, CameraPermission, ThemePort, ThemePreference, ConnectionStateInfo, FirmwareVersion } from '../features/settings';
+import type { CameraDevice, CameraPermissionStatus, DeviceConfig, ConnectionSnapshot, LogLevel } from '../shared/contracts';
+import type { SettingsController, SettingsDraft, SettingsSnapshot, SettingsSaveResult, SidecarCheckResult, OfflineAssetsCheckResult, CameraListResult, CameraPermission, ThemePort, ThemePreference, ConnectionStateInfo, FirmwareVersion } from '../features/settings';
 import type { ConsolePorts } from '../shared/contracts';
 import { visionAssetUrl } from '../shared/vision-runtime/asset-paths';
-import { validateSettingsDraft } from './settings-validation';
+import { enumerateCameraDevices } from '../shared/vision-runtime/cameras';
+import { validateSettingsDraft } from '../shared/contracts/settings';
 
 const CONFIG_KEY = 'linkerhand-console-v2-config';
 const THEME_KEY = 'linkerhand-console-v2-theme';
 const CAMERA_KEY = 'linkerhand-console-v2-camera-device-id';
 const DEBUG_KEY = 'linkerhand-console-v2-debug-mode';
+const CAMERA_ENUMERATION_TIMEOUT_MS = 800;
+const CAMERA_PERMISSION_TIMEOUT_MS = 1200;
 const readStored = (): Partial<DeviceConfig> | null => {
   try { const value = localStorage.getItem(CONFIG_KEY); return value ? JSON.parse(value) as Partial<DeviceConfig> : null; } catch { return null; }
 };
@@ -25,10 +28,85 @@ export function classifyCameraError(error: unknown): CameraPermission {
   return error ? 'error' : 'granted';
 }
 
+/** Keep WebView permission prompts from blocking the settings page forever. */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, onLateValue?: (value: T) => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => { settled = true; reject(new Error('camera operation timed out')); }, timeoutMs);
+    promise.then(value => {
+      if (settled) { onLateValue?.(value); return; }
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }, error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+  });
+}
+
 export function createSettingsController(runtime: ConsolePorts, simulator: boolean): SettingsController {
   const listeners = new Set<(snapshot: SettingsSnapshot) => void>();
   let current: SettingsSnapshot | undefined;
+  let cameraRefreshGeneration = 0;
+  let cameraListInFlight: Promise<CameraListResult> | null = null;
   const emit = (snapshot: SettingsSnapshot) => { current = snapshot; listeners.forEach(listener => listener(snapshot)); };
+  const emitCameraSnapshot = (generation: number, cameras: CameraDevice[], permission: CameraPermission) => {
+    if (generation !== cameraRefreshGeneration || !current) return;
+    emit({ ...current, cameras, cameraPermission: permission });
+  };
+  const enrichCameras = async (generation: number, initial: CameraDevice[]): Promise<void> => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      emitCameraSnapshot(generation, initial, initial.length ? 'prompt' : 'no-device');
+      return;
+    }
+    let permission: CameraPermission = 'prompt';
+    let permissionGranted = false;
+    try {
+      const stream = await withTimeout(navigator.mediaDevices.getUserMedia({ video: true, audio: false }), CAMERA_PERMISSION_TIMEOUT_MS, value => value.getTracks().forEach(track => track.stop()));
+      stream.getTracks().forEach(track => track.stop());
+      permission = 'granted';
+      permissionGranted = true;
+    } catch (error) {
+      permission = error instanceof Error && error.message === 'camera operation timed out' ? 'prompt' : classifyCameraError(error);
+    }
+    if (!permissionGranted) {
+      emitCameraSnapshot(generation, initial, permission);
+      return;
+    }
+    const cameras = await withTimeout(enumerateCameraDevices(navigator.mediaDevices), CAMERA_ENUMERATION_TIMEOUT_MS).catch(() => initial);
+    emitCameraSnapshot(generation, cameras, cameras.length ? 'granted' : 'no-device');
+  };
+  const listCameras = (): Promise<CameraListResult> => {
+    if (cameraListInFlight) return cameraListInFlight;
+    const generation = ++cameraRefreshGeneration;
+    const request = (async (): Promise<CameraListResult> => {
+      if (!navigator.mediaDevices?.enumerateDevices) return { cameras: [], permission: 'error', detail: '当前 WebView 不支持媒体设备 API' };
+      try {
+        // Device IDs are useful even before permission grants labels. Return
+        // that first snapshot immediately; a permission prompt must never
+        // hold the refresh button hostage when cameras already exist.
+        const initial = await withTimeout(enumerateCameraDevices(navigator.mediaDevices), CAMERA_ENUMERATION_TIMEOUT_MS);
+        const cameras = initial as CameraDevice[];
+        const needsPermissionDiscovery = cameras.length === 0 || cameras.some(camera => camera.label.startsWith('摄像头 '));
+        const initialPermission: CameraPermission = cameras.length > 0 && !needsPermissionDiscovery ? 'granted' : cameras.length > 0 ? 'prompt' : 'unknown';
+        // Return the first enumeration quickly. If labels are missing (or no
+        // device was exposed before permission), enrich it asynchronously and
+        // publish a camera-only snapshot when the bounded probe completes.
+        if (needsPermissionDiscovery) void enrichCameras(generation, cameras);
+        return { cameras, permission: initialPermission };
+      } catch (error) {
+        const permission = classifyCameraError(error);
+        return { cameras: [], permission: permission === 'granted' ? 'error' : permission, detail: error instanceof Error ? error.message : String(error) };
+      }
+    })();
+    cameraListInFlight = request;
+    const clear = () => { if (cameraListInFlight === request) cameraListInFlight = null; };
+    void request.then(clear, clear);
+    return request;
+  };
   return {
     async load() {
       const base = await runtime.device.getConfig();
@@ -69,21 +147,7 @@ export function createSettingsController(runtime: ConsolePorts, simulator: boole
       const results = await Promise.all(resources.map(async resource => { try { const response = await fetch(resource, { method: 'HEAD', cache: 'no-store' }); return response.ok; } catch { return false; } }));
       return results.every(Boolean) ? { ok: true, message: '离线视觉模型与 WASM 资源可用' } : { ok: false, message: '离线视觉资源缺失或不可读', detail: resources.filter((_, index) => !results[index]).join(', ') };
     },
-    async listCameras() {
-      if (!navigator.mediaDevices?.enumerateDevices) return { cameras: [], permission: 'error' as const, detail: '当前 WebView 不支持媒体设备 API' };
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        let permission: CameraPermission = devices.some(device => device.kind === 'videoinput' && device.label) ? 'granted' : 'prompt';
-        let detail: string | undefined;
-        if (permission !== 'granted' && navigator.mediaDevices.getUserMedia) {
-          try { const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); stream.getTracks().forEach(track => track.stop()); permission = 'granted'; }
-          catch (error) { permission = classifyCameraError(error); detail = error instanceof Error ? error.name : String(error); }
-        }
-        const cameras: CameraDevice[] = (await navigator.mediaDevices.enumerateDevices()).filter(device => device.kind === 'videoinput').map(device => ({ deviceId: device.deviceId, label: device.label || '未命名摄像头', kind: device.kind }));
-        if (cameras.length === 0 && permission === 'granted') permission = 'no-device';
-        return { cameras, permission, detail };
-      } catch (error) { return { cameras: [], permission: classifyCameraError(error) === 'granted' ? 'error' : classifyCameraError(error), detail: error instanceof Error ? error.message : String(error) }; }
-    },
+    listCameras,
     async getCameraPermission(): Promise<CameraPermissionStatus> {
       if (simulator || !isTauri()) return { state: 'default' };
       return invoke<CameraPermissionStatus>('camera_permission_status');

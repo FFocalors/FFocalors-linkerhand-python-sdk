@@ -25,7 +25,10 @@
 }
 
 .device-control-page .joint-target-card {
-  overflow: visible;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .device-control-page .joint-target-card .joint-list-single {
@@ -44,11 +47,12 @@
   height: 18px;
 }
 
-/* A 1366x768 viewport has enough room for all six O6 rows when the target
-   card stays a single column. Keep the card itself out of scroll mode. */
+/* Keep long, precise tracks while allowing every joint and the diagnostic
+   disclosure to remain reachable inside the card at the minimum viewport. */
 @media (min-width: 1200px) and (max-height: 820px) {
   .device-control-page .joint-target-card {
     padding: 11px 12px;
+    overflow-y: auto;
   }
 
   .device-control-page .joint-target-card .joint-list-single {
@@ -60,6 +64,39 @@
     min-height: 32px;
     gap: 9px;
   }
+}
+
+.device-control-page .capability-value {
+  display: block;
+  margin: 8px 0;
+  color: var(--color-numeric);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.device-control-page .capability-value small {
+  margin-left: 3px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.device-control-page .button-preset-basic {
+  color: var(--blue);
+  background: var(--blue-soft);
+  border-color: color-mix(in srgb, var(--blue) 42%, var(--line));
+}
+
+.device-control-page .button-preset-number {
+  color: var(--preset-number);
+  background: color-mix(in srgb, var(--preset-number) 16%, var(--surface));
+  border-color: color-mix(in srgb, var(--preset-number) 48%, var(--line));
+}
+
+.device-control-page .button-preset-custom {
+  color: var(--purple);
+  background: var(--purple-soft);
+  border-color: color-mix(in srgb, var(--purple) 42%, var(--line));
 }
 
 @media (max-width: 1100px) {

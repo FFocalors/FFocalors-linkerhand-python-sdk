@@ -1,4 +1,5 @@
 export * from './generated';
+export * from './settings';
 import type { ActionRecording, AppError, ConnectionSnapshot, DeviceCapabilities, DeviceConfig, GraspPreset, JointTargetCommand, OperationSnapshot, StructuredLogEntry, TelemetrySnapshot, VisionPoseProposal } from './generated';
 
 export interface DevicePort {

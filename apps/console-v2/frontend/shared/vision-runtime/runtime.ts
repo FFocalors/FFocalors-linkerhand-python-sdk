@@ -9,7 +9,13 @@ type VideoWithFrameCallback = HTMLVideoElement & { requestVideoFrameCallback?: (
 type RuntimeListener = (snapshot: VisionRuntimeSnapshot) => void;
 type ResultListener = (result: VisionLandmarkResult) => void;
 
-const defaultOptions: Required<VisionRuntimeOptions> = { modelAssetUrl: visionAssetUrl('vision/hand_landmarker.task'), wasmRootUrl: normalizeVisionAssetRootUrl(visionAssetUrl('vision/wasm')), numHands: 2, minHandDetectionConfidence: .5, minHandPresenceConfidence: .5, minTrackingConfidence: .5 };
+export const VISION_INFERENCE_MAX_WIDTH = 640;
+export const VISION_INFERENCE_MAX_HEIGHT = 480;
+
+// The legacy implementation used one hand at 640x480 with the lightweight
+// tracker. Mirroring those limits avoids spending most of a frame copying and
+// inferring a 1080p camera image that the landmark model downsamples anyway.
+const defaultOptions: Required<VisionRuntimeOptions> = { modelAssetUrl: visionAssetUrl('vision/hand_landmarker.task'), wasmRootUrl: normalizeVisionAssetRootUrl(visionAssetUrl('vision/wasm')), numHands: 1, minHandDetectionConfidence: .5, minHandPresenceConfidence: .5, minTrackingConfidence: .5 };
 
 export class VisionRuntime {
   private readonly options: Required<VisionRuntimeOptions>;
@@ -157,7 +163,8 @@ export class VisionRuntime {
   private async requestCamera(deviceId?: string): Promise<MediaStream> {
     if (!this.mediaDevices?.getUserMedia) throw new VisionRuntimeError('CAMERA_UNAVAILABLE', '浏览器不支持摄像头输入', false);
     try {
-      const stream = await this.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: 'user' }, audio: false });
+      const preferredSize = { width: { ideal: VISION_INFERENCE_MAX_WIDTH }, height: { ideal: VISION_INFERENCE_MAX_HEIGHT }, frameRate: { ideal: 30, max: 30 } };
+      const stream = await this.mediaDevices.getUserMedia({ video: deviceId ? { deviceId: { exact: deviceId }, ...preferredSize } : { facingMode: 'user', ...preferredSize }, audio: false });
       stream.getVideoTracks().forEach(track => track.addEventListener('ended', () => this.handleTrackEnded(track)));
       return stream;
     }
@@ -174,7 +181,7 @@ export class VisionRuntime {
 
   private async captureFrame(timestamp: number, generation: number): Promise<void> {
     if (!this.isCurrent(generation) || this.state !== 'running' || !this.video) return;
-    if (!this.gate.tryAcquire()) { this.scheduleFrame(); this.emit(); return; }
+    if (!this.gate.tryAcquire()) { this.scheduleFrame(); return; }
     const sequence = ++this.frameSequence;
     const current = this.now();
     this.fps = this.lastFrameTime === null || current <= this.lastFrameTime ? this.fps : 1000 / (current - this.lastFrameTime);
@@ -191,8 +198,15 @@ export class VisionRuntime {
   }
 
   private async captureBitmap(video: HTMLVideoElement): Promise<ImageBitmap> {
-    if (typeof createImageBitmap === 'function') return createImageBitmap(video);
-    if (typeof OffscreenCanvas !== 'undefined') { const canvas = new OffscreenCanvas(video.videoWidth || 640, video.videoHeight || 480); const context = canvas.getContext('2d'); if (!context) throw new VisionRuntimeError('CAMERA_UNAVAILABLE', '无法创建视频帧画布'); context.drawImage(video, 0, 0); return canvas.transferToImageBitmap(); }
+    const sourceWidth = Math.max(1, video.videoWidth || VISION_INFERENCE_MAX_WIDTH);
+    const sourceHeight = Math.max(1, video.videoHeight || VISION_INFERENCE_MAX_HEIGHT);
+    const scale = Math.min(1, VISION_INFERENCE_MAX_WIDTH / sourceWidth, VISION_INFERENCE_MAX_HEIGHT / sourceHeight);
+    const targetWidth = Math.max(1, Math.round(sourceWidth * scale));
+    const targetHeight = Math.max(1, Math.round(sourceHeight * scale));
+    if (typeof createImageBitmap === 'function') {
+      return createImageBitmap(video, 0, 0, sourceWidth, sourceHeight, { resizeWidth: targetWidth, resizeHeight: targetHeight, resizeQuality: 'low' });
+    }
+    if (typeof OffscreenCanvas !== 'undefined') { const canvas = new OffscreenCanvas(targetWidth, targetHeight); const context = canvas.getContext('2d'); if (!context) throw new VisionRuntimeError('CAMERA_UNAVAILABLE', '无法创建视频帧画布'); context.drawImage(video, 0, 0, targetWidth, targetHeight); return canvas.transferToImageBitmap(); }
     throw new VisionRuntimeError('CAMERA_UNAVAILABLE', '浏览器不支持 ImageBitmap');
   }
 

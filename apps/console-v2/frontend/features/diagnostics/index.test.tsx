@@ -33,9 +33,10 @@ describe('diagnostics feature', () => {
     expect(context.stroke).toHaveBeenCalledTimes(1);
   });
 
-  it('hides the chart when debug is off and no physical source exists', () => {
+  it('keeps the chart card mounted when debug is off and no physical source exists', () => {
     render(<Diagnostics logs={{ list: vi.fn(async () => []) }} capabilities={capabilities} debugMode={false} isPhysicalDevice={false} />);
-    expect(screen.queryByLabelText('关节遥测曲线')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('关节遥测曲线')).toBeInTheDocument();
+    expect(screen.getByText('遥测端口未注入，等待运行时')).toBeInTheDocument();
   });
 
   it('lets diagnostics opt into virtual telemetry only when debug mode is active', async () => {

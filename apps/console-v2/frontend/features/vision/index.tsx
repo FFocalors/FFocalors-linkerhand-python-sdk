@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { DeviceCapabilities, VisionPort } from '../../shared/contracts';
+import type { CameraDevice, DeviceCapabilities, VisionPort } from '../../shared/contracts';
 import type { VisionRuntimeSnapshot, Landmark } from '../../shared/vision-runtime';
-import type { CameraDevice } from '../settings';
+import { enumerateCameraDevices, readPreferredCameraDeviceId, writePreferredCameraDeviceId } from '../../shared/vision-runtime/cameras';
 import { Badge, Banner, Button, Card, Checkbox, NumberValue, Progress, SegmentedControl, Select, TextField } from '../../shared/ui';
 import { useI18n } from '../../shared/i18n';
 import { VisionFeatureController, type VisionProposalController, type VisionRuntimeLike } from './controller';
@@ -56,44 +56,63 @@ const HAND_CONNECTIONS: [number, number][] = [
 ];
 const FINGER_PROXIMAL = new Set([5,6,9,10,13,14,17,18]);
 const FINGER_DISTAL = new Set([7,8,11,12,15,16,19,20]);
+const STATUS_REFRESH_INTERVAL_MS = 100;
 
-const drawHand = (ctx: CanvasRenderingContext2D, hand: { landmarks: Landmark[]; confidence: number }, width: number, height: number) => {
+type OverlayViewport = { x: number; y: number; width: number; height: number };
+
+export function containVideoViewport(width: number, height: number, videoWidth: number, videoHeight: number): OverlayViewport {
+  if (videoWidth <= 0 || videoHeight <= 0) return { x: 0, y: 0, width, height };
+  const scale = Math.min(width / videoWidth, height / videoHeight);
+  const fittedWidth = videoWidth * scale;
+  const fittedHeight = videoHeight * scale;
+  return { x: (width - fittedWidth) / 2, y: (height - fittedHeight) / 2, width: fittedWidth, height: fittedHeight };
+}
+
+const drawHand = (ctx: CanvasRenderingContext2D, hand: { landmarks: Landmark[]; confidence: number }, width: number, height: number, viewport: OverlayViewport) => {
   ctx.clearRect(0, 0, width, height);
   const lm = hand.landmarks;
   if (!lm || lm.length !== 21) return;
+  const point = (index: number) => ({ x: viewport.x + lm[index].x * viewport.width, y: viewport.y + lm[index].y * viewport.height });
 
   ctx.lineWidth = 1;
   ctx.strokeStyle = 'rgba(200,200,200,0.35)';
   for (const [a, b] of HAND_CONNECTIONS) {
+    const from = point(a);
+    const to = point(b);
     ctx.beginPath();
-    ctx.moveTo(lm[a].x * width, lm[a].y * height);
-    ctx.lineTo(lm[b].x * width, lm[b].y * height);
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
     ctx.stroke();
   }
 
   for (const [mcp, pip, dip, tip] of [[5,6,7,8],[9,10,11,12],[13,14,15,16],[17,18,19,20]]) {
+    const mcpPoint = point(mcp);
+    const pipPoint = point(pip);
+    const dipPoint = point(dip);
+    const tipPoint = point(tip);
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#ff9f1c';
     ctx.beginPath();
-    ctx.moveTo(lm[mcp].x * width, lm[mcp].y * height);
-    ctx.lineTo(lm[pip].x * width, lm[pip].y * height);
+    ctx.moveTo(mcpPoint.x, mcpPoint.y);
+    ctx.lineTo(pipPoint.x, pipPoint.y);
     ctx.stroke();
 
     ctx.strokeStyle = '#32a8ff';
     ctx.beginPath();
-    ctx.moveTo(lm[pip].x * width, lm[pip].y * height);
-    ctx.lineTo(lm[dip].x * width, lm[dip].y * height);
-    ctx.lineTo(lm[tip].x * width, lm[tip].y * height);
+    ctx.moveTo(pipPoint.x, pipPoint.y);
+    ctx.lineTo(dipPoint.x, dipPoint.y);
+    ctx.lineTo(tipPoint.x, tipPoint.y);
     ctx.stroke();
 
     for (const idx of [mcp, pip, dip, tip]) {
+      const landmark = point(idx);
       ctx.fillStyle = '#000';
       ctx.beginPath();
-      ctx.arc(lm[idx].x * width, lm[idx].y * height, 4, 0, Math.PI * 2);
+      ctx.arc(landmark.x, landmark.y, 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = FINGER_PROXIMAL.has(idx) ? '#ff9f1c' : '#32a8ff';
       ctx.beginPath();
-      ctx.arc(lm[idx].x * width, lm[idx].y * height, 3, 0, Math.PI * 2);
+      ctx.arc(landmark.x, landmark.y, 3, 0, Math.PI * 2);
       ctx.fill();
     }
   }
@@ -101,16 +120,16 @@ const drawHand = (ctx: CanvasRenderingContext2D, hand: { landmarks: Landmark[]; 
   ctx.lineWidth = 3;
   ctx.strokeStyle = '#d946ef';
   for (const [a, b] of [[1,2],[2,3],[3,4]]) {
+    const from = point(a);
+    const to = point(b);
     ctx.beginPath();
-    ctx.moveTo(lm[a].x * width, lm[a].y * height);
-    ctx.lineTo(lm[b].x * width, lm[b].y * height);
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
     ctx.stroke();
   }
 
   for (let i = 0; i < C11_IDX.length; i++) {
-    const p = lm[C11_IDX[i]];
-    const x = p.x * width;
-    const y = p.y * height;
+    const { x, y } = point(C11_IDX[i]);
     const r = i === 0 ? 7 : 5;
     ctx.fillStyle = C11_COLORS[i];
     ctx.beginPath();
@@ -126,12 +145,12 @@ const drawHand = (ctx: CanvasRenderingContext2D, hand: { landmarks: Landmark[]; 
 
   ctx.lineWidth = 2;
   for (const [b, t] of [[1,2],[3,4],[5,6],[7,8],[9,10]]) {
-    const pb = lm[C11_IDX[b]];
-    const pt = lm[C11_IDX[t]];
+    const pb = point(C11_IDX[b]);
+    const pt = point(C11_IDX[t]);
     ctx.strokeStyle = b === 1 ? '#d946ef' : '#20e070';
     ctx.beginPath();
-    ctx.moveTo(pb.x * width, pb.y * height);
-    ctx.lineTo(pt.x * width, pt.y * height);
+    ctx.moveTo(pb.x, pb.y);
+    ctx.lineTo(pt.x, pt.y);
     ctx.stroke();
   }
 };
@@ -192,6 +211,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
   const [playInfo, setPlayInfo] = useState({ idx: 0, total: 0, percent: 0 });
 
   const disposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const controllerUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rafRef = useRef<number>(0);
   const canvasSizeRef = useRef({ width: 0, height: 0 });
 
@@ -200,12 +220,12 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
   const preferredCameraIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const deviceId = preferredCameraDeviceId ?? localStorage.getItem('linkerhand-console-v2-camera-device-id');
+    const deviceId = preferredCameraDeviceId ?? readPreferredCameraDeviceId();
     if (deviceId) {
       preferredCameraIdRef.current = deviceId;
       setSelectedCameraId(deviceId);
     }
-    void enumerateCameras().then(setCameras).catch(() => {});
+    void enumerateCameraDevices().then(setCameras).catch(() => {});
   }, [preferredCameraDeviceId]);
 
   const sink = proposalController ?? proposalSink;
@@ -215,6 +235,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     if (playTimerRef.current) clearTimeout(playTimerRef.current);
     if (disposeTimerRef.current) clearTimeout(disposeTimerRef.current);
+    if (controllerUiTimerRef.current) clearTimeout(controllerUiTimerRef.current);
     if (recTimerRef.current) clearInterval(recTimerRef.current);
     controller?.setPlaybackMode(false);
   }, [controller]);
@@ -225,10 +246,24 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
       clearTimeout(disposeTimerRef.current);
       disposeTimerRef.current = null;
     }
-    const unsubscribe = controller.subscribe(() => setControllerVersion(version => version + 1));
+    let lastRefreshAt = -STATUS_REFRESH_INTERVAL_MS;
+    const refreshUi = () => {
+      controllerUiTimerRef.current = null;
+      lastRefreshAt = performance.now();
+      setControllerVersion(version => version + 1);
+    };
+    const unsubscribe = controller.subscribe(() => {
+      const remaining = STATUS_REFRESH_INTERVAL_MS - (performance.now() - lastRefreshAt);
+      if (remaining <= 0) refreshUi();
+      else if (controllerUiTimerRef.current === null) controllerUiTimerRef.current = setTimeout(refreshUi, remaining);
+    });
     setMapperSettings(controller.mapperSettings());
     return () => {
       unsubscribe();
+      if (controllerUiTimerRef.current !== null) {
+        clearTimeout(controllerUiTimerRef.current);
+        controllerUiTimerRef.current = null;
+      }
       void controller.stop().catch(() => undefined);
       disposeTimerRef.current = setTimeout(() => {
         disposeTimerRef.current = null;
@@ -247,16 +282,6 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
   const canSyncModel = capabilities.model === 'O6';
   const canStart = Boolean(controller) && !locked && feature?.runtime.state !== 'loading' && feature?.runtime.state !== 'stopping';
 
-  const enumerateCameras = async (): Promise<CameraDevice[]> => {
-    if (!navigator.mediaDevices?.enumerateDevices) return [];
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      return devices.filter(d => d.kind === 'videoinput').map(d => ({ deviceId: d.deviceId, label: d.label || `摄像头 ${d.deviceId.slice(0, 8)}`, kind: d.kind }));
-    } catch {
-      return [];
-    }
-  };
-
   const startOrStop = async () => {
     if (!controller || !videoRef.current) return;
     setActionError(null);
@@ -268,12 +293,12 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
 
       let deviceId = selectedCameraId;
       if (!deviceId) {
-        const cams = cameras.length ? cameras : await enumerateCameras();
+        const cams = cameras.length ? cameras : await enumerateCameraDevices();
         setCameras(cams);
         if (cams.length === 1) {
           deviceId = cams[0].deviceId;
           setSelectedCameraId(deviceId);
-          localStorage.setItem('linkerhand-console-v2-camera-device-id', JSON.stringify(deviceId));
+          writePreferredCameraDeviceId(deviceId);
           preferredCameraIdRef.current = deviceId;
         } else if (cams.length > 1) {
           setActionError('检测到多个摄像头，请先在下方下拉列表选择要使用的摄像头');
@@ -337,13 +362,16 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
       if (width > 0 && height > 0) {
         ctx.clearRect(0, 0, width, height);
 
-        const hand = feature?.lastResult?.hands[0];
+        const currentFeature = controller?.snapshot();
+        const hand = currentFeature?.lastResult?.hands[0];
         const playFrame = playbackFrameRef.current;
         const source = playFrame ?? (hand ? { landmarks: hand.landmarks, confidence: hand.confidence } : null);
 
         if (source) {
-          drawHand(ctx, source, width, height);
-        } else if (feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended') {
+          const video = videoRef.current;
+          const viewport = containVideoViewport(width, height, video?.videoWidth ?? width, video?.videoHeight ?? height);
+          drawHand(ctx, source, width, height, viewport);
+        } else if (currentFeature?.runtime.state === 'running' || currentFeature?.runtime.state === 'suspended') {
           ctx.font = '600 14px ui-monospace, SFMono-Regular, Consolas, monospace';
           ctx.fillStyle = '#f87171';
           ctx.textAlign = 'left';
@@ -361,7 +389,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [feature, controllerVersion]);
+  }, [controller]);
 
   // Recording timer display
   useEffect(() => {
@@ -655,7 +683,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
                   onChange={async event => {
                     const value = event.target.value || null;
                     setSelectedCameraId(value);
-                    localStorage.setItem('linkerhand-console-v2-camera-device-id', JSON.stringify(value));
+                    writePreferredCameraDeviceId(value);
                     preferredCameraIdRef.current = value;
                     if (value && (feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended')) {
                       await controller?.stop();
@@ -666,7 +694,7 @@ export function VisionMimic({ capabilities, locked, runtime, proposalController,
                   <option value="">{t('common.camera.autoSelect')}</option>
                   {cameras.map(cam => <option key={cam.deviceId} value={cam.deviceId}>{cam.label || cam.deviceId}</option>)}
                 </Select>
-                <Button variant="secondary" size="sm" disabled={!canStart} onClick={async () => { const cams = await enumerateCameras(); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>{t('common.button.refresh')}</Button>
+                <Button variant="secondary" size="sm" disabled={!canStart} onClick={async () => { const cams = await enumerateCameraDevices(); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>{t('common.button.refresh')}</Button>
                 <Button variant="primary" size="sm" disabled={!canStart} onClick={runStartOrStop}>
                   {feature?.runtime.state === 'running' || feature?.runtime.state === 'suspended' ? t('common.camera.stopPreview') : feature?.runtime.state === 'error' || feature?.runtime.state === 'device-lost' || feature?.runtime.state === 'permission-denied' ? t('common.camera.reconnect') : t('common.camera.startPreview')}
                 </Button>

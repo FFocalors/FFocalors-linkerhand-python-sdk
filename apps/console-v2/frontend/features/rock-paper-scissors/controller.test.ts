@@ -16,7 +16,8 @@ class FakeRuntime implements RpsVisionRuntime {
   private runtimeListeners = new Set<(snapshot: VisionRuntimeSnapshot) => void>();
   private resultListeners = new Set<(result: VisionLandmarkResult) => void>();
   starts = 0; stops = 0; startError: Error | null = null; startGate: Promise<void> | null = null; resolveStart!: () => void;
-  async start(_video: HTMLVideoElement, source: 'rps'): Promise<void> { this.starts += 1; if (this.startError) throw this.startError; if (this.startGate) await this.startGate; this.emitSnapshot({ state: 'running', owner: source, model: 'ready', lastError: null }); }
+  startDeviceId: string | undefined;
+  async start(_video: HTMLVideoElement, source: 'rps', deviceId?: string): Promise<void> { this.starts += 1; this.startDeviceId = deviceId; if (this.startError) throw this.startError; if (this.startGate) await this.startGate; this.emitSnapshot({ state: 'running', owner: source, model: 'ready', lastError: null }); }
   async stop(): Promise<void> { this.stops += 1; this.emitSnapshot({ state: 'idle', owner: null, model: 'unloaded' }); }
   subscribe = (listener: (snapshot: VisionRuntimeSnapshot) => void): (() => void) => { this.runtimeListeners.add(listener); listener(this.snapshotValue); return () => this.runtimeListeners.delete(listener); };
   onResult = (listener: (result: VisionLandmarkResult) => void): (() => void) => { this.resultListeners.add(listener); return () => this.resultListeners.delete(listener); };
@@ -39,6 +40,11 @@ const paperResult = (): VisionLandmarkResult => ({ ...noHand(), hands: [paperHan
 async function ready(controller: RpsGameController, runtime: FakeRuntime): Promise<void> { controller.attach(fakeVideo); await controller.startCamera(); expect(runtime.snapshot().state).toBe('running'); }
 
 describe('RPS deterministic controller', () => {
+  it('passes the selected camera id to the shared runtime', async () => {
+    const runtime = new FakeRuntime(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7') });
+    controller.attach(fakeVideo); await controller.startCamera('integrated-camera');
+    expect(runtime.startDeviceId).toBe('integrated-camera');
+  });
   it('runs countdown, capture, invalid, reveal, score and ready with no score mutation', async () => {
     const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler }); const phases: RpsState['phase'][] = []; controller.subscribe(state => phases.push(state.phase)); await ready(controller, runtime);
     expect(controller.beginRound()).toBe(true); expect(controller.snapshot().countdown).toBe(3); scheduler.runNext(); expect(controller.snapshot().countdown).toBe(2); scheduler.runNext(); expect(controller.snapshot().countdown).toBe(1); scheduler.runNext(); expect(controller.snapshot().phase).toBe('capture'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('invalid'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('reveal'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('score'); scheduler.runNext(); expect(controller.snapshot().phase).toBe('ready'); expect(controller.snapshot().score).toEqual({ player: 0, machine: 0, draws: 0 }); expect(phases).toEqual(expect.arrayContaining(['countdown', 'capture', 'invalid', 'reveal', 'score', 'ready']));

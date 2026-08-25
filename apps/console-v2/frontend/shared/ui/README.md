@@ -7,7 +7,7 @@ The console UI primitives live in `shared/ui` and consume the semantic tokens in
 | `Button`, `IconButton` | actions and icon-only actions | native button keyboard behavior; `IconButton` requires an accessible label |
 | `Select`, `TextField`, `TextArea` | editable form values | native label association, invalid/error and hint slots |
 | `Checkbox`, `Radio` | boolean and mutually exclusive choices | native input remains keyboard accessible; custom visuals are decorative |
-| `Slider`, `NumberValue` | continuous input and numeric display | range semantics from native input; numeric values use tabular figures and interaction blue |
+| `Slider`, `NumberValue` | continuous input and numeric display | range semantics from native input; numeric values use tabular figures and the numeric-blue token, distinct from interaction controls |
 | `SegmentedControl` | compact mutually exclusive choices | `radiogroup`/`radio` semantics, roving tab stop, arrow/Home/End keyboard navigation, and disabled options |
 | `Tabs` | peer views | tablist/tab/tabpanel roles and selected panel linkage |
 | `Card`, `Badge`, `Banner`, `EmptyState`, `LoadingIndicator` | layout and status feedback | status/alert roles only where appropriate; decorative marks are hidden |

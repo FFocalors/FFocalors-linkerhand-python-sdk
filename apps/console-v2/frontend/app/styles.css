@@ -13,6 +13,7 @@
   --muted: #6f7d91;
   --blue: #3568f2;
   --blue-soft: #edf2ff;
+  --number-blue: #0878c9;
   --green: #208c60;
   --green-soft: #e9f8f1;
   --amber: #a9680f;
@@ -38,6 +39,7 @@
   --color-line-strong: #b7c3d4;
   --color-interaction: var(--blue);
   --color-interaction-subtle: var(--blue-soft);
+  --color-numeric: var(--number-blue);
   --color-telemetry: #53657d;
   --color-success: var(--green);
   --color-success-subtle: var(--green-soft);
@@ -81,6 +83,7 @@
   --text: #edf2fa;
   --muted: #a5b1c3;
   --blue-soft: #23345f;
+  --number-blue: #65baff;
   --green: #54c18e;
   --green-soft: #1b3b33;
   --amber: #e0aa4d;
@@ -404,8 +407,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
   background: color-mix(in srgb, var(--danger) 84%, black);
   border-color: color-mix(in srgb, var(--danger) 84%, black);
 }
-.metric-xl { margin: 18px 0 10px; font-size: 28px; font-weight: 700; letter-spacing: -1px; }
-.metric-lg { margin: 12px 0 8px; font-size: 22px; font-weight: 700; }
+.metric-xl { margin: 18px 0 10px; color: var(--color-numeric); font-size: 28px; font-weight: 700; letter-spacing: -1px; }
+.metric-lg { margin: 12px 0 8px; color: var(--color-numeric); font-size: 22px; font-weight: 700; }
 .metric-lg small, .metric-xl small { margin-left: 3px; color: var(--muted); font-size: 10px; font-weight: 500; }
 .metric-label { color: var(--muted); font-size: 10px; }
 .progress { height: 5px; margin: 7px 0 5px; overflow: hidden; border-radius: 4px; background: var(--line); }
@@ -679,11 +682,19 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .device-twin-stage { position: relative; min-height: 300px; border-radius: 6px; border: 1px solid var(--line); background: radial-gradient(ellipse at 50% 42%, #1b2434 0%, var(--camera-bg) 68%, #0a0f18 100%); overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
 .device-twin-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 .device-twin-overlay { position: absolute; top: 10px; left: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 2; }
-.device-twin-reset {
+.device-twin-tools {
   position: absolute;
   top: 10px;
   right: 12px;
   z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  pointer-events: none;
+}
+.device-twin-reset {
+  min-height: 28px;
   padding: 4px 8px;
   border-radius: 4px;
   border: 1px solid rgba(148,163,184,0.35);
@@ -692,16 +703,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
   font: 500 9px ui-monospace, SFMono-Regular, Consolas, monospace;
   letter-spacing: 1px;
   cursor: pointer;
+  pointer-events: auto;
 }
 .device-twin-reset:hover {
   background: rgba(8,12,19,0.92);
   border-color: rgba(148,163,184,0.55);
 }
 .device-twin-spin-badge {
-  position: absolute;
-  top: 38px;
-  right: 12px;
-  z-index: 3;
   padding: 4px 8px;
   border-radius: 4px;
   border: 1px solid rgba(148,163,184,0.35);

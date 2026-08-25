@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CameraPermissionStatus, DeviceConfig, DeviceModel, Hand, LogLevel, Transport } from '../../shared/contracts';
+import type { CameraDevice, CameraPermissionStatus, DeviceConfig, DeviceModel, Hand, LogLevel, SettingsValidationResult, Transport } from '../../shared/contracts';
 import { useTheme } from '../../shared/theme';
 import { Badge, Button, Card, Checkbox, Radio, Select, SegmentedControl, TextField } from '../../shared/ui';
 import { useI18n, type Locale } from '../../shared/i18n';
@@ -9,14 +9,12 @@ export const DEVICE_MODELS = ['O6', 'L6', 'L7', 'L10', 'L20', 'G20', 'L21', 'L25
 export type SettingsModel = (typeof DEVICE_MODELS)[number];
 export type ThemePreference = 'light' | 'dark' | 'system';
 export type CameraPermission = 'granted' | 'denied' | 'prompt' | 'unknown' | 'error' | 'app-profile-denied' | 'webview-denied' | 'windows-denied' | 'no-device' | 'in-use';
-export interface CameraDevice { deviceId: string; label: string; kind?: 'videoinput' | string }
 export interface CameraListResult { cameras: CameraDevice[]; permission: CameraPermission; detail?: string }
 export interface SettingsAdvancedDraft { autoReconnect: boolean; connectionTimeoutMs: number; diagnostics: boolean; debugMode: boolean; logLevel?: LogLevel; locale?: 'zh' | 'en' }
 export interface SettingsDraft { model: SettingsModel; hand: Hand; transport: Transport; preferredCameraDeviceId: string | null; advanced: SettingsAdvancedDraft }
 export interface ConnectionStateInfo { state: 'connected' | 'disconnected' | 'connecting' | 'error'; since?: number }
 export interface FirmwareVersion { version: string; buildDate?: string }
 export interface SettingsSnapshot { config: DeviceConfig; preferredCameraDeviceId?: string | null; cameraPermission?: CameraPermission; theme?: ThemePreference; version?: string; build?: string; cameras?: CameraDevice[]; advanced?: Partial<SettingsAdvancedDraft>; connectionState?: ConnectionStateInfo; firmwareVersion?: FirmwareVersion; logLevel?: LogLevel; locale?: 'zh' | 'en'; debugMode?: boolean }
-export interface SettingsValidationResult { valid: boolean; errors: Record<string, string> }
 export interface SettingsSaveResult { applied: boolean; reconnectRequired: boolean; restartRequired: boolean; errors: string[] }
 export interface SidecarCheckResult { ok: boolean; message: string; detail?: string }
 export interface OfflineAssetsCheckResult { ok: boolean; message: string; detail?: string }
@@ -49,7 +47,8 @@ export interface ThemePort { getTheme(): ThemePreference | Promise<ThemePreferen
 
 export const defaultAdvanced: SettingsAdvancedDraft = { autoReconnect: true, connectionTimeoutMs: 5000, diagnostics: false, debugMode: false, logLevel: 'info', locale: 'zh' };
 export function draftFromSnapshot(snapshot: SettingsSnapshot): SettingsDraft { return { model: snapshot.config.model, hand: snapshot.config.hand, transport: snapshot.config.transport, preferredCameraDeviceId: snapshot.preferredCameraDeviceId ?? null, advanced: { ...defaultAdvanced, autoReconnect: snapshot.config.autoReconnect, debugMode: snapshot.debugMode ?? false, ...snapshot.advanced } }; }
-export { validateSettingsDraft } from '../../app/settings-validation';
+export type { CameraDevice, SettingsValidationResult } from '../../shared/contracts';
+export { validateSettingsDraft } from '../../shared/contracts/settings';
 export function switchTransport(draft: SettingsDraft, type: 'can' | 'rs485'): SettingsDraft { if (type === draft.transport.type) return draft; return { ...draft, transport: type === 'can' ? { type: 'can', channel: 'can0' } : { type: 'rs485', port: 'COM3', baudrate: 115200 } }; }
 function errorText(error: unknown) { return error instanceof Error ? error.message : typeof error === 'string' ? error : '操作未完成，请查看诊断中心。'; }
 function transportLabel(transport: Transport) { return transport.type === 'can' ? `CAN · ${transport.channel}` : `RS485 · ${transport.port} · ${transport.baudrate}`; }
@@ -130,7 +129,10 @@ export function Settings({ model, transport, controller, themePort, version = '2
   const applySnapshot = useCallback((value: SettingsSnapshot | DeviceConfig) => {
     const next = normaliseSnapshot(value);
     setSnapshot(previous => ({ ...previous, ...next, config: next.config }));
-    setDraft(previous => savedDraftRef.current ? previous : draftFromSnapshot(next));
+    // Subscription events are incremental runtime updates (including camera
+    // enrichment). Draft hydration is intentionally performed only by the
+    // explicit initial load/factory-reset paths below; an event must never
+    // rewrite model, hand, or transport while the operator is editing.
     if (next.cameras) setCameras(next.cameras);
     if (next.cameraPermission) { setPermission(next.cameraPermission); setCameraError(cameraPermissionGuidance(next.cameraPermission, undefined, locale)); }
     if (next.theme) setTheme(next.theme);
@@ -155,13 +157,17 @@ export function Settings({ model, transport, controller, themePort, version = '2
   useEffect(() => {
     let active = true;
     if (!controller) { setStatus('saved'); return () => { active = false; }; }
+    const loadRevision = draftRevisionRef.current;
     void controller.load().then(value => {
       if (!active) return;
       const next = normaliseSnapshot(value);
       setSnapshot(next);
       const nextDraft = draftFromSnapshot(next);
-      setDraft(nextDraft);
-      draftRevisionRef.current = 0;
+      const preserveDraft = draftRevisionRef.current !== loadRevision;
+      if (!preserveDraft) {
+        setDraft(nextDraft);
+        draftRevisionRef.current = 0;
+      }
       savedDraftRef.current = nextDraft;
       setSavedDraft(nextDraft);
       setPermission(next.cameraPermission ?? 'unknown');
@@ -172,7 +178,29 @@ export function Settings({ model, transport, controller, themePort, version = '2
       if (next.firmwareVersion) setFirmwareVersion(next.firmwareVersion);
       if (next.logLevel) setLogLevel(next.logLevel);
       if (next.locale) { setLocaleValue(next.locale); setAppLocale(next.locale); }
-      setStatus('saved');
+      setStatus(preserveDraft ? 'dirty' : 'saved');
+
+      // Match the vision pages: enumerate immediately when Settings opens.
+      // The Tauri permission query runs in parallel and must not delay the
+      // first usable camera list.
+      const cameraRequest = ++cameraRequestRef.current;
+      const profilePermission = controller.getCameraPermission?.().catch(() => undefined);
+      void controller.listCameras().then(listed => {
+        if (!active || cameraRequest !== cameraRequestRef.current) return;
+        setCameras(listed.cameras);
+        setPermission(listed.permission);
+        setCameraError(cameraPermissionGuidance(listed.permission, listed.detail, locale));
+        void profilePermission?.then(profile => {
+          if (!active || cameraRequest !== cameraRequestRef.current || profile?.state !== 'deny') return;
+          setPermission('app-profile-denied');
+          setCameraError(cameraPermissionGuidance('app-profile-denied', undefined, locale));
+        });
+      }).catch(error => {
+        if (!active || cameraRequest !== cameraRequestRef.current) return;
+        const detail = errorText(error);
+        setPermission('error');
+        setCameraError(cameraPermissionGuidance('error', detail, locale));
+      });
     }).catch(error => {
       if (active) { setStatus('error'); setMessage(`读取设置失败：${errorText(error)}`); }
     });
@@ -379,17 +407,23 @@ export function Settings({ model, transport, controller, themePort, version = '2
     setBusyCheck(kind); setMessage('');
     try {
       if (kind === 'camera') {
-        // WebView2 can report the same NotAllowedError for an app-profile
-        // denial and Windows privacy denial. Query the profile first so the
-        // recovery action remains scoped to this app's trusted origin.
-        const profilePermission = controller.getCameraPermission ? await controller.getCameraPermission().catch(() => undefined) : undefined;
+        // Begin the profile query in parallel. Camera enumeration is the
+        // critical path and should behave like Vision Mimic instead of waiting
+        // for a Tauri permission round-trip first.
+        const profilePermission = controller.getCameraPermission?.().catch(() => undefined);
         const listed = await controller.listCameras();
-        const result: CameraListResult = profilePermission?.state === 'deny' ? { ...listed, permission: 'app-profile-denied' } : listed;
         if (!mountedRef.current || cameraRequest !== cameraRequestRef.current) return;
-        setCameras(result.cameras); setPermission(result.permission);
-        const guidance = cameraPermissionGuidance(result.permission, result.detail, locale);
+        setCameras(listed.cameras); setPermission(listed.permission);
+        const guidance = cameraPermissionGuidance(listed.permission, listed.detail, locale);
         setCameraError(guidance);
-        setMessage(guidance || `已发现 ${result.cameras.length} 个摄像头。`);
+        setMessage(guidance || `已发现 ${listed.cameras.length} 个摄像头。`);
+        void profilePermission?.then(profile => {
+          if (!mountedRef.current || cameraRequest !== cameraRequestRef.current || profile?.state !== 'deny') return;
+          const profileGuidance = cameraPermissionGuidance('app-profile-denied', undefined, locale);
+          setPermission('app-profile-denied');
+          setCameraError(profileGuidance);
+          setMessage(profileGuidance);
+        });
       } else {
         const result = kind === 'sidecar' ? await controller.testSidecar() : await controller.checkOfflineAssets();
         if (!mountedRef.current) return;
@@ -453,7 +487,7 @@ export function Settings({ model, transport, controller, themePort, version = '2
         {draft.transport.type === 'can' ? <TextField label="CAN channel" value={draft.transport.channel} disabled={!wired || editingDisabled} onChange={event => setTransport({ type: 'can', channel: event.target.value })} error={errors['transport.channel']} /> : rs485Transport ? <div className="settings-two-fields"><TextField label={locale === 'en' ? 'Serial port' : '串口'} value={rs485Transport.port} disabled={!wired || editingDisabled} onChange={event => setTransport({ type: 'rs485', port: event.target.value, baudrate: rs485Transport.baudrate })} error={errors['transport.port']} /><Select label={locale === 'en' ? 'Baud rate' : '波特率'} value={rs485Transport.baudrate} disabled={!wired || editingDisabled} onChange={event => setTransport({ type: 'rs485', port: rs485Transport.port, baudrate: Number(event.target.value) })} error={errors['transport.baudrate']}>{[9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600].map(rate => <option key={rate} value={rate}>{rate}</option>)}</Select></div> : null}
         <p className="muted settings-hint">{transportHint}</p>
       </div></Card>
-      <Card><div className="card-header"><div><h2>{t('settings.camera.title')}</h2><span className="muted">{t('settings.camera.subtitle')}</span></div><Badge tone={permission === 'granted' ? 'green' : ['app-profile-denied', 'webview-denied', 'denied', 'windows-denied', 'in-use', 'error'].includes(permission) ? 'red' : 'amber'}>{permission === 'granted' ? (locale === 'en' ? 'Permission granted' : '权限已允许') : permission === 'app-profile-denied' ? (locale === 'en' ? 'App profile denied' : '应用配置文件已拒绝') : permission === 'webview-denied' ? (locale === 'en' ? 'WebView denied' : 'WebView 已拒绝') : permission === 'windows-denied' || permission === 'denied' ? (locale === 'en' ? 'Windows privacy settings' : 'Windows 隐私设置') : permission === 'no-device' ? (locale === 'en' ? 'No device found' : '未发现设备') : permission === 'in-use' ? (locale === 'en' ? 'Device in use' : '设备被占用') : permission === 'error' ? (locale === 'en' ? 'Enumeration failed' : '枚举失败') : (locale === 'en' ? 'Permission not confirmed' : '权限未确认')}</Badge></div><div className="camera-controls"><Select label={t('settings.camera.preferred')} value={cameraSelection} disabled={!wired || cameras.length === 0 || editingDisabled} onChange={event => setDraftValue('preferredCameraDeviceId', event.target.value || null)}><option value="">{t('common.button.none')}</option>{cameras.map(camera => <option value={camera.deviceId} key={camera.deviceId}>{camera.label || camera.deviceId}</option>)}</Select><Button className="button button-secondary" variant="secondary" disabled={!wired || busyCheck === 'camera'} onClick={() => void runCheck('camera')}>{busyCheck === 'camera' ? t('settings.camera.enumerating') : ['app-profile-denied', 'webview-denied', 'denied', 'windows-denied', 'in-use', 'no-device', 'error'].includes(permission) ? t('settings.camera.retry') : t('settings.camera.refresh')}</Button></div>{cameraError && <div className="camera-error" role="alert"><p>{cameraError}</p>{permission === 'app-profile-denied' && controller?.resetCameraPermission && <Button type="button" className="button button-secondary" variant="secondary" onClick={() => void resetCameraPermission()}>{locale === 'en' ? 'Reset app camera permission' : '重置本应用摄像头权限'}</Button>}{(permission === 'denied' || permission === 'windows-denied') && <Button type="button" className="button button-secondary" variant="secondary" onClick={() => void openCameraPrivacySettings()}>{locale === 'en' ? 'Open Windows camera settings' : '打开 Windows 摄像头设置'}</Button>}</div>}{cameras.length === 0 && !cameraError && <p className="muted camera-empty">{t('settings.camera.empty')}</p>}</Card>
+      <Card><div className="card-header"><div><h2>{t('settings.camera.title')}</h2><span className="muted">{t('settings.camera.subtitle')}</span></div><Badge tone={permission === 'granted' ? 'green' : ['app-profile-denied', 'webview-denied', 'denied', 'windows-denied', 'in-use', 'error'].includes(permission) ? 'red' : 'amber'}>{permission === 'granted' ? (locale === 'en' ? 'Permission granted' : '权限已允许') : permission === 'app-profile-denied' ? (locale === 'en' ? 'App profile denied' : '应用配置文件已拒绝') : permission === 'webview-denied' ? (locale === 'en' ? 'WebView denied' : 'WebView 已拒绝') : permission === 'windows-denied' || permission === 'denied' ? (locale === 'en' ? 'Windows privacy settings' : 'Windows 隐私设置') : permission === 'no-device' ? (locale === 'en' ? 'No device found' : '未发现设备') : permission === 'in-use' ? (locale === 'en' ? 'Device in use' : '设备被占用') : permission === 'error' ? (locale === 'en' ? 'Enumeration failed' : '枚举失败') : (locale === 'en' ? 'Permission not confirmed' : '权限未确认')}</Badge></div><div className="camera-controls"><Select label={t('settings.camera.preferred')} value={cameraSelection} disabled={!wired || cameras.length === 0 || editingDisabled} onChange={event => setDraftValue('preferredCameraDeviceId', event.target.value || null)}><option value="">{t('common.button.none')}</option>{cameras.map(camera => <option value={camera.deviceId} key={camera.deviceId}>{camera.label || camera.deviceId}</option>)}</Select><Button className="button button-secondary" variant="secondary" disabled={!wired || busyCheck === 'camera' || status === 'loading'} onClick={() => void runCheck('camera')}>{busyCheck === 'camera' ? t('settings.camera.enumerating') : ['app-profile-denied', 'webview-denied', 'denied', 'windows-denied', 'in-use', 'no-device', 'error'].includes(permission) ? t('settings.camera.retry') : t('settings.camera.refresh')}</Button></div>{cameraError && <div className="camera-error" role="alert"><p>{cameraError}</p>{permission === 'app-profile-denied' && controller?.resetCameraPermission && <Button type="button" className="button button-secondary" variant="secondary" onClick={() => void resetCameraPermission()}>{locale === 'en' ? 'Reset app camera permission' : '重置本应用摄像头权限'}</Button>}{(permission === 'denied' || permission === 'windows-denied') && <Button type="button" className="button button-secondary" variant="secondary" onClick={() => void openCameraPrivacySettings()}>{locale === 'en' ? 'Open Windows camera settings' : '打开 Windows 摄像头设置'}</Button>}</div>}{cameras.length === 0 && !cameraError && <p className="muted camera-empty">{t('settings.camera.empty')}</p>}</Card>
       <Card><div className="card-header"><div><h2>{t('settings.appearance.title')}</h2><span className="muted">{t('settings.appearance.subtitle')}</span></div><Badge>{theme === 'system' ? t('settings.theme.system') : theme === 'light' ? t('settings.theme.light') : t('settings.theme.dark')}</Badge></div><div className="theme-options" role="radiogroup" aria-label={t('settings.theme.label')}><Radio className={theme === 'light' ? 'selected' : ''} label={t('settings.theme.light')} name="theme" checked={theme === 'light'} disabled={editingDisabled} onChange={() => setThemePreference('light')} /><Radio className={theme === 'dark' ? 'selected' : ''} label={t('settings.theme.dark')} name="theme" checked={theme === 'dark'} disabled={editingDisabled} onChange={() => setThemePreference('dark')} /><Radio className={theme === 'system' ? 'selected' : ''} label={t('settings.theme.system')} name="theme" checked={theme === 'system'} disabled={editingDisabled} onChange={() => setThemePreference('system')} /></div><div className="locale-row"><span className="muted">{t('settings.locale.label')}</span><SegmentedControl className="locale-toggle" value={locale} disabled={editingDisabled} options={[{ value: 'zh', label: t('settings.locale.zh') }, { value: 'en', label: t('settings.locale.en') }]} onChange={value => handleLocaleChange(value as 'zh' | 'en')} /></div></Card>
       <Card><div className="card-header"><div><h2>{t('settings.offline.title')}</h2><span className="muted">{locale === 'en' ? `Version ${versionLabel} · build ${snapshot.build ?? build}${firmwareVersion ? ` · firmware v${firmwareVersion.version}${firmwareVersion.buildDate ? ` · build ${firmwareVersion.buildDate}` : ''}` : ''}` : `版本 ${versionLabel} · 构建 ${snapshot.build ?? build}${firmwareVersion ? ` · 固件 v${firmwareVersion.version}${firmwareVersion.buildDate ? ` · 构建 ${firmwareVersion.buildDate}` : ''}` : ' · 固件版本未知'}`}</span></div><Badge tone="green">{t('common.status.localApp')}</Badge></div><div className="check-actions"><Button className="button button-secondary" variant="secondary" disabled={!wired || busyCheck === 'offline'} onClick={() => void runCheck('offline')}>{busyCheck === 'offline' ? (locale === 'en' ? 'Checking…' : '检查中…') : t('settings.offline.check')}</Button><Button className="button button-secondary" variant="secondary" disabled={!wired || busyCheck === 'sidecar'} onClick={() => void runCheck('sidecar')}>{busyCheck === 'sidecar' ? (locale === 'en' ? 'Checking…' : '检查中…') : t('settings.offline.sidecar')}</Button></div><p className="muted">{t('settings.offline.subtitle')}</p></Card>
     </div>

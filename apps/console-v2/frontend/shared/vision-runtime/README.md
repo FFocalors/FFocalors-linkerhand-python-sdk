@@ -16,7 +16,9 @@ The runtime does not map landmarks to robot positions, `VisionPoseProposal`, RPS
 1. `owner` is one of `vision`, `rps`, or `null`; a different owner receives `VISION_BUSY` and never opens a second camera.
 2. The worker has at most one frame in flight. `SingleFrameGate` drops a new frame while occupied; it never queues frames.
 3. `stop` and `dispose` cancel callbacks, stop all tracks, detach the video element, terminate the worker and release ownership. Hidden documents call `stop` (explicit `suspend` is available when a caller wants to retain the stream).
-4. Model and WASM URLs are packaged `/vision` assets. There is no CDN fallback.
+4. Worker landmark results are published unchanged; feature code owns any presentation-level processing.
+5. Model and WASM URLs are packaged `/vision` assets. There is no CDN fallback.
+6. The camera requests 640x480 at 30 FPS and inference frames are capped at that size. This matches the legacy one-hand pipeline and prevents a 1080p camera from adding avoidable bitmap-transfer and model latency.
 
 ## State and errors
 

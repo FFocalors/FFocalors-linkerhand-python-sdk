@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SingleFrameGate } from './backpressure';
-import { VisionRuntime, VisionRuntimeError } from './index';
+import { VisionRuntime, VisionRuntimeError, VISION_INFERENCE_MAX_HEIGHT, VISION_INFERENCE_MAX_WIDTH } from './index';
 
 function fakeStream() {
   let ended: (() => void) | undefined;
@@ -39,10 +39,11 @@ describe('VisionRuntime ownership and release', () => {
     const { stream } = fakeStream(); const workerFixture = fakeWorker();
     const runtime = new VisionRuntime({}, { mediaDevices: { getUserMedia: vi.fn(async () => stream) }, workerFactory: () => workerFixture.worker as never });
     await runtime.start(fakeVideo().video, 'vision');
-    const init = workerFixture.worker.postMessage.mock.calls.map(([message]) => message).find(message => message.type === 'init') as { modelAssetUrl: string; wasmRootUrl: string };
+    const init = workerFixture.worker.postMessage.mock.calls.map(([message]) => message).find(message => message.type === 'init') as { modelAssetUrl: string; wasmRootUrl: string; numHands: number };
     expect(new URL(init.modelAssetUrl).pathname).toMatch(/\/vision\/hand_landmarker\.task$/);
     expect(new URL(init.wasmRootUrl).pathname).toMatch(/\/vision\/wasm$/);
     expect(init.wasmRootUrl.endsWith('/')).toBe(false);
+    expect(init.numHands).toBe(1);
     await runtime.stop();
   });
 
@@ -62,6 +63,15 @@ describe('VisionRuntime ownership and release', () => {
     expect(worker.terminate).toHaveBeenCalled();
     expect(video.srcObject).toBeNull();
     expect(runtime.snapshot().state).toBe('idle');
+  });
+
+  it('passes an explicitly selected camera through to getUserMedia', async () => {
+    const { stream } = fakeStream(); const workerFixture = fakeWorker();
+    const getUserMedia = vi.fn(async () => stream);
+    const runtime = new VisionRuntime({}, { mediaDevices: { getUserMedia }, workerFactory: () => workerFixture.worker as never });
+    await runtime.start(fakeVideo().video, 'rps', 'integrated-camera');
+    expect(getUserMedia).toHaveBeenCalledWith({ video: { deviceId: { exact: 'integrated-camera' }, width: { ideal: VISION_INFERENCE_MAX_WIDTH }, height: { ideal: VISION_INFERENCE_MAX_HEIGHT }, frameRate: { ideal: 30, max: 30 } }, audio: false });
+    await runtime.stop();
   });
 
   it('maps permission denial to a stable non-retryable error', async () => {
@@ -117,6 +127,22 @@ describe('VisionRuntime ownership and release', () => {
     workerFixture.emit({ type: 'error', requestId: workerFixture.worker.frames[1].requestId, code: 'WORKER_INFERENCE_FAILED', message: 'fixture frame error' });
     await vi.waitFor(() => expect(runtime.snapshot().state).toBe('error'));
     expect(bitmap2.close).toHaveBeenCalled(); expect(runtime.snapshot().inflight).toBe(0); expect(track.stop).toHaveBeenCalled(); expect(workerFixture.worker.terminate).toHaveBeenCalled();
+  });
+
+  it('downscales high-resolution camera frames before worker inference', async () => {
+    const { stream } = fakeStream();
+    const workerFixture = fakeWorker();
+    const { video, frame } = fakeVideo();
+    Object.defineProperties(video, { videoWidth: { value: 1920 }, videoHeight: { value: 1080 } });
+    const bitmap = bitmapFixture();
+    const createBitmap = vi.fn(async () => bitmap);
+    vi.stubGlobal('createImageBitmap', createBitmap);
+    const runtime = new VisionRuntime({}, { mediaDevices: { getUserMedia: vi.fn(async () => stream) }, workerFactory: () => workerFixture.worker as never });
+    await runtime.start(video, 'vision');
+    frame(100);
+    await vi.waitFor(() => expect(workerFixture.worker.frames).toHaveLength(1));
+    expect(createBitmap).toHaveBeenCalledWith(video, 0, 0, 1920, 1080, { resizeWidth: 640, resizeHeight: 360, resizeQuality: 'low' });
+    await runtime.stop();
   });
 
   it('does not post or publish when stop wins an async bitmap capture', async () => {

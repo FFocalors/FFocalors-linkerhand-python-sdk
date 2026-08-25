@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { DeviceCapabilities, VisionPort } from '../../shared/contracts';
 import type { VisionRuntimeSnapshot } from '../../shared/vision-runtime';
+import { enumerateCameraDevices, readPreferredCameraDeviceId, writePreferredCameraDeviceId } from '../../shared/vision-runtime/cameras';
+import type { CameraDeviceInfo } from '../../shared/vision-runtime/cameras';
 import { Badge, Banner, Button, Card, Checkbox, NumberValue, Select } from '../../shared/ui';
 import { useI18n } from '../../shared/i18n';
 import { RpsGameController } from './controller';
@@ -102,7 +104,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
   const stageRef = useRef<HTMLDivElement>(null);
   const [controllerVersion, setControllerVersion] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [cameras, setCameras] = useState<CameraDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -130,24 +132,14 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
 
   useEffect(() => { if (locked) controller?.lock(); }, [locked, controller]);
 
-  const enumerateCameras = async (): Promise<MediaDeviceInfo[]> => {
-    if (!navigator.mediaDevices?.enumerateDevices) return [];
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      return devices.filter(d => d.kind === 'videoinput');
-    } catch {
-      return [];
-    }
-  };
-
   useEffect(() => {
-    const deviceId = preferredCameraDeviceId ?? localStorage.getItem('linkerhand-console-v2-camera-device-id');
+    const deviceId = preferredCameraDeviceId ?? readPreferredCameraDeviceId();
     if (deviceId) {
       try {
         setSelectedCameraId(deviceId);
       } catch {}
     }
-    void enumerateCameras().then(setCameras).catch(() => {});
+    void enumerateCameraDevices().then(setCameras).catch(() => {});
   }, [preferredCameraDeviceId]);
 
   useEffect(() => {
@@ -204,7 +196,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
     };
     raf = requestAnimationFrame(render);
     return () => cancelAnimationFrame(raf);
-  }, [controller, controllerVersion]);
+  }, [controller]);
 
   const hardwareEligible = capabilities.model === 'O6' && capabilities.supportedOperations.includes('setPosition');
   const hardwareConnected = hardwareEligible && Boolean(actionController) && (isPhysicalDevice ?? true);
@@ -312,18 +304,18 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
                   onChange={async event => {
                     const value = event.target.value || null;
                     setSelectedCameraId(value);
-                    localStorage.setItem('linkerhand-console-v2-camera-device-id', JSON.stringify(value));
+                    writePreferredCameraDeviceId(value);
                     if (value && (state?.cameraState === 'running' || state?.cameraState === 'suspended')) {
                       await controller?.stop();
-                      setTimeout(() => { if (controller) runAsync(() => controller.startCamera()); }, 150);
+                      setTimeout(() => { if (controller) runAsync(() => controller.startCamera(value ?? undefined)); }, 150);
                     }
                   }}
                 >
                   <option value="">{t('common.camera.autoSelect')}</option>
                   {cameras.map(cam => <option key={cam.deviceId} value={cam.deviceId}>{cam.label || cam.deviceId}</option>)}
                 </Select>
-                <Button variant="secondary" size="sm" disabled={!canControl} onClick={async () => { const cams = await navigator.mediaDevices?.enumerateDevices().then(d => d.filter(d => d.kind === 'videoinput').map(d => ({ deviceId: d.deviceId, label: d.label || d.deviceId, kind: d.kind, groupId: d.groupId } as MediaDeviceInfo))).catch(() => []); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>{t('common.button.refresh')}</Button>
-                <Button variant="primary" size="sm" disabled={!canControl || locked} onClick={() => { if (controller) runAsync(() => (cameraRunning ? controller.stop() : controller.startCamera())); }}>
+                <Button variant="secondary" size="sm" disabled={!canControl} onClick={async () => { const cams = await enumerateCameraDevices(); setCameras(cams); if (!cams.length) setActionError('未发现摄像头设备'); }}>{t('common.button.refresh')}</Button>
+                <Button variant="primary" size="sm" disabled={!canControl || locked} onClick={() => { if (controller) runAsync(() => (cameraRunning ? controller.stop() : controller.startCamera(selectedCameraId ?? undefined))); }}>
                   {cameraRunning ? t('common.camera.stopPreview') : state?.cameraState === 'error' || state?.cameraState === 'device-lost' || state?.cameraState === 'permission-denied' ? t('common.camera.reconnect') : t('common.camera.startPreview')}
                 </Button>
               </div>

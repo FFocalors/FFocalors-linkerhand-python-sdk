@@ -7,11 +7,12 @@
 .settings-grid .card { min-width: 0; }
 .settings-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; margin-top: 10px; }
 .settings-fields > label, .settings-two-fields label, .advanced-content > label, .camera-controls > label { display: flex; flex-direction: column; gap: 5px; color: var(--text); font-size: 10px; font-weight: 700; }
-.settings-fields select, .settings-fields input, .camera-controls select, .advanced-content input[type=number] { width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--text); padding: 5px 7px; font-size: 10px; }
+.settings-fields select, .settings-fields input:not([type="radio"]):not([type="checkbox"]), .camera-controls select, .advanced-content input[type=number] { width: 100%; min-height: 32px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); color: var(--text); padding: 5px 7px; font-size: 10px; }
 .settings-fields fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .settings-fields legend { color: var(--text); font-size: 10px; font-weight: 700; margin-bottom: 6px; }
 .settings-options { display: flex; gap: 7px; min-height: 32px; align-items: center; }
 .settings-options label, .checkbox-row { display: flex; align-items: center; gap: 5px; color: var(--text); font-size: 10px; font-weight: 600; }
+.settings-options .ui-radio { position: relative; flex: 0 0 auto; }
 .settings-options input, .checkbox-row input { accent-color: var(--blue); }
 .transport-switch { display: flex; min-height: 32px; }
 .transport-switch button { flex: 1; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); font-size: 10px; font-weight: 700; }

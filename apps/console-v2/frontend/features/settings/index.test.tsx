@@ -27,6 +27,7 @@ describe('settings feature boundary', () => {
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
     await user.click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(await screen.findByText('已发现 1 个摄像头。')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: '左手' })).toBeChecked();
     await user.click(screen.getByRole('radio', { name: 'RS485' }));
     await user.clear(screen.getByLabelText('串口')); await user.type(screen.getByLabelText('串口'), 'COM7');
     await user.click(screen.getByRole('button', { name: '保存设置' }));
@@ -77,7 +78,6 @@ describe('settings feature boundary', () => {
     const openCameraPrivacySettings = vi.fn(async () => undefined);
     renderSettings(controller({ listCameras, openCameraPrivacySettings }));
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
-    await userEvent.setup().click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('允许桌面应用访问摄像头');
     expect(screen.getByRole('button', { name: '打开 Windows 摄像头设置' })).toBeEnabled();
     await userEvent.setup().click(screen.getByRole('button', { name: '打开 Windows 摄像头设置' }));
@@ -86,13 +86,47 @@ describe('settings feature boundary', () => {
     expect(listCameras).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves a hand edit across a late initial snapshot and subscription event', async () => {
+    const loadDeferred = deferred<SettingsSnapshot>();
+    let emitSnapshot: ((value: SettingsSnapshot) => void) | undefined;
+    const load = vi.fn(() => loadDeferred.promise);
+    const subscribe = vi.fn((listener: (value: SettingsSnapshot) => void) => { emitSnapshot = listener; return () => undefined; });
+    renderSettings(controller({ load, subscribe }));
+    await userEvent.setup().click(screen.getByRole('radio', { name: '左手' }));
+    loadDeferred.resolve({ ...snapshot, config: { ...snapshot.config, hand: 'right' } });
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    expect(screen.getByRole('radio', { name: '左手' })).toBeChecked();
+    emitSnapshot?.({ ...snapshot, config: { ...snapshot.config, hand: 'right' } });
+    expect(screen.getByRole('radio', { name: '左手' })).toBeChecked();
+  });
+
+  it('keeps a hand edit while camera refresh is pending', async () => {
+    const cameraDeferred = deferred<{ permission: 'granted'; cameras: never[] }>();
+    renderSettings(controller({ listCameras: vi.fn(() => cameraDeferred.promise) }));
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    await userEvent.setup().click(screen.getByRole('radio', { name: '左手' }));
+    await userEvent.setup().click(screen.getByRole('button', { name: '刷新摄像头' }));
+    cameraDeferred.resolve({ permission: 'granted', cameras: [] });
+    await screen.findByText('已发现 0 个摄像头。');
+    expect(screen.getByRole('radio', { name: '左手' })).toBeChecked();
+  });
+
+  it('keeps each hand radio hit target local instead of stretching it across the row', async () => {
+    renderSettings();
+    await screen.findByText(/版本 2\.0\.0 · 构建 test/);
+    const rightHand = screen.getByRole('radio', { name: '右手' });
+    const hitTarget = rightHand.closest('label');
+    expect(hitTarget).toHaveClass('ui-radio');
+    expect(hitTarget).not.toHaveClass('ui-field');
+    expect(hitTarget?.parentElement).toHaveClass('settings-options');
+  });
+
   it('distinguishes an app-profile denial and resets only that permission before retry', async () => {
     const listCameras = vi.fn(async () => ({ permission: 'windows-denied' as const, cameras: [] }));
     const getCameraPermission = vi.fn(async () => ({ state: 'deny' as const, origin: 'http://tauri.localhost' }));
     const resetCameraPermission = vi.fn(async () => ({ state: 'default' as const, origin: 'http://tauri.localhost' }));
     renderSettings(controller({ listCameras, getCameraPermission, resetCameraPermission }));
     await screen.findByText(/版本 2\.0\.0 · 构建 test/);
-    await userEvent.setup().click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('应用配置文件拒绝了摄像头权限');
     expect(screen.getByRole('button', { name: '重置本应用摄像头权限' })).toBeEnabled();
     await userEvent.setup().click(screen.getByRole('button', { name: '重置本应用摄像头权限' }));
@@ -107,7 +141,7 @@ describe('settings feature boundary', () => {
     const user = userEvent.setup(); await user.click(screen.getByRole('button', { name: '刷新摄像头' }));
     expect(screen.getByRole('button', { name: '枚举中…' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: '枚举中…' }));
-    expect(listCameras).toHaveBeenCalledTimes(1);
+    expect(listCameras).toHaveBeenCalledTimes(2);
     unmount();
     cameraDeferred.reject(new Error('NotReadableError'));
     await Promise.resolve();

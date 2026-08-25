@@ -9,27 +9,25 @@ const clamp = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) 
 
 /**
  * A local-only telemetry stream for debug mode. It follows the latest target
- * vector while adding a tiny, deterministic motion so charts remain useful
- * even when no physical device is connected.
+ * vector exactly. A timer still emits samples so charts keep advancing, but
+ * a stationary virtual hand must report a stationary measured position.
  */
 export function createVirtualTelemetry(jointCount: number, initialPositions: number[] = []): VirtualTelemetryPort {
   let positions = Array.from({ length: Math.max(0, jointCount) }, (_, index) => clamp(initialPositions[index] ?? 0.5));
   let sequence = 0;
-  let phase = 0;
   const listeners = new Set<(snapshot: TelemetrySnapshot) => void>();
   let timer: number | undefined;
   let latestSnapshot: TelemetrySnapshot | undefined;
 
   const snapshot = (): TelemetrySnapshot => {
-    phase += 0.22;
-    const animated = positions.map((value, index) => clamp(value + Math.sin(phase + index * 0.7) * 0.012));
+    const measured = [...positions];
     return {
       schemaVersion: 1,
       deviceId: 'virtual-hand',
       sequence: ++sequence,
       monotonicTimeMs: typeof performance !== 'undefined' ? performance.now() : Date.now(),
-      positions: animated,
-      rawPosition: animated.map(value => Math.round(value * 255)),
+      positions: measured,
+      rawPosition: measured.map(value => Math.round(value * 255)),
       rawCurrent: [],
       rawSpeed: [],
       rawTouch: [],

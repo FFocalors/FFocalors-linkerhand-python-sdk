@@ -129,6 +129,11 @@ export function TelemetryChart({ telemetry, jointCount = 0, virtual = false }: {
 
   useEffect(() => { pausedRef.current = paused; }, [paused]);
   useEffect(() => {
+    // Clear samples when the source changes or disappears. The card remains
+    // mounted in the no-device state, but stale physical lines must not be
+    // mistaken for current telemetry.
+    samplesRef.current = [];
+    scheduleDraw();
     if (!telemetry) return;
     const unsubscribe = telemetry.subscribe(value => {
       if (pausedRef.current) return;
@@ -480,7 +485,7 @@ export function Diagnostics({ logs, telemetry, device, config, capabilities, exp
           <Badge>固定窗口</Badge>
         </Card>
       </div>
-      {effectiveTelemetry && <TelemetryChart telemetry={effectiveTelemetry} jointCount={resolvedCapabilities?.jointCount} virtual={Boolean(virtualSource)} />}
+      <TelemetryChart telemetry={effectiveTelemetry} jointCount={resolvedCapabilities?.jointCount} virtual={Boolean(virtualSource)} />
       <SafetyCard entries={entries} disconnectCount={disconnectCount} />
       <Card className="self-check-card">
         <div className="card-header">

@@ -22,7 +22,7 @@
 .ui-textarea { padding-block: var(--space-2); resize: vertical; }
 .ui-select:hover:not(:disabled), .ui-input:hover:not(:disabled), .ui-textarea:hover:not(:disabled) { border-color: color-mix(in srgb, var(--color-interaction) 50%, var(--color-line)); }
 .ui-select:focus-visible, .ui-input:focus-visible, .ui-textarea:focus-visible { border-color: var(--color-interaction); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-focus) 24%, transparent); outline: none; }
-.ui-number-input, .ui-number-value { color: var(--color-interaction); font-variant-numeric: tabular-nums; }
+.ui-number-input, .ui-number-value { color: var(--color-numeric); font-variant-numeric: tabular-nums; }
 .ui-field-hint, .ui-field-error { font-size: var(--font-size-xs); font-weight: 500; line-height: 1.4; }
 .ui-field-hint { color: var(--color-muted); }
 .ui-field-error { color: var(--color-danger); }

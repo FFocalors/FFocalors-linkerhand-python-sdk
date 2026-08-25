@@ -15,7 +15,7 @@
 />
 ```
 
-controller 必须提供 `load`、`validate`、`save`、`testSidecar`、`checkOfflineAssets`、`listCameras`、`openCameraPrivacySettings`、`getConnectionState`、`getFirmwareVersion`、`getLogLevel`、`setLogLevel`、`getLocale`、`setLocale`、`resetToFactory` 和 `subscribe`。`save` 的 `applied`、`reconnectRequired`、`restartRequired`、`errors` 是唯一的保存结果来源；页面不会假装硬件即时生效。保存期间所有可编辑字段锁定，并以 draft revision 防止迟到的旧保存结果覆盖当前草稿。订阅在卸载时清理；摄像头是一次性枚举调用，当前没有 camera subscription。
+controller 必须提供 `load`、`validate`、`save`、`testSidecar`、`checkOfflineAssets`、`listCameras`、`openCameraPrivacySettings`、`getConnectionState`、`getFirmwareVersion`、`getLogLevel`、`setLogLevel`、`getLocale`、`setLocale`、`resetToFactory` 和 `subscribe`。`save` 的 `applied`、`reconnectRequired`、`restartRequired`、`errors` 是唯一的保存结果来源；页面不会假装硬件即时生效。保存期间所有可编辑字段锁定，并以 draft revision 防止迟到的旧保存结果覆盖当前草稿。订阅在卸载时清理；进入页面会立即枚举一次摄像头，手动刷新复用同一快速枚举链路，权限查询并行执行且不会阻塞首批设备列表。
 
 `ThemePort` 是应用主题适配器（`getTheme`、`setTheme`、可选 `subscribe`），支持 `light`、`dark`、`system`。主题持久化仍由应用层负责。
 
