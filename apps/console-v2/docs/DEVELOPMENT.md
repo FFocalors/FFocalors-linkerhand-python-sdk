@@ -4,15 +4,15 @@
 
 ## 当前基线
 
-截至 2026-08-24，本文档对应的工作树为：
+截至 2026-08-26，本文档对应的工作树为：
 
 - 路径：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`
-- 集成基线分支：`codex/v2-rewrite`（最近一次管理页开发在 `feat/pages-round2` 上完成并已并入）
-- HEAD：`5a854c0`（`feat(console-v2): 完善控制与管理页面`）
+- 集成基线分支：`codex/v2-rewrite`
+- 最近已验收代码节点：`37fe328`（`feat(console-v2): complete acceptance fixes and vision tracking`）；文档提交后的实时 HEAD 以 `git log -1 --oneline --decorate` 为准
 - Console 包和 Rust workspace 版本：`2.0.0-rc.1`
 - 前端包管理：`pnpm`，锁文件版本为 pnpm 9
 
-旧版工作树 `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 当前有未提交的 GUI 修改和新增测试。V2 开发、验证、提交均在上面的 `linkerhand-python-sdk-v2` 路径进行；不要为了 V2 清理、重置、切换或覆盖旧版工作树。
+旧版工作树 `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 使用 V1 保留分支 `release/v1`。V2 开发、验证、提交均在上面的 `linkerhand-python-sdk-v2` 路径与 `codex/v2-rewrite` 基线上进行，不在 `main` 上开展 V1 或 V2 日常开发。
 
 ## 已完成里程碑
 
@@ -28,9 +28,9 @@
 
 各模块的历史分支、设计不变量和模块级验证记录见 [`MODULES.md`](MODULES.md) 与 [`handoffs/`](handoffs/README.md)。其中旧 handoff 的通过记录是当时分支的证据，不自动等同于当前 HEAD 的新一轮验证。
 
-## 管理页与控制页完善（4abd593 之后）
+## 管理页、控制页与验收完善（4abd593—37fe328）
 
-在 `4abd593`（设备控制页重构）之后，控制台围绕「动作中心 / 诊断中心 / 设置页 / 调试模式」又完成了两轮完善，最终落在 `5a854c0`。这些改动**全部位于前端**（`frontend/`），没有改动公共 DTO、Rust contracts 或 sidecar wire contract。主要能力如下：
+在 `4abd593`（设备控制页重构）之后，控制台围绕「动作中心 / 诊断中心 / 设置页 / 调试模式」完成管理页集成，并在 `37fe328` 前完成多轮本机 Tauri 验收修复。公共 Rust DTO 和 sidecar wire contract 未在最后一轮前端验收修复中改变。主要能力如下：
 
 ### 动作中心（`frontend/features/actions`）
 
@@ -69,6 +69,15 @@
 - Vite 依赖预打包：`vite.config.ts` 的 `optimizeDeps.include` 加入 `react`、`react-dom`、`react-dom/client`、`scheduler`，修复 React 19 + CJS 导致的空白页。
 - Vite 开发服务器固定 `host: 127.0.0.1`、`strictPort`，避免 IPv4/IPv6 绑定不一致与端口残留导致的空白页。
 - 显式安装 `scheduler` 依赖（react-dom 的传递依赖缺失问题）。
+
+### 2026-08-25 验收节点
+
+- 设备控制：首页恢复初始张开姿态、关节目标内部滚动、调试模式虚拟曲线、快捷动作配色和数字/交互色语义完成收口。
+- 动作中心：姿态编辑与动作编排按左右工作流重排，支持内置/数字/自定义姿态、顺序关键帧、方向、低于或等于 1x 的倍速与循环次数。
+- 设置与摄像头：摄像头枚举改为页面加载即执行，权限查询不再阻塞首屏列表；修复左右手单选框命中区域污染。
+- Vision/RPS：共享显式摄像头选择；视觉模仿恢复一手、最高 640x480 推理输入，连续 21 点骨架不再受离散手势门控，并修复 `object-fit: contain` 坐标错位与短暂漏检闪断。
+- 诊断与 UI：调试虚拟曲线、真实结构化日志入口、紧凑曲线卡片、语言切换、高级设置布局和全局 UI token 完成统一。
+- 本节点实际执行并通过：`pnpm vitest run --maxWorkers=2`（24 个文件、179 项测试）、`pnpm typecheck`、`pnpm lint`、`pnpm check:boundaries`、`pnpm build`。Tauri dev 在本机启动并完成操作员页面验收；这不替代 O6 PCAN 实机或干净 Windows 安装验收。
 
 详细的分页改动、端口 seam 与验证记录见 [`handoffs/management-pages.md`](handoffs/management-pages.md)。
 
@@ -212,7 +221,8 @@ pnpm build:portable
 ## Worktree、分支和提交规则
 
 - 集成基线是 `codex/v2-rewrite`；当前 V2 集成 worktree 是 `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`。
-- 旧版 `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 有用户 dirty changes，视为不可触碰的独立 worktree。
+- `release/v1` 从当前 `main` 引出，保存 V1 代码；`codex/v2-rewrite` 保存 V2 开发线。`main` 暂不承载任何代际的日常开发，待正式发布策略确定后再做晋升。
+- 旧版 `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 是独立 worktree；不要从 V2 任务清理、重置或覆盖其中的用户文件。
 - 模块开发使用 `codex/v2-<milestone>-<scope>` 分支；合并/快进前先核对目标分支和 worktree，避免在集成树直接重写历史。
 - 提交应小而可回溯，subject 标明 scope（例如 `feat(console-v2): ...`、`docs(console-v2): ...`）。不要把 `node_modules`、`target`、`dist`、PyInstaller `build/dist`、`src-tauri/binaries` 或 `artifacts` 中的生成物混入源码提交。
 - 交接文档写分支、基线/HEAD、公共契约是否变化、验证命令和硬件/环境限制。仅在用户明确要求时提交；本开发文档本身不要求自动 commit。

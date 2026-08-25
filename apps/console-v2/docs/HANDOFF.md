@@ -6,12 +6,12 @@
 
 - 工作树：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`
 - 集成基线分支：`codex/v2-rewrite`
-- 当前 HEAD：`5a854c0dd1cba3be6439fbed813aea0692dbc558`
+- 最近已验收代码节点：`37fe32857d549dfb253aa2c92846f0d99e02c9c5`；当前文档 HEAD 请运行 `git log -1 --oneline --decorate` 获取
 - 版本：`2.0.0-rc.1`
 - Console 根：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2\apps\console-v2`
-- 最近变更：管理页与控制页完善（动作中心循环/预设同步/关节滑块、诊断中心安全监控/红点/多关节曲线、设置页调试模式/摄像头覆盖/持久化、数字孪生 3D、视觉连续映射、猜拳重构）；全部位于前端，未改公共 DTO 或 sidecar wire contract。
+- 最近变更：完成设备控制、动作中心、诊断、设置、全局 UI 和多语言验收修复；摄像头枚举与选择统一；视觉模仿恢复低延迟连续骨架追踪并修复半握拳闪断。最后一轮验收修复未改公共 Rust DTO 或 sidecar wire contract。
 
-旧版 worktree `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 有 dirty GUI 修改。它不是 V2 的工作目录，不能清理或重置。
+分支策略：`release/v1` 保留 V1，`codex/v2-rewrite` 是 V2 唯一集成基线，`main` 暂不用于日常开发。旧版 worktree `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk` 不是 V2 工作目录，不能从 V2 任务清理或重置。
 
 ## 一分钟接手
 
@@ -39,12 +39,13 @@ pnpm build
 - 调试模式 / 虚拟手：未连接物理手时提供虚拟调试机械手，并按 `canOperate = isPhysicalDevice || debugMode` 屏蔽相应功能。
 - Python strict NDJSON bridge，fake connect/telemetry/close smoke，离线 Vision assets 和 classic Worker 检查。
 - Windows x64 RC 的 Tauri/NSIS、PyInstaller sidecar、portable 打包脚本和 bundle inventory。
+- 2026-08-25 本机验证：24 个 Vitest 文件、179 项测试以及 typecheck、lint、boundary、frontend build 通过；Tauri dev 启动并完成当前页面操作员验收。
 
 当前不要声称已经完成：
 
 - O6 Windows PCAN 真实连接/读写/stop-unlock/重连验收。
 - 干净 Windows 机器上的离线 NSIS 安装验收。
-- 当前 HEAD 的完整浏览器 camera/Worker/Tauri 交互复验（旧 handoff 的结果需按当前树重跑）。
+- 可复现的干净环境 camera/Worker/Tauri 全链路验收；本机操作员验收不等于跨机器发布证据。
 - V2.0 正式发布。
 
 ## 下一步优先级
@@ -66,7 +67,7 @@ pnpm build
 
 - [ ] 当前路径是 `linkerhand-python-sdk-v2\apps\console-v2`，不是旧版 worktree。
 - [ ] `git status --short --branch` 的已有修改已被识别；不覆盖其他 Agent 的改动。
-- [ ] 当前分支和 HEAD 与本文件一致；若已变化，先更新本交接基线。
+- [ ] 当前分支是 `codex/v2-rewrite`，并已用 `git log -1` 记录实时 HEAD。
 - [ ] 变更范围对应一个模块/Port/assembly seam，并先阅读相关 handoff、ADR、contract 文档。
 - [ ] 若改公共 DTO，已准备 Rust source → generator → TypeScript projection → Python/sidecar/UI consumers 的同步计划。
 - [ ] 若涉及硬件或打包，已明确哪些证据是 fake/static、哪些需要真实设备或 clean machine。
@@ -78,5 +79,5 @@ pnpm build
 - [ ] 失败项、未运行项和环境原因没有被写成通过。
 - [ ] 真实硬件证据包含 O6 PCAN 的设备和连接信息；没有硬件时明确写“未验证”。
 - [ ] 更新 `docs/handoffs/<scope>.md`，并保留可复制的下一入口。
-- [ ] 提交前确认没有把旧版 dirty worktree、生成产物或无关公共契约改动带入。
+- [ ] 提交前确认没有把旧版 worktree 用户文件、生成产物或无关公共契约改动带入。
 - [ ] 除非用户明确要求，交接完成后不自动创建 commit。

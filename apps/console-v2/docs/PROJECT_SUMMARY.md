@@ -63,7 +63,7 @@ O6 机械手硬件
 
 ---
 
-## 4. V2 当前开发进度（HEAD `5a854c0`）
+## 4. V2 当前开发进度（已验收代码节点 `37fe328`）
 
 ### 4.1 已集成能力
 
@@ -78,14 +78,21 @@ O6 机械手硬件
 | 管理页增强 | 动作中心循环/预设同步/关节滑块、诊断中心安全监控/红点/多关节曲线、设置页调试模式/摄像头覆盖/持久化 |
 | 调试模式 | 未连接物理手时提供虚拟调试机械手；`canOperate = isPhysicalDevice || debugMode` 屏蔽相应功能 |
 | Vision | 离线模型/WASM 资源清单、classic Worker + MediaPipe loader 路径、连续手部映射、录制/回放 |
+| 验收收口 | 首页/动作中心/诊断/设置布局与语义统一、摄像头枚举与选择、调试虚拟曲线、低延迟连续骨架追踪、多语言与 UI token |
 | 打包发布 | Windows x64 RC：Tauri NSIS、PyInstaller sidecar、portable ZIP、bundle inventory、Windows Common Controls manifest |
 
 ### 4.2 当前版本与工作树
 
 - **版本**：`2.0.0-rc.1`
-- **集成基线分支**：`codex/v2-rewrite`（管理页开发在 `feat/pages-round2` 完成并已并入）
+- **V1 保留分支**：`release/v1`
+- **V2 集成基线分支**：`codex/v2-rewrite`
+- **主分支策略**：`main` 暂不用于 V1/V2 日常开发，待正式发布晋升时再决定指向
 - **V2 工作树**：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`
-- **旧版 worktree**：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk`（有 dirty GUI 修改，不可触碰/重置）
+- **旧版 worktree**：`E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk`（V2 任务不可清理/重置）
+
+### 4.3 最近验证记录
+
+2026-08-25 在 V2 worktree 实际通过 `pnpm vitest run --maxWorkers=2`（24 个文件、179 项测试）、`pnpm typecheck`、`pnpm lint`、`pnpm check:boundaries` 和 `pnpm build`；Tauri dev 已启动并完成本机操作员页面验收。该记录仍不覆盖 O6 PCAN 真实硬件和干净 Windows 安装门槛。
 
 ---
 
@@ -221,7 +228,7 @@ pnpm exec vite --configLoader native dev --host 127.0.0.1 --port 1420
 - fake/simulator/NDJSON smoke 不覆盖 PCAN 驱动、真实 SDK、供电、线缆和设备安全风险
 - `check:vision-assets` / `check:vision-worker` 保证文件存在和内容一致，不保证摄像头权限、WASM、Worker 和 Tauri webview 在每台机器上都成功启动
 - Tauri NSIS 使用 offlineInstaller 配置，但必须在独立干净 Windows 机器复验安装
-- 旧版 dirty worktree 的 GUI 修改不纳入 V2 基线；若需迁移功能，应单独做 delta 审计
+- V1 worktree 的用户文件不纳入 V2 基线；若需迁移功能，应单独做 delta 审计
 - 3D 模型当前仅对 O6 6 维配置构建；多型号姿态图、L20/L25 模型和传感器显示需要 capability 设计
 
 ---
