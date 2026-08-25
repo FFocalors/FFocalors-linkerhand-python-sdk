@@ -1,0 +1,131 @@
+- generic [ref=e2]:
+  - status [ref=e3]: 浏览器模拟器：当前不会连接或伪装真实硬件，所有动作均为确定性本地演示。
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]: LH
+        - generic [ref=e8]:
+          - strong [ref=e9]: LinkerHand
+          - generic [ref=e10]: CONSOLE V2
+      - generic [ref=e17]:
+        - strong [ref=e18]: 演示机械手 O6
+        - generic [ref=e19]: O6 · left
+      - navigation "主导航" [ref=e20]:
+        - generic [ref=e21]:
+          - button "设备控制" [ref=e22] [cursor=pointer]
+          - button "智能抓取" [ref=e29] [cursor=pointer]
+        - generic [ref=e36]:
+          - button "视觉模仿" [ref=e37] [cursor=pointer]
+          - button "猜拳互动" [ref=e42] [cursor=pointer]
+        - generic [ref=e46]:
+          - button "动作中心" [ref=e47] [cursor=pointer]
+          - button "诊断中心" [ref=e51] [cursor=pointer]
+          - button "设置" [active] [ref=e55] [cursor=pointer]
+      - generic [ref=e60]:
+        - button "帮助与快捷键" [ref=e61] [cursor=pointer]
+        - generic [ref=e66]:
+          - generic [ref=e67]: OP
+          - generic [ref=e68]:
+            - strong [ref=e69]: 操作员
+            - generic [ref=e70]: 本地工作区
+    - main [ref=e72]:
+      - generic [ref=e73]:
+        - generic "当前位置" [ref=e76]:
+          - generic [ref=e77]: 工作台
+          - generic [ref=e78]: /
+          - strong [ref=e79]: 设置
+        - generic [ref=e80]:
+          - button "切换主题" [ref=e81] [cursor=pointer]
+          - button "停止全部动作" [ref=e85] [cursor=pointer]
+      - generic [ref=e1106]:
+        - generic [ref=e1107]:
+          - generic [ref=e1108]:
+            - heading "设置" [level=1] [ref=e1109]
+            - paragraph [ref=e1110]: 保存的是设备配置草稿；硬件状态仍以运行时返回为准。
+          - generic [ref=e1111]:
+            - generic [ref=e1112]: 已保存
+            - button "保存设置" [ref=e1114] [cursor=pointer]
+        - generic [ref=e1115]:
+          - generic [ref=e1116]:
+            - generic [ref=e1117]:
+              - generic [ref=e1118]:
+                - heading "设备连接" [level=2] [ref=e1119]
+                - generic [ref=e1120]: 所有字段进入 staged draft，提交前不会改变运行中设备。
+              - generic [ref=e1121]: 已连接
+            - generic [ref=e1124]:
+              - generic [ref=e1125]:
+                - text: 设备型号
+                - combobox "设备型号" [ref=e1126]:
+                  - option "O6" [selected]
+                  - option "L6"
+                  - option "L7"
+                  - option "L10"
+                  - option "L20"
+                  - option "G20"
+                  - option "L21"
+                  - option "L25"
+              - group "左右手" [ref=e1127]:
+                - generic [ref=e1129]:
+                  - generic [ref=e1130]:
+                    - radio "左手" [checked] [ref=e1131]
+                    - text: 左手
+                  - generic [ref=e1132]:
+                    - radio "右手" [ref=e1133]
+                    - text: 右手
+              - group "传输方式" [ref=e1134]:
+                - generic [ref=e1136]:
+                  - button "CAN" [ref=e1137] [cursor=pointer]
+                  - button "RS485" [ref=e1138] [cursor=pointer]
+              - generic [ref=e1139]:
+                - text: CAN channel
+                - textbox "CAN channel" [ref=e1140]: fake
+              - paragraph [ref=e1141]: 由运行时选择 CAN channel；不会在此页面直接打开硬件。
+          - generic [ref=e1142]:
+            - generic [ref=e1143]:
+              - generic [ref=e1144]:
+                - heading "摄像头" [level=2] [ref=e1145]
+                - generic [ref=e1146]: 只保存首选 deviceId；不会创建 VisionRuntime 或打开第二个摄像头。
+              - generic [ref=e1147]: 权限未确认
+            - generic [ref=e1148]:
+              - generic [ref=e1149]:
+                - text: 首选摄像头
+                - combobox "首选摄像头" [disabled] [ref=e1150]:
+                  - option "不指定" [selected]
+              - button "刷新摄像头" [ref=e1151] [cursor=pointer]
+            - paragraph [ref=e1152]: 尚未枚举摄像头。请点击刷新；权限和错误均来自 controller。
+          - generic [ref=e1153]:
+            - generic [ref=e1154]:
+              - generic [ref=e1155]:
+                - heading "外观" [level=2] [ref=e1156]
+                - generic [ref=e1157]: 主题由应用 ThemePort 持有。
+              - generic [ref=e1158]: 跟随系统
+            - radiogroup "主题" [ref=e1159]:
+              - generic [ref=e1160] [cursor=pointer]:
+                - radio "浅色" [ref=e1161]
+                - text: 浅色
+              - generic [ref=e1162] [cursor=pointer]:
+                - radio "深色" [ref=e1163]
+                - text: 深色
+              - generic [ref=e1164] [cursor=pointer]:
+                - radio "跟随系统" [checked] [ref=e1165]
+                - text: 跟随系统
+            - generic [ref=e1166]:
+              - generic [ref=e1167]: 语言
+              - generic [ref=e1168]:
+                - button "中文" [ref=e1169] [cursor=pointer]
+                - button "English" [ref=e1170] [cursor=pointer]
+          - generic [ref=e1171]:
+            - generic [ref=e1172]:
+              - generic [ref=e1173]:
+                - heading "版本与离线资源" [level=2] [ref=e1174]
+                - generic [ref=e1175]: 版本 2.0.0-rc.1 · 构建 development · 固件 vsim-1.0.0 · 构建 2026-08-24
+              - generic [ref=e1176]: 本地应用
+            - generic [ref=e1177]:
+              - button "检查离线资源" [ref=e1178] [cursor=pointer]
+              - button "测试 sidecar" [ref=e1179] [cursor=pointer]
+            - paragraph [ref=e1180]: V2 不迁移旧配置；如需使用旧版本设置，请重新确认本页草稿。
+        - button "高级设置 自动重连、连接超时、诊断参数、日志级别" [ref=e1182] [cursor=pointer]:
+          - generic [ref=e1183]:
+            - strong [ref=e1184]: 高级设置
+            - generic [ref=e1185]: 自动重连、连接超时、诊断参数、日志级别
+          - generic [ref=e1186]: 展开

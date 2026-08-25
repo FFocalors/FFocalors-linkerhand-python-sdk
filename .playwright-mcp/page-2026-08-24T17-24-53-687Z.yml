@@ -1,0 +1,194 @@
+- generic [ref=e2]:
+  - status [ref=e3]: 浏览器模拟器：当前不会连接或伪装真实硬件，所有动作均为确定性本地演示。
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]: LH
+        - generic [ref=e8]:
+          - strong [ref=e9]: LinkerHand
+          - generic [ref=e10]: CONSOLE V2
+        - button "关闭菜单" [ref=e11] [cursor=pointer]
+      - generic [ref=e17]:
+        - strong [ref=e18]: 演示机械手 O6
+        - generic [ref=e19]: O6 · left
+      - navigation "主导航" [ref=e20]:
+        - generic [ref=e21]:
+          - button "设备控制" [ref=e22] [cursor=pointer]
+          - button "智能抓取" [ref=e29] [cursor=pointer]
+        - generic [ref=e36]:
+          - button "视觉模仿" [ref=e37] [cursor=pointer]
+          - button "猜拳互动" [ref=e42] [cursor=pointer]
+        - generic [ref=e46]:
+          - button "动作中心" [ref=e47] [cursor=pointer]
+          - button "诊断中心" [ref=e51] [cursor=pointer]
+          - button "设置" [ref=e55] [cursor=pointer]
+      - generic [ref=e60]:
+        - button "帮助与快捷键" [ref=e61] [cursor=pointer]
+        - generic [ref=e66]:
+          - generic [ref=e67]: OP
+          - generic [ref=e68]:
+            - strong [ref=e69]: 操作员
+            - generic [ref=e70]: 本地工作区
+    - main [ref=e72]:
+      - generic [ref=e73]:
+        - button "打开菜单" [ref=e74] [cursor=pointer]
+        - generic "当前位置" [ref=e76]:
+          - generic [ref=e77]: 工作台
+          - generic [ref=e78]: /
+          - strong [ref=e79]: 设备控制
+        - generic [ref=e80]:
+          - button "切换主题" [ref=e81] [cursor=pointer]
+          - button "停止全部动作" [ref=e85] [cursor=pointer]
+      - generic [ref=e90]:
+        - generic [ref=e91]:
+          - generic [ref=e92]:
+            - heading "设备控制" [level=1] [ref=e93]
+            - paragraph [ref=e94]: 所有目标都通过设备控制器提交，硬件状态以实时遥测为准。
+          - generic [ref=e95]:
+            - generic [ref=e96]: 未连接
+            - button "设备安全锁" [ref=e97] [cursor=pointer]: 停止全部动作
+        - generic [ref=e98]: 未连接机械手，设备控制不可用。请在设置中连接设备，或启用调试模式以使用虚拟机械手。
+        - generic [ref=e99]:
+          - generic [ref=e100]:
+            - generic [ref=e101]:
+              - generic "数字孪生视图" [ref=e102]
+              - generic: 加载模型…
+              - generic [ref=e103]: DIGITAL TWIN · O6
+              - button "复位视角" [ref=e105] [cursor=pointer]
+              - generic [ref=e106]:
+                - generic [ref=e108]: 未连接
+                - generic [ref=e109]: ·
+                - generic [ref=e110]: 演示机械手 O6
+                - generic [ref=e111]: ·
+                - generic [ref=e112]: J6
+            - generic [ref=e113]:
+              - generic [ref=e114]:
+                - generic [ref=e115]:
+                  - heading "实时关节曲线" [level=2] [ref=e116]
+                  - generic [ref=e117]: 最近 160 个采样点 · 0–255
+                - generic [ref=e118]:
+                  - generic [ref=e119]: 遥测未接入
+                  - button "清空" [ref=e120] [cursor=pointer]
+              - generic [ref=e121]:
+                - button "大拇指弯曲" [ref=e122] [cursor=pointer]
+                - button "大拇指横摆" [ref=e124] [cursor=pointer]
+                - button "食指弯曲" [ref=e126] [cursor=pointer]
+                - button "中指弯曲" [ref=e128] [cursor=pointer]
+                - button "无名指弯曲" [ref=e130] [cursor=pointer]
+                - button "小拇指弯曲" [ref=e132] [cursor=pointer]
+              - generic "6 关节实时位置曲线" [ref=e135]
+          - generic [ref=e136]:
+            - generic [ref=e137]:
+              - generic [ref=e138]:
+                - generic [ref=e139]:
+                  - heading "连接管理" [level=2] [ref=e140]
+                  - generic [ref=e141]: 第 0 次尝试
+                - generic [ref=e142]: 未连接
+              - generic [ref=e143]:
+                - button "连接" [disabled] [ref=e144]
+                - button "断开" [disabled] [ref=e145]
+                - button "重连" [disabled] [ref=e146]
+            - generic:
+              - generic:
+                - generic [ref=e147]:
+                  - generic [ref=e148]:
+                    - generic [ref=e149]:
+                      - heading "关节目标" [level=2] [ref=e150]
+                      - generic [ref=e151]: 归一化 · 0–100%
+                    - generic [ref=e152]: 6 关节
+                  - generic [ref=e153]:
+                    - generic [ref=e154]:
+                      - generic [ref=e155]: 大拇指弯曲
+                      - slider "大拇指弯曲 目标" [disabled] [ref=e156]: "0.98"
+                      - status [ref=e157]: 98.0%
+                    - generic [ref=e158]:
+                      - generic [ref=e159]: 大拇指横摆
+                      - slider "大拇指横摆 目标" [disabled] [ref=e160]: "0.98"
+                      - status [ref=e161]: 98.0%
+                    - generic [ref=e162]:
+                      - generic [ref=e163]: 食指弯曲
+                      - slider "食指弯曲 目标" [disabled] [ref=e164]: "0.98"
+                      - status [ref=e165]: 98.0%
+                    - generic [ref=e166]:
+                      - generic [ref=e167]: 中指弯曲
+                      - slider "中指弯曲 目标" [disabled] [ref=e168]: "0.98"
+                      - status [ref=e169]: 98.0%
+                    - generic [ref=e170]:
+                      - generic [ref=e171]: 无名指弯曲
+                      - slider "无名指弯曲 目标" [disabled] [ref=e172]: "0.98"
+                      - status [ref=e173]: 98.0%
+                    - generic [ref=e174]:
+                      - generic [ref=e175]: 小拇指弯曲
+                      - slider "小拇指弯曲 目标" [disabled] [ref=e176]: "0.98"
+                      - status [ref=e177]: 98.0%
+                  - group [ref=e178]:
+                    - generic "高级诊断：原始值估算" [ref=e179] [cursor=pointer]
+                - generic [ref=e180]:
+                  - generic [ref=e181]:
+                    - generic [ref=e182]: 大拇指弯曲
+                    - strong [ref=e183]: "--"
+                  - generic [ref=e184]:
+                    - generic [ref=e185]: 大拇指横摆
+                    - strong [ref=e186]: "--"
+                  - generic [ref=e187]:
+                    - generic [ref=e188]: 食指弯曲
+                    - strong [ref=e189]: "--"
+                  - generic [ref=e190]:
+                    - generic [ref=e191]: 中指弯曲
+                    - strong [ref=e192]: "--"
+                  - generic [ref=e193]:
+                    - generic [ref=e194]: 无名指弯曲
+                    - strong [ref=e195]: "--"
+                  - generic [ref=e196]:
+                    - generic [ref=e197]: 小拇指弯曲
+                    - strong [ref=e198]: "--"
+              - generic [ref=e199]:
+                - generic [ref=e201]:
+                  - heading "快捷动作" [level=2] [ref=e202]
+                  - generic [ref=e203]: 内置预设由设备控制器执行
+                - generic:
+                  - generic [ref=e204]:
+                    - generic [ref=e205]: 基本预设
+                    - generic [ref=e206]:
+                      - button "张开" [disabled] [ref=e207]
+                      - button "握拳" [disabled] [ref=e213]
+                      - button "OK" [disabled] [ref=e220]
+                      - button "点赞" [disabled] [ref=e225]
+                  - generic [ref=e229]:
+                    - generic [ref=e230]: 数字预设
+                    - generic [ref=e231]:
+                      - button "壹" [disabled] [ref=e232]
+                      - button "贰" [disabled] [ref=e235]
+                      - button "叁" [disabled] [ref=e239]
+                      - button "肆" [disabled] [ref=e244]
+                      - button "伍" [disabled] [ref=e250]
+                  - generic [ref=e257]:
+                    - generic [ref=e258]: 自定义预设
+                    - generic [ref=e259]:
+                      - textbox "输入预设名称" [disabled] [ref=e260]
+                      - button "保存当前为预设" [disabled] [ref=e261]
+                    - paragraph [ref=e262]: 暂无自定义预设，调整关节后点击\u201c保存当前为预设\u201d
+            - generic [ref=e263]:
+              - generic [ref=e264]:
+                - generic [ref=e266]:
+                  - heading "速度" [level=2] [ref=e267]
+                  - generic [ref=e268]: 6 通道
+                - generic [ref=e269]: 100%
+                - slider "速度" [disabled] [ref=e270]: "1"
+                - button "应用" [disabled] [ref=e271]
+              - generic [ref=e272]:
+                - generic [ref=e274]:
+                  - heading "扭矩" [level=2] [ref=e275]
+                  - generic [ref=e276]: 6 通道
+                - generic [ref=e277]: 100%
+                - slider "扭矩" [disabled] [ref=e278]: "1"
+                - button "应用" [disabled] [ref=e279]
+              - generic [ref=e280]:
+                - generic [ref=e281]:
+                  - generic [ref=e282]:
+                    - heading "操作" [level=2] [ref=e283]
+                    - generic [ref=e284]: 等待状态
+                  - generic [ref=e285]: 空闲
+                - paragraph [ref=e286]: 等待控制器返回真实动作状态。
+                - button "诊断中心 ↗" [ref=e287] [cursor=pointer]
+        - paragraph [ref=e288]: 停止全部动作是软件锁定，不是物理断电急停；危险场景请使用设备的物理急停装置。

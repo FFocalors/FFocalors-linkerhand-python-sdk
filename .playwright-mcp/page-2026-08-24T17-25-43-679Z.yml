@@ -1,0 +1,175 @@
+- generic [ref=e2]:
+  - status [ref=e3]: 浏览器模拟器：当前不会连接或伪装真实硬件，所有动作均为确定性本地演示。
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]: LH
+        - generic [ref=e8]:
+          - strong [ref=e9]: LinkerHand
+          - generic [ref=e10]: CONSOLE V2
+      - generic [ref=e17]:
+        - strong [ref=e18]: 演示机械手 O6
+        - generic [ref=e19]: O6 · left
+      - navigation "主导航" [ref=e20]:
+        - generic [ref=e21]:
+          - button "设备控制" [ref=e22] [cursor=pointer]
+          - button "智能抓取" [ref=e29] [cursor=pointer]
+        - generic [ref=e36]:
+          - button "视觉模仿" [ref=e37] [cursor=pointer]
+          - button "猜拳互动" [ref=e42] [cursor=pointer]
+        - generic [ref=e46]:
+          - button "动作中心" [ref=e47] [cursor=pointer]
+          - button "诊断中心" [active] [ref=e51] [cursor=pointer]
+          - button "设置" [ref=e55] [cursor=pointer]
+      - generic [ref=e60]:
+        - button "帮助与快捷键" [ref=e61] [cursor=pointer]
+        - generic [ref=e66]:
+          - generic [ref=e67]: OP
+          - generic [ref=e68]:
+            - strong [ref=e69]: 操作员
+            - generic [ref=e70]: 本地工作区
+    - main [ref=e72]:
+      - generic [ref=e73]:
+        - generic "当前位置" [ref=e76]:
+          - generic [ref=e77]: 工作台
+          - generic [ref=e78]: /
+          - strong [ref=e79]: 诊断中心
+        - generic [ref=e80]:
+          - button "切换主题" [ref=e81] [cursor=pointer]
+          - button "停止全部动作" [ref=e85] [cursor=pointer]
+      - generic [ref=e956]:
+        - generic [ref=e957]:
+          - generic [ref=e958]:
+            - heading "诊断中心" [level=1] [ref=e959]
+            - paragraph [ref=e960]: 用确定性检查快速判断连接、遥测与日志状态。
+          - button "导出诊断包" [ref=e961] [cursor=pointer]
+        - generic [ref=e965]:
+          - generic [ref=e966]:
+            - text: 自检结果
+            - generic [ref=e967]:
+              - text: "4"
+              - generic [ref=e968]: / 5 正常
+            - generic [ref=e969]: 正常
+          - generic [ref=e970]:
+            - text: 日志窗口
+            - generic [ref=e971]: 1 条
+            - generic [ref=e972]: 有界输入
+          - generic [ref=e973]:
+            - text: 遥测点上限
+            - generic [ref=e974]: 240 点
+            - generic [ref=e975]: 固定窗口
+        - generic [ref=e976]:
+          - generic [ref=e977]:
+            - generic [ref=e978]:
+              - heading "关节曲线" [level=2] [ref=e979]
+              - generic [ref=e980]: 固定 240 点 · 仅绘制可见窗口
+            - generic [ref=e981]:
+              - button "清空" [ref=e982] [cursor=pointer]
+              - button "暂停" [ref=e986] [cursor=pointer]
+          - generic [ref=e990]:
+            - generic [ref=e991]:
+              - text: 时间窗
+              - combobox "时间窗" [ref=e992]:
+                - option "10 秒"
+                - option "30 秒" [selected]
+                - option "60 秒"
+            - generic [ref=e993]: 遥测端口未注入，等待运行时
+          - generic [ref=e994]:
+            - button "大拇指弯曲" [ref=e995] [cursor=pointer]
+            - button "大拇指横摆" [ref=e997] [cursor=pointer]
+            - button "食指弯曲" [ref=e999] [cursor=pointer]
+            - button "中指弯曲" [ref=e1001] [cursor=pointer]
+            - button "无名指弯曲" [ref=e1003] [cursor=pointer]
+            - button "小拇指弯曲" [ref=e1005] [cursor=pointer]
+          - generic "关节遥测曲线" [ref=e1007]
+          - generic:
+            - generic: "1.0"
+            - generic: "0.5"
+            - generic: "0.0"
+        - generic [ref=e1008]:
+          - generic [ref=e1009]:
+            - generic [ref=e1010]:
+              - heading "安全监控" [level=2] [ref=e1011]
+              - generic [ref=e1012]: 错误与警告统计 · 遥测断线计数
+            - generic [ref=e1013]: 正常
+          - generic [ref=e1017]:
+            - generic [ref=e1018]:
+              - text: 错误
+              - generic [ref=e1019]: "0"
+            - generic [ref=e1020]:
+              - text: 警告
+              - generic [ref=e1021]: "0"
+            - generic [ref=e1022]:
+              - text: 遥测断线
+              - generic [ref=e1023]: "0"
+        - generic [ref=e1024]:
+          - generic [ref=e1025]:
+            - generic [ref=e1026]:
+              - heading "连接自检" [level=2] [ref=e1027]
+              - generic [ref=e1028]: 只读检查注入端口，不直接访问设备
+            - button "显示原始数据" [ref=e1029] [cursor=pointer]
+          - generic [ref=e1033]:
+            - generic [ref=e1034]:
+              - generic [ref=e1038]:
+                - strong [ref=e1039]: 设备配置
+                - generic [ref=e1040]: 演示机械手 O6 · O6
+              - generic [ref=e1041]: 正常
+            - generic [ref=e1042]:
+              - generic [ref=e1046]:
+                - strong [ref=e1047]: 能力声明
+                - generic [ref=e1048]: 6 个关节
+              - generic [ref=e1049]: 正常
+            - generic [ref=e1050]:
+              - generic [ref=e1054]:
+                - strong [ref=e1055]: 连接状态
+                - generic [ref=e1056]: 设备已连接
+              - generic [ref=e1057]: 正常
+            - generic [ref=e1058]:
+              - generic [ref=e1062]:
+                - strong [ref=e1063]: 遥测流
+                - generic [ref=e1064]: 尚未读取遥测
+                - generic [ref=e1065]: 建议：打开遥测端口后重试
+              - generic [ref=e1066]: 待检查
+            - generic [ref=e1067]:
+              - generic [ref=e1071]:
+                - strong [ref=e1072]: 日志健康
+                - generic [ref=e1073]: 1 条记录，无错误事件
+              - generic [ref=e1074]: 正常
+        - generic [ref=e1075]:
+          - generic [ref=e1076]:
+            - generic [ref=e1077]:
+              - heading "结构化日志" [level=2] [ref=e1078]
+              - generic [ref=e1079]: 窗口化显示 · 最多载入 512 条
+            - generic [ref=e1080]:
+              - button "刷新" [ref=e1081] [cursor=pointer]
+              - button "导出 JSON" [ref=e1085] [cursor=pointer]
+          - generic [ref=e1089]:
+            - generic [ref=e1090]:
+              - text: 级别
+              - combobox "级别" [ref=e1091]:
+                - option "全部" [selected]
+                - option "trace"
+                - option "debug"
+                - option "info"
+                - option "warn"
+                - option "error"
+            - generic [ref=e1092]:
+              - text: 事件
+              - combobox "事件" [ref=e1093]:
+                - option "全部事件" [selected]
+                - option "info"
+            - generic [ref=e1094]:
+              - text: 时间范围
+              - combobox "时间范围" [ref=e1095]:
+                - option "全部" [selected]
+                - option "最近5分钟"
+                - option "最近1分钟"
+            - generic [ref=e1096]:
+              - text: 关键词
+              - textbox "关键词" [ref=e1097]:
+                - /placeholder: 搜索事件或消息
+          - log "结构化事件日志" [ref=e1098]:
+            - generic [ref=e1100]:
+              - generic [ref=e1102]: "1"
+              - strong [ref=e1103]: 运行在浏览器模拟器模式，未连接物理机械手
+              - generic [ref=e1104]: info

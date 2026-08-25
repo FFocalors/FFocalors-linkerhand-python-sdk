@@ -379,16 +379,26 @@ class HandPoseView(gl.GLViewWidget):
         self._fingers = {}
         self._first_fit = True
 
+        # OpenGL geometry is comparatively expensive.  Keep the animation at
+        # a bounded 30 FPS and let incoming signals only replace the latest
+        # target pose; intermediate hardware samples are not render work.
         self._anim_timer = QTimer(self)
-        self._anim_timer.setInterval(20)
+        self._anim_timer.setInterval(33)
         self._anim_timer.timeout.connect(self._animate_step)
+        self._highlight_timer = QTimer(self)
+        self._highlight_timer.setSingleShot(True)
+        self._highlight_timer.setInterval(450)
+        self._highlight_timer.timeout.connect(self._reset_highlight)
+        self._active_finger = None
+        self._render_enabled = True
 
         if self._is_six:
             self._build_3d_hand()
             self._init_from_config()
 
-        from lhgui.utils.signal_bus import signal_bus
-        signal_bus.joint_state_updated.connect(self.update_joint_values)
+        # HandPoseCard is the single owner of the joint_state_updated
+        # subscription.  Keeping a second connection here caused every
+        # feedback sample to enqueue duplicate pose updates and summary work.
         from lhgui.styles.theme_manager import get_theme_manager
         manager = get_theme_manager()
         if manager is not None:
@@ -490,10 +500,13 @@ class HandPoseView(gl.GLViewWidget):
             return
         self._target = sanitized
         self._last_valid = sanitized
-        if not self._anim_timer.isActive():
+        if self._render_enabled and not self._anim_timer.isActive():
             self._anim_timer.start()
 
     def _animate_step(self):
+        if not self._render_enabled:
+            self._anim_timer.stop()
+            return
         alpha = 0.25
         changed = False
         for i in range(6):
@@ -679,7 +692,8 @@ class HandPoseView(gl.GLViewWidget):
         if target is None:
             return
 
-        # 先清除以前所有高亮
+        # 先清除以前所有高亮。高亮复位使用单个可重启定时器，避免高速
+        # 反馈下创建大量 singleShot 定时器和过期闭包。
         for f in self._fingers.values():
             f.reset_color()
 
@@ -687,11 +701,13 @@ class HandPoseView(gl.GLViewWidget):
         f = self._fingers.get(target)
         if f is not None:
             f.set_active(True)
+            self._active_finger = f
+            self._highlight_timer.start()
 
-            def _reset():
-                f.reset_color()
-
-            QTimer.singleShot(450, _reset)
+    def _reset_highlight(self):
+        if self._active_finger is not None:
+            self._active_finger.reset_color()
+            self._active_finger = None
 
     def _apply_theme(self, name: str):
         if name == "dark":
@@ -703,11 +719,14 @@ class HandPoseView(gl.GLViewWidget):
         return self._is_six
 
     def hideEvent(self, event):
+        self._render_enabled = False
         self._anim_timer.stop()
+        self._highlight_timer.stop()
         super().hideEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._render_enabled = True
         if self._is_six and self._last_valid is not None:
             self._target = list(self._last_valid)
             if not self._anim_timer.isActive():

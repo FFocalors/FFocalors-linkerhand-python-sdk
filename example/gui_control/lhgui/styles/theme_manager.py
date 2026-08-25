@@ -4,6 +4,7 @@
 import colorsys
 import os
 import re
+import weakref
 
 from PyQt5.QtCore import (
     QObject, QEvent, QEasingCurve, QPropertyAnimation, QSettings, Qt, pyqtSignal,
@@ -33,6 +34,8 @@ class ThemeManager(QObject):
         self.app = app
         self._style_dir = os.path.dirname(os.path.abspath(__file__))
         self._cache = {}
+        self._inline_dark_cache = {}
+        self._tracked_widgets = weakref.WeakSet()
         self._current = None
         self._animations = []
         self._syncing_inline = False
@@ -152,6 +155,15 @@ class ThemeManager(QObject):
 
         return _DECL_RE.sub(replace_declaration, stylesheet)
 
+    def _dark_inline_stylesheet(self, stylesheet: str) -> str:
+        """Transform an inline stylesheet once and reuse it across theme flips."""
+        stylesheet = str(stylesheet)
+        cached = self._inline_dark_cache.get(stylesheet)
+        if cached is None:
+            cached = self._transform_stylesheet(stylesheet)
+            self._inline_dark_cache[stylesheet] = cached
+        return cached
+
     def _palette(self, name: str) -> QPalette:
         palette = QPalette()
         if name == self.DARK:
@@ -178,30 +190,43 @@ class ThemeManager(QObject):
         if name == self.DARK:
             if not current:
                 return
-            transformed_stored = self._transform_stylesheet(str(stored)) if stored else None
+            transformed_stored = self._dark_inline_stylesheet(stored) if stored else None
+            # If the current sheet is already our dark cache, this is a no-op.
+            # Otherwise it is a new light inline sheet (many controls update
+            # their status color at runtime), so replace the cached source.
             if stored is None or current != transformed_stored:
                 stored = current
                 widget.setProperty("_lh_light_stylesheet", stored)
-            target = self._transform_stylesheet(str(stored))
+            target = self._dark_inline_stylesheet(str(stored))
             if current != target:
                 widget.setStyleSheet(target)
         elif stored is not None:
-            widget.setStyleSheet(str(stored))
+            light = str(stored)
+            if current != light:
+                widget.setStyleSheet(light)
             widget.setProperty("_lh_light_stylesheet", None)
 
     def refresh_widgets(self, root: QWidget = None):
+        """Register inline-styled widgets and sync them when required.
+
+        The first call after the main window is built is intentionally a scan;
+        subsequent theme flips only visit this weakly-held registry instead of
+        walking every QWidget and re-running the color transform.
+        """
         widgets = root.findChildren(QWidget) if root else self.app.allWidgets()
         if root is not None:
             widgets = [root] + widgets
         self._syncing_inline = True
         try:
             for widget in widgets:
+                self._tracked_widgets.add(widget)
                 self._sync_single_inline_style(widget, self._current or self.LIGHT)
         finally:
             self._syncing_inline = False
 
     def eventFilter(self, watched, event):
         if self._current == self.DARK and isinstance(watched, QWidget):
+            self._tracked_widgets.add(watched)
             if event.type() in (QEvent.Show, QEvent.StyleChange) and not self._syncing_inline:
                 self._syncing_inline = True
                 try:
@@ -212,12 +237,26 @@ class ThemeManager(QObject):
 
     def _apply_now(self, name: str):
         self.app.setProperty("linkerhandTheme", name)
-        self.app.setPalette(self._palette(name))
-        self.app.setStyleSheet(self._load(name))
+        # Qt emits StyleChange for many descendants while replacing the global
+        # sheet. Suppress the event-filter sync during that atomic operation.
+        self._syncing_inline = True
+        try:
+            self.app.setPalette(self._palette(name))
+            self.app.setStyleSheet(self._load(name))
+        finally:
+            self._syncing_inline = False
         self._current = name
-        self.refresh_widgets()
+        # Inline styles are registered by the post-window startup call and by
+        # the event filter for widgets created later. Avoid an allWidgets scan
+        # on every toggle; this is a major source of theme-switch stalls.
+        self._syncing_inline = True
+        try:
+            for widget in tuple(self._tracked_widgets):
+                if widget is not None:
+                    self._sync_single_inline_style(widget, name)
+        finally:
+            self._syncing_inline = False
         self.theme_changed.emit(name)
-        self.app.processEvents()
 
     def apply(self, name: str = None, animated: bool = False, source_widget: QWidget = None,
               persist: bool = False):
@@ -266,7 +305,10 @@ class ThemeManager(QObject):
 
     def toggle(self, source_widget: QWidget = None):
         target = self.LIGHT if self._current == self.DARK else self.DARK
-        self.apply(target, animated=True, source_widget=source_widget, persist=True)
+        # A full-window screenshot/opacity animation blocks the event loop and
+        # is especially costly with Matplotlib/OpenGL pages. Theme changes are
+        # now an atomic stylesheet swap; keep the argument for API compatibility.
+        self.apply(target, animated=False, source_widget=source_widget, persist=True)
 
     @property
     def current(self) -> str:

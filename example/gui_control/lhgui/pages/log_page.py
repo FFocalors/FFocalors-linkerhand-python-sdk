@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 """日志页面。"""
 import time
+import html
 from collections import deque
 
 from PyQt5.QtWidgets import (
@@ -9,7 +10,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QCheckBox, QFileDialog, QMessageBox
 )
 from PyQt5.QtGui import QClipboard
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 
 from lhgui.utils.signal_bus import signal_bus
 
@@ -36,12 +37,17 @@ class LogPage(QWidget):
         self.setObjectName("LogPage")
         self.setAttribute(Qt.WA_StyledBackground, True)
         self._entries = deque(maxlen=self.MAX_ENTRIES)
+        self._pending_entries = []
+        self._theme_dirty = False
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._flush_pending)
         self._build()
         signal_bus.connection_message.connect(self._append)
         from lhgui.styles.theme_manager import get_theme_manager
         manager = get_theme_manager()
         if manager is not None:
-            manager.theme_changed.connect(lambda _: self._render())
+            manager.theme_changed.connect(self._on_theme_changed)
 
     def _build(self):
         layout = QVBoxLayout(self)
@@ -55,6 +61,10 @@ class LogPage(QWidget):
         self.view = QTextEdit()
         self.view.setObjectName("LogView")
         self.view.setReadOnly(True)
+        # Keep the document bounded independently of the Python deque. New
+        # entries are inserted as blocks; Qt drops the oldest block in O(1)
+        # when the limit is reached, so capacity does not trigger setHtml.
+        self.view.document().setMaximumBlockCount(self.MAX_ENTRIES)
         layout.addWidget(self.view, stretch=1)
 
         row = QHBoxLayout()
@@ -85,27 +95,67 @@ class LogPage(QWidget):
 
     def _append(self, level: str, message: str):
         ts = time.strftime("%H:%M:%S")
-        color = _LEVEL_COLOR.get(level, "#6b7280")
         self._entries.append((ts, level, message))
-        self._render()
+        self._pending_entries.append((ts, level, message))
+        self._schedule_render()
+
+    def _schedule_render(self):
+        if self._render_timer.isActive() or not self.isVisible():
+            return
+        # 20 Hz 足以反映生命周期日志，同时把突发消息合并成一次 Qt 文档更新。
+        self._render_timer.start(50)
+
+    def _on_theme_changed(self, _name):
+        self._theme_dirty = True
+        if self.isVisible():
+            self._schedule_render()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._theme_dirty or self._pending_entries:
+            self._schedule_render()
+
+    @staticmethod
+    def _line_html(ts, level, msg, dark=False):
+        colors = _DARK_LEVEL_COLOR if dark else _LEVEL_COLOR
+        timestamp_color = "#91A1B6" if dark else "#9ca3af"
+        color = colors.get(level, colors["info"])
+        return (
+            f'<span style="color:{timestamp_color};">[{html.escape(str(ts))}]</span> '
+            f'<span style="color:{color};">[{html.escape(str(level).upper())}]</span> '
+            f'<span style="color:{color};">{html.escape(str(msg))}</span>'
+        )
 
     def _render(self):
         from lhgui.styles.theme_manager import is_dark_theme
         dark = is_dark_theme()
-        colors = _DARK_LEVEL_COLOR if dark else _LEVEL_COLOR
-        timestamp_color = "#91A1B6" if dark else "#9ca3af"
-        lines = []
-        for ts, level, msg in self._entries:
-            color = colors.get(level, colors["info"])
-            lines.append(
-                f'<span style="color:{timestamp_color};">[{ts}]</span> '
-                f'<span style="color:{color};">[{level.upper()}]</span> '
-                f'<span style="color:{color};">{msg}</span>'
-            )
-        self.view.setHtml("<br>".join(lines))
+        lines = [f"<div>{self._line_html(ts, level, msg, dark)}</div>"
+                 for ts, level, msg in self._entries]
+        self.view.setHtml("".join(lines))
+        self._pending_entries.clear()
+        self._theme_dirty = False
         if self.auto_scroll_cb.isChecked():
             scrollbar = self.view.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
+
+    def _flush_pending(self):
+        if not self.isVisible():
+            return
+        if self._theme_dirty:
+            self._render()
+            return
+        if self._pending_entries:
+            from lhgui.styles.theme_manager import is_dark_theme
+            dark = is_dark_theme()
+            cursor = self.view.textCursor()
+            cursor.movePosition(cursor.End)
+            for ts, level, msg in self._pending_entries:
+                cursor.insertHtml(self._line_html(ts, level, msg, dark))
+                cursor.insertBlock()
+            self._pending_entries.clear()
+            if self.auto_scroll_cb.isChecked():
+                scrollbar = self.view.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
     def _copy(self):
         text = "\n".join(f"[{ts}] [{level.upper()}] {msg}" for ts, level, msg in self._entries)
         from PyQt5.QtWidgets import QApplication

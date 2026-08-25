@@ -6,6 +6,9 @@
 所有信号都从 GUI 主线程发出和接收，跨线程时 Qt 会自动排队。
 """
 import os
+import queue
+import atexit
+import threading
 import time
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -16,16 +19,110 @@ COMMAND_TRACE_LOG = os.path.abspath(
 )
 
 
+class _CommandTraceWriter:
+    """后台批量写入诊断日志，避免控制事件同步触发文件 I/O。
+
+    ``command_trace`` 被滑块和实时控制链路大量调用，不能在调用线程中
+    open/write/flush。队列满时丢弃普通诊断，但保留错误和生命周期消息。
+    ``LINKERHAND_TRACE=all`` 可恢复开发期的完整终端/文件追踪。
+    """
+
+    _NOISY_MARKERS = (
+        "GUI request source=",
+        "signal emit finger_move_requested",
+        "ApiManager received finger_move",
+        "calling api.finger_move",
+        "api.finger_move returned",
+    )
+    _IMPORTANT_MARKERS = (
+        "connect", "disconnect", "reconnect", "offline", "error", "failed",
+        "exception", "invalid", "skipped", "cancel", "timeout", "shutdown",
+    )
+
+    def __init__(self):
+        self._queue = queue.Queue(maxsize=4096)
+        self._stop = threading.Event()
+        self._all = os.environ.get("LINKERHAND_TRACE", "").strip().lower() in {
+            "1", "true", "all", "debug"
+        }
+        self._thread = threading.Thread(
+            target=self._run, name="linkerhand-command-trace", daemon=True
+        )
+        self._thread.start()
+
+    def _important(self, message: str) -> bool:
+        lowered = message.lower()
+        return any(marker in lowered for marker in self._IMPORTANT_MARKERS)
+
+    def write(self, message: str):
+        if not self._all and any(marker in message for marker in self._NOISY_MARKERS):
+            # 高频滑块值仅保留信号本身，不落盘、不刷终端。
+            return
+        line = f"{time.strftime('%Y-%m-%d %H:%M:%S')} [CommandTrace] {message}\n"
+        try:
+            self._queue.put_nowait((line, self._important(message)))
+        except queue.Full:
+            if self._important(message):
+                try:
+                    self._queue.get_nowait()
+                    self._queue.put_nowait((line, True))
+                except queue.Empty:
+                    pass
+            return
+        if self._all or self._important(message):
+            print(line.rstrip(), flush=True)
+
+    def _run(self):
+        handle = None
+        batch = []
+        try:
+            while not self._stop.is_set() or not self._queue.empty():
+                try:
+                    item = self._queue.get(timeout=0.25)
+                    batch.append(item[0])
+                    if len(batch) < 64 and not self._stop.is_set():
+                        continue
+                except queue.Empty:
+                    pass
+                if not batch:
+                    continue
+                try:
+                    if handle is None:
+                        os.makedirs(os.path.dirname(COMMAND_TRACE_LOG), exist_ok=True)
+                        handle = open(COMMAND_TRACE_LOG, "a", encoding="utf-8")
+                    handle.writelines(batch)
+                    handle.flush()
+                except Exception as exc:
+                    print(f"[CommandTrace] log write failed: {exc}", flush=True)
+                batch.clear()
+        finally:
+            if handle is not None:
+                try:
+                    if batch:
+                        handle.writelines(batch)
+                    handle.flush()
+                    handle.close()
+                except Exception:
+                    pass
+
+    def close(self):
+        self._stop.set()
+        if threading.current_thread() is not self._thread:
+            self._thread.join(timeout=1.5)
+
+
+_command_trace_writer = _CommandTraceWriter()
+atexit.register(_command_trace_writer.close)
+
+
 def command_trace(message: str):
-    """Write command-chain diagnostics to terminal and test_out.log."""
-    line = f"[CommandTrace] {message}"
-    print(line, flush=True)
-    try:
-        os.makedirs(os.path.dirname(COMMAND_TRACE_LOG), exist_ok=True)
-        with open(COMMAND_TRACE_LOG, "a", encoding="utf-8") as f:
-            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {line}\n")
-    except Exception as exc:
-        print(f"[CommandTrace] log write failed: {exc}", flush=True)
+    """Queue command-chain diagnostics without blocking the GUI thread."""
+    _command_trace_writer.write(str(message))
+
+
+def flush_command_trace():
+    """Best-effort flush hook for orderly application shutdown/tests."""
+    _command_trace_writer.close()
 
 
 def sanitize_finger_pose(pose, expected_len=None):

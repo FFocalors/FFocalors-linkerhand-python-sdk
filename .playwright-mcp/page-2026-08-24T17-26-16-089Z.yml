@@ -1,0 +1,160 @@
+- generic [ref=e2]:
+  - status [ref=e3]: "Browser simulator: no real hardware is connected or impersonated; all actions are deterministic local demos."
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]: LH
+        - generic [ref=e8]:
+          - strong [ref=e9]: LinkerHand
+          - generic [ref=e10]: CONSOLE V2
+      - generic [ref=e17]:
+        - strong [ref=e18]: 演示机械手 O6
+        - generic [ref=e19]: O6 · left
+      - navigation "Main navigation" [ref=e1204]:
+        - generic [ref=e21]:
+          - button "Device control" [ref=e1205] [cursor=pointer]
+          - button "Smart grasp" [ref=e1206] [cursor=pointer]
+        - generic [ref=e36]:
+          - button "Vision mimic" [ref=e1207] [cursor=pointer]
+          - button "Rock paper scissors" [ref=e1208] [cursor=pointer]
+        - generic [ref=e46]:
+          - button "Action center" [ref=e1209] [cursor=pointer]
+          - button "Diagnostics" [ref=e1210] [cursor=pointer]
+          - button "Settings" [ref=e1211] [cursor=pointer]
+      - generic [ref=e60]:
+        - button "Help & shortcuts" [ref=e1212] [cursor=pointer]
+        - generic [ref=e66]:
+          - generic [ref=e67]: OP
+          - generic [ref=e68]:
+            - strong [ref=e69]: Operator
+            - generic [ref=e70]: Local workspace
+    - main [ref=e72]:
+      - generic [ref=e73]:
+        - generic "Current location" [ref=e1213]:
+          - generic [ref=e77]: Workspace
+          - generic [ref=e78]: /
+          - strong [ref=e79]: Settings
+        - generic [ref=e80]:
+          - button "Toggle theme" [ref=e1214] [cursor=pointer]
+          - button "Stop all actions" [ref=e1215] [cursor=pointer]
+      - generic [ref=e1106]:
+        - generic [ref=e1107]:
+          - generic [ref=e1108]:
+            - heading "Settings" [level=1] [ref=e1216]
+            - paragraph [ref=e1110]: Settings are staged device drafts; hardware state still comes from the runtime.
+          - generic [ref=e1111]:
+            - generic [ref=e1112]: Unsaved
+            - button "Save settings" [ref=e1217] [cursor=pointer]
+        - generic [ref=e1115]:
+          - generic [ref=e1116]:
+            - generic [ref=e1117]:
+              - generic [ref=e1118]:
+                - heading "Device connection" [level=2] [ref=e1218]
+                - generic [ref=e1120]: Fields enter a staged draft and do not change the running device before submission.
+              - generic [ref=e1121]: Connected
+            - generic [ref=e1124]:
+              - generic [ref=e1125]:
+                - text: Device model
+                - combobox "Device model" [ref=e1219]:
+                  - option "O6" [selected]
+                  - option "L6"
+                  - option "L7"
+                  - option "L10"
+                  - option "L20"
+                  - option "G20"
+                  - option "L21"
+                  - option "L25"
+              - group "Hand" [ref=e1220]:
+                - generic [ref=e1129]:
+                  - generic [ref=e1130]:
+                    - radio "Left" [checked] [ref=e1221]
+                    - text: Left
+                  - generic [ref=e1132]:
+                    - radio "Right" [ref=e1222]
+                    - text: Right
+              - group "Transport" [ref=e1223]:
+                - generic [ref=e1136]:
+                  - button "CAN" [ref=e1137] [cursor=pointer]
+                  - button "RS485" [ref=e1138] [cursor=pointer]
+              - generic [ref=e1139]:
+                - text: CAN channel
+                - textbox "CAN channel" [ref=e1140]: fake
+              - paragraph [ref=e1141]: The runtime selects the CAN channel; hardware is not opened directly here.
+          - generic [ref=e1142]:
+            - generic [ref=e1143]:
+              - generic [ref=e1144]:
+                - heading "Camera" [level=2] [ref=e1224]
+                - generic [ref=e1146]: Only the preferred deviceId is saved; no VisionRuntime or second camera is created.
+              - generic [ref=e1147]: Permission not confirmed
+            - generic [ref=e1148]:
+              - generic [ref=e1149]:
+                - text: Preferred camera
+                - combobox "Preferred camera" [disabled] [ref=e1225]:
+                  - option "Not specified" [selected]
+              - button "Refresh cameras" [ref=e1226] [cursor=pointer]
+            - paragraph [ref=e1152]: No camera has been enumerated. Click refresh; permission and errors come from the controller.
+          - generic [ref=e1153]:
+            - generic [ref=e1154]:
+              - generic [ref=e1155]:
+                - heading "Appearance" [level=2] [ref=e1227]
+                - generic [ref=e1157]: The app ThemePort owns the theme.
+              - generic [ref=e1158]: System
+            - radiogroup "Theme" [ref=e1228]:
+              - generic [ref=e1160] [cursor=pointer]:
+                - radio "Light" [ref=e1229]
+                - text: Light
+              - generic [ref=e1162] [cursor=pointer]:
+                - radio "Dark" [ref=e1230]
+                - text: Dark
+              - generic [ref=e1164] [cursor=pointer]:
+                - radio "System" [checked] [ref=e1231]
+                - text: System
+            - generic [ref=e1166]:
+              - generic [ref=e1167]: Language
+              - generic [ref=e1168]:
+                - button "中文" [ref=e1169] [cursor=pointer]
+                - button "English" [active] [ref=e1170] [cursor=pointer]
+          - generic [ref=e1171]:
+            - generic [ref=e1172]:
+              - generic [ref=e1173]:
+                - heading "Version & offline resources" [level=2] [ref=e1232]
+                - generic [ref=e1175]: Version 2.0.0-rc.1 · build development · firmware vsim-1.0.0 · build 2026-08-24
+              - generic [ref=e1176]: Local app
+            - generic [ref=e1177]:
+              - button "Check offline resources" [ref=e1233] [cursor=pointer]
+              - button "Test sidecar" [ref=e1234] [cursor=pointer]
+            - paragraph [ref=e1180]: V2 does not migrate legacy settings; reconfirm this draft to use settings from an older version.
+        - generic [ref=e1181]:
+          - button "Advanced settings Auto reconnect, connection timeout, diagnostics, and log level" [expanded] [ref=e1235] [cursor=pointer]:
+            - generic [ref=e1183]:
+              - strong [ref=e1184]: Advanced settings
+              - generic [ref=e1185]: Auto reconnect, connection timeout, diagnostics, and log level
+            - generic [ref=e1186]: Collapse
+          - generic [ref=e1187]:
+            - generic [ref=e1188]:
+              - checkbox "Auto reconnect The runtime decides when to reconnect" [checked] [ref=e1236]
+              - text: Auto reconnect
+              - generic [ref=e1190]: The runtime decides when to reconnect
+            - generic [ref=e1191]:
+              - text: Connection timeout (ms)
+              - spinbutton "Connection timeout (ms)" [ref=e1237]: "5000"
+            - generic [ref=e1193]:
+              - checkbox "Allow diagnostic parameters For troubleshooting only; does not change the default operator view" [ref=e1238]
+              - text: Allow diagnostic parameters
+              - generic [ref=e1195]: For troubleshooting only; does not change the default operator view
+            - generic [ref=e1196]:
+              - checkbox "Debug mode Enable a virtual debug hand when no hand is connected" [ref=e1239]
+              - text: Debug mode
+              - generic [ref=e1198]: Enable a virtual debug hand when no hand is connected
+            - generic [ref=e1199]:
+              - text: Log level
+              - combobox "日志级别" [ref=e1200]:
+                - option "trace"
+                - option "debug"
+                - option "info" [selected]
+                - option "warn"
+                - option "error"
+            - generic [ref=e1201]:
+              - generic [ref=e1202]: Restore defaults
+              - button "Restore defaults" [ref=e1240] [cursor=pointer]
+        - paragraph [ref=e1241]: 有未保存更改。关闭页面不会将草稿应用到硬件。

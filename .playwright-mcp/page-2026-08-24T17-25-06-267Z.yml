@@ -1,0 +1,189 @@
+- generic [ref=e2]:
+  - status [ref=e3]: 浏览器模拟器：当前不会连接或伪装真实硬件，所有动作均为确定性本地演示。
+  - generic [ref=e4]:
+    - complementary [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]: LH
+        - generic [ref=e8]:
+          - strong [ref=e9]: LinkerHand
+          - generic [ref=e10]: CONSOLE V2
+      - generic [ref=e17]:
+        - strong [ref=e18]: 演示机械手 O6
+        - generic [ref=e19]: O6 · left
+      - navigation "主导航" [ref=e20]:
+        - generic [ref=e21]:
+          - button "设备控制" [ref=e22] [cursor=pointer]
+          - button "智能抓取" [ref=e29] [cursor=pointer]
+        - generic [ref=e36]:
+          - button "视觉模仿" [ref=e37] [cursor=pointer]
+          - button "猜拳互动" [ref=e42] [cursor=pointer]
+        - generic [ref=e46]:
+          - button "动作中心" [active] [ref=e47] [cursor=pointer]
+          - button "诊断中心" [ref=e51] [cursor=pointer]
+          - button "设置" [ref=e55] [cursor=pointer]
+      - generic [ref=e60]:
+        - button "帮助与快捷键" [ref=e61] [cursor=pointer]
+        - generic [ref=e66]:
+          - generic [ref=e67]: OP
+          - generic [ref=e68]:
+            - strong [ref=e69]: 操作员
+            - generic [ref=e70]: 本地工作区
+    - main [ref=e72]:
+      - generic [ref=e73]:
+        - generic "当前位置" [ref=e76]:
+          - generic [ref=e77]: 工作台
+          - generic [ref=e78]: /
+          - strong [ref=e79]: 动作中心
+        - generic [ref=e80]:
+          - button "切换主题" [ref=e81] [cursor=pointer]
+          - button "停止全部动作" [ref=e85] [cursor=pointer]
+      - generic [ref=e293]:
+        - generic [ref=e294]:
+          - generic [ref=e295]:
+            - heading "动作中心" [level=1] [ref=e296]
+            - paragraph [ref=e297]: 姿态是静止关键帧；动作由多个姿态按顺序组成，并保存自己的播放配置。
+          - generic [ref=e298]:
+            - button "＋ 新建动作" [ref=e299] [cursor=pointer]
+            - button "录制兼容动作" [ref=e300] [cursor=pointer]
+        - generic [ref=e301]:
+          - generic [ref=e302]:
+            - generic [ref=e303]:
+              - heading "关节位置" [level=2] [ref=e304]
+              - generic [ref=e305]: 6 关节 · 遥测实时更新
+            - generic [ref=e306]:
+              - generic [ref=e307]: 只读
+              - button "保存当前姿态" [ref=e308] [cursor=pointer]
+          - generic [ref=e313]:
+            - generic [ref=e314]:
+              - generic [ref=e315]:
+                - generic [ref=e316]: 大拇指弯曲
+                - slider "大拇指弯曲 目标" [disabled] [ref=e317]: "0.549"
+                - status [ref=e318]: 54.9%
+              - generic [ref=e319]: 55%
+            - generic [ref=e320]:
+              - generic [ref=e321]:
+                - generic [ref=e322]: 大拇指横摆
+                - slider "大拇指横摆 目标" [disabled] [ref=e323]: "0.471"
+                - status [ref=e324]: 47.1%
+              - generic [ref=e325]: 47%
+            - generic [ref=e326]:
+              - generic [ref=e327]:
+                - generic [ref=e328]: 食指弯曲
+                - slider "食指弯曲 目标" [disabled] [ref=e329]: "0.631"
+                - status [ref=e330]: 63.1%
+              - generic [ref=e331]: 63%
+            - generic [ref=e332]:
+              - generic [ref=e333]:
+                - generic [ref=e334]: 中指弯曲
+                - slider "中指弯曲 目标" [disabled] [ref=e335]: "0.522"
+                - status [ref=e336]: 52.2%
+              - generic [ref=e337]: 52%
+            - generic [ref=e338]:
+              - generic [ref=e339]:
+                - generic [ref=e340]: 无名指弯曲
+                - slider "无名指弯曲 目标" [disabled] [ref=e341]: "0.58"
+                - status [ref=e342]: 58.0%
+              - generic [ref=e343]: 58%
+            - generic [ref=e344]:
+              - generic [ref=e345]:
+                - generic [ref=e346]: 小拇指弯曲
+                - slider "小拇指弯曲 目标" [disabled] [ref=e347]: "0.502"
+                - status [ref=e348]: 50.2%
+              - generic [ref=e349]: 50%
+        - generic [ref=e350]:
+          - generic [ref=e351]:
+            - generic [ref=e352]:
+              - generic [ref=e353]:
+                - button "全部姿态" [ref=e354] [cursor=pointer]
+                - button "内置预设" [ref=e355] [cursor=pointer]
+                - button "自定义姿态" [ref=e356] [cursor=pointer]
+              - generic [ref=e357]: 全部包含 4 个基础预设、5 个数字预设、首页自定义姿态和动作中心本地自定义姿态。
+            - generic [ref=e358]:
+              - generic [ref=e359]: 速度
+              - combobox "速度" [ref=e360]:
+                - option "0.25×"
+                - option "0.5×"
+                - option "1×" [selected]
+                - option "1.5×"
+                - option "2×"
+              - generic [ref=e361]: 方向
+              - combobox "方向" [ref=e362]:
+                - option "正放" [selected]
+                - option "倒放"
+              - generic [ref=e363]: 播放模式
+              - combobox "播放模式" [ref=e364]:
+                - option "单次"
+                - option "循环" [selected]
+          - generic [ref=e365]:
+            - generic [ref=e366]: 名称
+            - generic [ref=e367]: 来源
+            - generic [ref=e368]: 类型
+            - generic [ref=e369]: 时长
+          - generic [ref=e370]:
+            - strong [ref=e371]: 张开
+            - generic [ref=e372]: 内置
+            - generic [ref=e374]: 静止姿态
+            - generic [ref=e375]: 关键帧
+            - button "播放" [ref=e377] [cursor=pointer]
+          - generic [ref=e378]:
+            - strong [ref=e379]: 握拳
+            - generic [ref=e380]: 内置
+            - generic [ref=e382]: 静止姿态
+            - generic [ref=e383]: 关键帧
+            - button "播放" [ref=e385] [cursor=pointer]
+          - generic [ref=e386]:
+            - strong [ref=e387]: OK
+            - generic [ref=e388]: 内置
+            - generic [ref=e390]: 静止姿态
+            - generic [ref=e391]: 关键帧
+            - button "播放" [ref=e393] [cursor=pointer]
+          - generic [ref=e394]:
+            - strong [ref=e395]: 点赞
+            - generic [ref=e396]: 内置
+            - generic [ref=e398]: 静止姿态
+            - generic [ref=e399]: 关键帧
+            - button "播放" [ref=e401] [cursor=pointer]
+          - generic [ref=e402]:
+            - strong [ref=e403]: 壹
+            - generic [ref=e404]: 内置
+            - generic [ref=e406]: 静止姿态
+            - generic [ref=e407]: 关键帧
+            - button "播放" [ref=e409] [cursor=pointer]
+          - generic [ref=e410]:
+            - strong [ref=e411]: 贰
+            - generic [ref=e412]: 内置
+            - generic [ref=e414]: 静止姿态
+            - generic [ref=e415]: 关键帧
+            - button "播放" [ref=e417] [cursor=pointer]
+          - generic [ref=e418]:
+            - strong [ref=e419]: 叁
+            - generic [ref=e420]: 内置
+            - generic [ref=e422]: 静止姿态
+            - generic [ref=e423]: 关键帧
+            - button "播放" [ref=e425] [cursor=pointer]
+          - generic [ref=e426]:
+            - strong [ref=e427]: 肆
+            - generic [ref=e428]: 内置
+            - generic [ref=e430]: 静止姿态
+            - generic [ref=e431]: 关键帧
+            - button "播放" [ref=e433] [cursor=pointer]
+          - generic [ref=e434]:
+            - strong [ref=e435]: 伍
+            - generic [ref=e436]: 内置
+            - generic [ref=e438]: 静止姿态
+            - generic [ref=e439]: 关键帧
+            - button "播放" [ref=e441] [cursor=pointer]
+        - generic [ref=e442]:
+          - generic [ref=e443]:
+            - generic [ref=e444]:
+              - heading "录制兼容区" [level=2] [ref=e445]
+              - generic [ref=e446]: 旧版 ActionRecording 不参与姿态编排；请重新用静止姿态编排为动作。
+            - button "录制" [ref=e447] [cursor=pointer]
+          - generic [ref=e448]:
+            - strong [ref=e449]: 中性姿态
+            - generic [ref=e450]: 1 帧
+            - generic [ref=e451]: 0.1 秒
+            - button "播放" [ref=e453] [cursor=pointer]
+        - generic [ref=e454]:
+          - generic [ref=e455]: 操作提示
+          - generic [ref=e456]: 动作中心本地姿态和动作通过受控 props/onChange 保持；首页姿态始终只读单向同步。

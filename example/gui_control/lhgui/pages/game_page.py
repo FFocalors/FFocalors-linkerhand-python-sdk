@@ -1748,11 +1748,20 @@ class GamePage(QFrame):
     def set_compact_mode(self, compact):
         pass
 
-    def hideEvent(self, event):
+    def activate(self):
+        """统一页面生命周期钩子；游戏相机由用户点击开始后启动。"""
+        self._page_active = True
+
+    def deactivate(self):
+        """离开页面时停止倒计时、判定、回合恢复和相机线程。"""
+        self._page_active = False
         if self._state not in (self.STATE_IDLE, self.STATE_STOPPED, self.STATE_ERROR):
             self._hw_enabled = False
             self.chk_hw.setChecked(False)
             self._stop_page()
+
+    def hideEvent(self, event):
+        self.deactivate()
         super().hideEvent(event)
 
     def closeEvent(self, event=None):

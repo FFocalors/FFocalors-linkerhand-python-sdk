@@ -1950,18 +1950,32 @@ class VisionPage(QFrame):
     def set_compact_mode(self, compact: bool):
         pass
 
-    # ── 隐藏时自动停止 ──
+    # ── 页面生命周期 ──
+    def activate(self):
+        """统一页面生命周期钩子；相机由用户显式点击开始后启动。"""
+        self._page_active = True
+
+    def deactivate(self):
+        """离开页面时停止硬件输出、录制、回放和相机线程。"""
+        self._page_active = False
+        self._hw_enabled = False
+        self.chk_hw.setChecked(False)
+        if self._state in ("opening", "running"):
+            self._stop_page()
+        else:
+            self._opening_timer.stop()
+            self._stop_recording()
+            self._stop_playback()
+            self._stop_worker()
+
     def hideEvent(self, event):
-        if self._state in ("opening","running"):
-            self._hw_enabled=False; self.chk_hw.setChecked(False); self._stop_page()
+        self.deactivate()
         super().hideEvent(event)
 
     def closeEvent(self, event=None):
-        self._hw_enabled=False
-        self._stop_recording()
-        self._stop_playback()
-        if self._worker: self._worker.stop(); self._worker=None
-        if event: super().closeEvent(event)
+        self.deactivate()
+        if event:
+            super().closeEvent(event)
 
     # ── 主线程 pose 接收 ──
     def _on_pose(self,raw_pose,debug):
@@ -2109,18 +2123,3 @@ class VisionPage(QFrame):
                     self._last_no_hand_log_t=now
                 if self._hw_enabled:
                     self.d_status.setText("状态: 未检测到手，跳过下发")
-
-    # ── 生命周期 ──
-    def set_compact_mode(self,compact:bool): pass
-
-    def hideEvent(self,event):
-        if self._state in ("opening","running"):
-            self._hw_enabled=False; self.chk_hw.setChecked(False); self._stop_page()
-        super().hideEvent(event)
-
-    def closeEvent(self,event=None):
-        self._hw_enabled=False
-        self._stop_recording()
-        self._stop_playback()
-        if self._worker: self._worker.stop(); self._worker=None
-        if event: super().closeEvent(event)
