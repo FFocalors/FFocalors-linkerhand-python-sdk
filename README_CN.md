@@ -11,6 +11,7 @@
 
 V2 集成工作树、开发命令、模块边界和下一 Agent 接手信息见：
 
+- [Console V2 共建指南（全新克隆与环境配置）](apps/console-v2/CONTRIBUTING.md)
 - [Console V2 项目总览（开发/交接/模块边界整合）](apps/console-v2/docs/PROJECT_SUMMARY.md)
 - [Console V2 开发进程](apps/console-v2/docs/DEVELOPMENT.md)
 - [Console V2 集成交接](apps/console-v2/docs/HANDOFF.md)

@@ -15,8 +15,11 @@
 
 ## 一分钟接手
 
+首次参与项目应先阅读 [`../CONTRIBUTING.md`](../CONTRIBUTING.md)，按其中版本要求建立环境。已有仓库可从仓库根目录执行：
+
 ```powershell
-Set-Location 'E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2\apps\console-v2'
+Set-Location (git rev-parse --show-toplevel)
+Set-Location .\apps\console-v2
 git status --short --branch
 git log -1 --oneline --decorate
 pnpm install --frozen-lockfile

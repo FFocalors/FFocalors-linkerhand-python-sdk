@@ -119,19 +119,20 @@
 
 ## Windows 环境准备
 
-建议在 PowerShell 中执行。以下命令假定当前路径为 V2 工作树；每个新 Agent 都应先确认 `git status` 和 `git branch --show-current`。
+完整的全新克隆、工具版本和 Tauri 首次运行说明见 [`../CONTRIBUTING.md`](../CONTRIBUTING.md)。建议在 PowerShell 中执行；每个共建者都应先确认 `git status` 和 `git branch --show-current`。
 
 ```powershell
-Set-Location 'E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2\apps\console-v2'
+Set-Location (git rev-parse --show-toplevel)
+Set-Location .\apps\console-v2
 git status --short --branch
 git branch --show-current
 ```
 
 需要：
 
-- Windows x64、Git、Node.js/npm、pnpm、Rust/Cargo，以及 Tauri Windows 构建所需的 MSVC 工具链和 WebView2 环境。
-- Python 3.10 或更高版本（sidecar 的 `pyproject.toml` 声明 `requires-python = ">=3.10"`）。
-- 真实 sidecar 构建需要仓库根目录中包含 `LinkerHand\` 的 SDK 根目录；默认 `scripts/build-sidecar.ps1` 使用 `E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2`，也可显式传 `-SdkRoot`。
+- Windows x64、Git、Node.js 22.13+、pnpm 10、stable Rust/Cargo MSVC 工具链（当前验证 1.97.1），以及 Tauri Windows 构建所需的 MSVC 工具链和 WebView2 环境。
+- Python 3.12 x64（sidecar 最低支持 3.10，共建与 CI 统一使用 3.12）。
+- 真实 sidecar 构建需要仓库根目录中包含 `LinkerHand\`；`scripts/build-sidecar.ps1` 默认从当前仓库推导 SDK 根，也可显式传 `-SdkRoot`。
 - 真实硬件验收还需要 O6、PCAN 适配器/驱动、正确供电和不会与其他控制程序冲突的设备连接。没有硬件时只运行 fake 路径。
 
 安装 JavaScript 依赖：
@@ -143,7 +144,8 @@ pnpm install --frozen-lockfile
 安装 sidecar 的 Windows 构建依赖（只在需要 PyInstaller 或真实 sidecar smoke 时）：
 
 ```powershell
-python -m pip install -r sidecar/linkerhand-bridge/requirements-windows-x64.txt
+$python312 = py -3.12 -c "import sys; print(sys.executable)"
+& $python312 -m pip install -r sidecar/linkerhand-bridge/requirements-windows-x64.txt
 ```
 
 ## 常用启动、检查、测试和打包命令
@@ -186,8 +188,8 @@ cargo check --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 
-python -m pytest -q sidecar/linkerhand-bridge/tests
-python scripts/smoke-sidecar.py
+py -3.12 -m pytest -q sidecar/linkerhand-bridge/tests
+py -3.12 scripts/smoke-sidecar.py
 ```
 
 `smoke-sidecar.py` 是真实 stdin/stdout NDJSON 子进程边界测试，不连接硬件。它检查 fake bridge 的 connect、getTelemetry、close 三个 envelope，以及 stdout 没有 SDK 日志污染。
@@ -195,9 +197,10 @@ python scripts/smoke-sidecar.py
 ### 真实 sidecar、Windows 构建和 portable 包
 
 ```powershell
-# 默认 SDK 根目录是 V2 仓库根；也可传 -SdkRoot 'D:\path\to\sdk-root'
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1
-python scripts/smoke-sidecar.py --executable 'src-tauri\binaries\linkerhand-sidecar-x86_64-pc-windows-msvc.exe'
+# 默认 SDK 根目录是当前 V2 仓库根；也可传 -SdkRoot 'D:\path\to\sdk-root'
+$python312 = py -3.12 -c "import sys; print(sys.executable)"
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-sidecar.ps1 -Python $python312
+py -3.12 scripts/smoke-sidecar.py --executable 'src-tauri\binaries\linkerhand-sidecar-x86_64-pc-windows-msvc.exe'
 
 # build:windows 会执行 Tauri beforeBuildCommand：前端 build、sidecar build、bundle inventory
 pnpm build:windows

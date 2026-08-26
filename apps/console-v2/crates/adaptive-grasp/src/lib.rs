@@ -7,14 +7,17 @@
 //! P0
 //!  - preset-specific parameters (soft / cube / precision)
 //!  - empty-grasp detection: zero contact -> fail; partial contact -> preload
+//!
 //! P1
 //!  - continuous contact score (smooth stall mapping, no binary threshold)
 //!  - accumulated-command stall detection (survives fine-mode frame skipping)
 //!  - percentile calibration (P95 error / P90 jitter instead of raw max)
+//!
 //! P2
 //!  - preload position-follow validation
 //!  - phased timeout budget (coarse vs fine/preload)
 //!  - local degradation (a stalled non-thumb joint freezes, grasp continues)
+//!
 //! P3
 //!  - unified, configurable analysis windows
 //!  - parameterised settle delay

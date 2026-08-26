@@ -55,6 +55,7 @@ O6 机械手硬件
 | SDK 版本日志 | 发布版本与功能演进 | `release_3.1.0.txt` |
 | 旧版 GUI 二次开发报告 | PyQt GUI 的视觉遥操作/猜拳/录制/诊断总结 | `linkerhand_gui_development_summary_report.md` |
 | V2 开发进程 | V2 集成树状态、命令、模块边界、验收标准 | `apps/console-v2/docs/DEVELOPMENT.md` |
+| V2 共建指南 | 全新克隆、统一工具版本、Tauri 前置与提交检查 | `apps/console-v2/CONTRIBUTING.md` |
 | V2 集成交接 | 给下一位 Agent 的快速入口 | `apps/console-v2/docs/HANDOFF.md` |
 | 旧版功能基线 | V2 等价迁移参考（代码依据、迁移要求） | `apps/console-v2/docs/LEGACY_FEATURES.md` |
 | Rust 模块边界 | 模块依赖、crate owner、 enforced boundaries | `apps/console-v2/docs/MODULES.md` |
@@ -159,8 +160,9 @@ O6 机械手硬件
 ## 8. 快速接手命令（V2）
 
 ```powershell
-# 进入 V2 Console
-Set-Location 'E:\OneDrive\Desktop\必备安装\linkerhand-python-sdk-v2\apps\console-v2'
+# 从任意 V2 仓库路径进入 Console
+Set-Location (git rev-parse --show-toplevel)
+Set-Location .\apps\console-v2
 
 # 检查状态
 git status --short --branch
@@ -183,8 +185,8 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 
 # Python sidecar smoke（不连接硬件）
-python -m pytest -q sidecar/linkerhand-bridge/tests
-python scripts/smoke-sidecar.py
+py -3.12 -m pytest -q sidecar/linkerhand-bridge/tests
+py -3.12 scripts/smoke-sidecar.py
 
 # 前端开发服务器
 pnpm exec vite --configLoader native dev --host 127.0.0.1 --port 1420

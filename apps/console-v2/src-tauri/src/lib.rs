@@ -1884,6 +1884,9 @@ mod commands {
         })
         .await
     }
+    // Keep the flat argument list aligned with the public Tauri invoke payload;
+    // wrapping it would be a wire-contract change rather than a local cleanup.
+    #[allow(clippy::too_many_arguments)]
     #[tauri::command]
     pub async fn action_play_frames(
         state: tauri::State<'_, RuntimeState>,

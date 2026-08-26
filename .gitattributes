@@ -3,3 +3,7 @@
 apps/console-v2/public/vision/hand_landmarker.task -text
 apps/console-v2/public/vision/wasm/*.wasm -text
 apps/console-v2/public/vision/wasm/*.js -text
+
+# Tauri rewrites generated schemas with LF. Keep clean Windows checkouts from
+# appearing modified after cargo commands when core.autocrlf=true.
+apps/console-v2/src-tauri/gen/schemas/*.json text eol=lf
