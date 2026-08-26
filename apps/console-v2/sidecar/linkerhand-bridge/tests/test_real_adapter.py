@@ -3,7 +3,9 @@ import io
 import sys
 import types
 
-from adapters.base import RealSdkAdapter
+import pytest
+
+from adapters.base import AdapterError, RealSdkAdapter
 
 
 def test_real_adapter_uses_legacy_constructor_and_methods(monkeypatch):
@@ -63,3 +65,42 @@ def test_real_adapter_rs485_uses_modbus_constructor(monkeypatch):
     adapter = RealSdkAdapter("L6", "left", {"type": "rs485", "port": "COM7"})
     adapter.connect()
     assert calls == [{"hand_type": "left", "hand_joint": "L6", "modbus": "COM7"}]
+
+
+def test_real_adapter_requires_physical_probe_when_sdk_exposes_it(monkeypatch):
+    class FakeApi:
+        def __init__(self, **_kwargs): pass
+        def probe_connection(self): return False
+
+    package = types.ModuleType("LinkerHand")
+    package.__path__ = []
+    module = types.ModuleType("LinkerHand.linker_hand_api")
+    module.LinkerHandApi = FakeApi
+    monkeypatch.setitem(sys.modules, "LinkerHand", package)
+    monkeypatch.setitem(sys.modules, "LinkerHand.linker_hand_api", module)
+
+    adapter = RealSdkAdapter("O6", "left", {"type": "can", "channel": "PCAN_TEST"})
+    with pytest.raises(AdapterError) as error:
+        adapter.connect()
+    assert error.value.code == "DEVICE_NOT_RESPONDING"
+    assert not adapter.connected
+
+
+def test_real_adapter_rejects_false_position_result(monkeypatch):
+    class FakeApi:
+        def __init__(self, **_kwargs): pass
+        def probe_connection(self): return True
+        def finger_move(self, _values): return False
+
+    package = types.ModuleType("LinkerHand")
+    package.__path__ = []
+    module = types.ModuleType("LinkerHand.linker_hand_api")
+    module.LinkerHandApi = FakeApi
+    monkeypatch.setitem(sys.modules, "LinkerHand", package)
+    monkeypatch.setitem(sys.modules, "LinkerHand.linker_hand_api", module)
+
+    adapter = RealSdkAdapter("O6", "left", {"type": "can", "channel": "PCAN_TEST"})
+    adapter.connect()
+    with pytest.raises(AdapterError) as error:
+        adapter.set_position([128] * 6)
+    assert error.value.code == "COMMAND_REJECTED"

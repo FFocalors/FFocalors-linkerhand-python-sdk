@@ -40,6 +40,12 @@ hiddenimports = [
     "core.rs485.linker_hand_l10_rs485",
     "yaml",
     "can",
+    # python-can resolves interfaces from entry-point strings at runtime, so
+    # PyInstaller cannot discover the Windows USB-CAN backends by imports.
+    "can.interfaces.pcan",
+    "can.interfaces.pcan.basic",
+    "can.interfaces.pcan.pcan",
+    "candle.candle_bus",
     "pymodbus",
     "serial",
     "numpy",

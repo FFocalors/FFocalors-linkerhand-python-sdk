@@ -10,17 +10,23 @@ Description:
 symbol_custom_string_obkorol_copyright: 
 '''
 import yaml, os, sys
+from pathlib import Path
 class LoadWriteYaml():
     def __init__(self):
-        # 由于是API形式，这里要给配置文件目录绝对路径
-        #yaml_path = "/home/linkerhand/ROS2/linker_hand_ros2_sdk/src/linker_hand_ros2_sdk/linker_hand_ros2_sdk/LinkerHand"
-        yaml_path = os.path.dirname(os.path.abspath(__file__)) + "/../../LinkerHand"
-        self.setting_path = yaml_path+"/config/setting.yaml"
-        self.l7_positions = yaml_path+"/config/L7_positions.yaml"
-        self.l10_positions = yaml_path+"/config/L10_positions.yaml"
-        self.l20_positions = yaml_path+"/config/L20_positions.yaml"
-        self.l21_positions = yaml_path+"/config/L21_positions.yaml"
-        self.l25_positions = yaml_path+"/config/L25_positions.yaml"
+        # Source imports place this file under LinkerHand/utils.  The packaged
+        # sidecar imports it as top-level utils from PyInstaller's extraction
+        # directory, where SDK data is explicitly stored under LinkerHand/.
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            yaml_path = Path(sys._MEIPASS) / "LinkerHand"
+        else:
+            yaml_path = Path(__file__).resolve().parents[1]
+        config_path = yaml_path / "config"
+        self.setting_path = str(config_path / "setting.yaml")
+        self.l7_positions = str(config_path / "L7_positions.yaml")
+        self.l10_positions = str(config_path / "L10_positions.yaml")
+        self.l20_positions = str(config_path / "L20_positions.yaml")
+        self.l21_positions = str(config_path / "L21_positions.yaml")
+        self.l25_positions = str(config_path / "L25_positions.yaml")
         
 
     def load_setting_yaml(self):
@@ -98,4 +104,3 @@ class LoadWriteYaml():
             a = False
             print(f"Error writing to yaml file: {e}")
         return a
-        

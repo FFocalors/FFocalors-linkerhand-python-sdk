@@ -54,6 +54,11 @@ class LinkerHandO6Can:
         self.joint_angles = [0] * 6
         self.pressures = [200] * 6  # Default torque 200
         self.bus = self.init_can_bus(can_channel, baudrate)
+        # A successful Bus construction only proves that the USB-CAN driver
+        # opened.  Track fresh 0x01 responses separately so callers can prove
+        # that the hand itself is answering on the CAN bus.
+        self._position_response = threading.Condition()
+        self._position_response_sequence = 0
         self.normal_force, self.tangential_force, self.tangential_force_dir, self.approach_inc = [[-1] * 6 for _ in range(4)]
         self.is_lock = False
         self.version = None
@@ -108,21 +113,26 @@ class LinkerHandO6Can:
                     ColorMsg(msg=f"socketcan 接口连接失败: {e}", color="yellow")
                     raise # 重新抛出异常，让外层 try 捕获
             elif sys.platform == "win32":
-                # Windows 优先级：1. pcan
-                try:
+                # PCAN symbolic channels and candle numeric channels are not
+                # interchangeable.  Selecting by channel shape avoids hiding
+                # the useful PCAN driver error behind a malformed candle
+                # fallback (and vice versa).
+                if str(channel).upper().startswith("PCAN_"):
                     bus = can.interface.Bus(channel=channel, interface='pcan', bitrate=baudrate)
                     ColorMsg(msg=f"成功连接: interface='pcan', channel='{channel}'", color="green")
                     return bus
-                except CanError as e:
-                    ColorMsg(msg=f"pcan 接口连接失败，尝试回退到 'candle': {e}", color="yellow")
-                # Windows 优先级：2. candle (回退方法)
+                candle_channel = int(channel) if str(channel).isdigit() else channel
                 try:
-                    bus = can.Bus(interface="candle", channel=channel, bitrate=baudrate)
+                    # Import the backend directly.  python-can normally finds
+                    # it through package entry-point metadata, which is not
+                    # available inside the one-file PyInstaller sidecar.
+                    from candle.candle_bus import CandleBus
+                    bus = CandleBus(channel=candle_channel, bitrate=baudrate)
                     ColorMsg(msg=f"成功连接: interface='candle', channel='{channel}'", color="green")
                     return bus
                 except CanError as e:
                     ColorMsg(msg=f"candle 接口连接失败: {e}", color="yellow")
-                    raise # 两个接口都失败，抛出异常
+                    raise
             else:
                 raise EnvironmentError("Unsupported platform for CAN interface")
         # --- 统一异常处理块结束 ---
@@ -140,16 +150,12 @@ class LinkerHandO6Can:
         try:
             self.bus.send(msg)
         except can.CanError as e:
-            print(f"Failed to send message: {e}")
-            self.open_can.open_can(self.can_channel)
-            time.sleep(1)
-            self.is_can = self.open_can.is_can_up_sysfs(interface=self.can_channel)
-            time.sleep(1)
-            if self.is_can:
-                self.bus = can.interface.Bus(channel=self.can_channel, interface="socketcan", bitrate=self.baudrate)
-            else:
-                print("Reconnecting CAN devices ....")
+            # Do not turn a failed hardware write into a successful SDK call.
+            # Reconnection is owned by the upper runtime, which can report the
+            # failure and reconnect the whole adapter deterministically.
+            raise CanError(f"Failed to send CAN frame 0x{frame_property_value:02X}: {e}") from e
         time.sleep(sleep)
+        return True
 
     def set_joint_positions(self, joint_angles):
         """Set the positions of 10 joints (joint_angles: list of 10 values)."""
@@ -158,7 +164,7 @@ class LinkerHandO6Can:
         else:
             self.joint_angles = joint_angles
         # Send angle control in frames
-        self.send_frame(0x01, self.joint_angles, sleep=0.003)
+        return self.send_frame(0x01, self.joint_angles, sleep=0.003)
 
     def set_max_torque_limits(self, pressures, type="get"):
         """Set maximum torque limits."""
@@ -223,7 +229,10 @@ class LinkerHandO6Can:
             if len(list(response_data)) == 0:
                 return
             if frame_type == 0x01:   # 0x01
-                self.x01 = list(response_data)
+                with self._position_response:
+                    self.x01 = list(response_data)
+                    self._position_response_sequence += 1
+                    self._position_response.notify_all()
             elif frame_type == 0x02:    # 0x02
                 self.x02 = list(response_data)
             elif frame_type == 0x05: # Set speed
@@ -310,9 +319,33 @@ class LinkerHandO6Can:
             time.sleep(0.1)
         return self.version
 
-    def get_current_status(self):
-        self.send_frame(0x01, [],sleep=0.005)
-        return self.x01
+    def get_current_status(self, timeout=0.5):
+        """Return a position sample received after this request was sent.
+
+        The previous implementation returned the cached startup value
+        immediately, so an unplugged hand could appear healthy.  Waiting on a
+        response sequence also keeps the receive thread as the sole CAN reader.
+        """
+        with self._position_response:
+            previous = self._position_response_sequence
+        self.send_frame(0x01, [], sleep=0.0)
+        deadline = time.monotonic() + timeout
+        with self._position_response:
+            while self._position_response_sequence <= previous:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0 or not self._position_response.wait(remaining):
+                    raise TimeoutError(
+                        f"No O6 position response on CAN channel {self.can_channel} "
+                        f"(arbitration id 0x{self.can_id:02X})"
+                    )
+            return list(self.x01)
+
+    def probe_connection(self, timeout=0.5):
+        """Prove that the physical O6 answers a fresh, read-only CAN query."""
+        state = self.get_current_status(timeout=timeout)
+        if len(state) != 6:
+            raise RuntimeError(f"Invalid O6 position response length: {len(state)}")
+        return True
         
     def get_current_pub_status(self):
         return self.x01
@@ -442,3 +475,7 @@ class LinkerHandO6Can:
             self.receive_thread.join()
         if self.bus:
             self.bus.shutdown()
+
+    def close(self):
+        """Cross-platform lifecycle hook used by the Console V2 sidecar."""
+        self.close_can_interface()

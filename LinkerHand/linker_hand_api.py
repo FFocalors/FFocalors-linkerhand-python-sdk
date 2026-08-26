@@ -86,28 +86,43 @@ class LinkerHandApi:
         '''
         
         if len(pose) == 0:
-            return
+            return False
         pose = [int(v) for v in pose]
         if any(not isinstance(x, (int, float)) or x < 0 or x > 255 for x in pose):
             ColorMsg(msg=f"The numerical range cannot be less than 0 or greater than 255",color="red")
-            return
+            return False
+        result = None
         if (self.hand_joint.upper() == "O6" or self.hand_joint.upper() == "L6") and len(pose) == 6:
-            self.hand.set_joint_positions(pose)
+            result = self.hand.set_joint_positions(pose)
         elif self.hand_joint == "L7" and len(pose) == 7:
-            self.hand.set_joint_positions(pose)
+            result = self.hand.set_joint_positions(pose)
         elif self.hand_joint == "L10" and len(pose) == 10:
-            self.hand.set_joint_positions(pose)
+            result = self.hand.set_joint_positions(pose)
         elif self.hand_joint == "L20" and len(pose) == 20:
-            self.hand.set_joint_positions(pose)
+            result = self.hand.set_joint_positions(pose)
         elif self.hand_joint == "G20" and len(pose) == 20:
-            self.hand.set_joint_positions(pose)
+            result = self.hand.set_joint_positions(pose)
         elif self.hand_joint == "L21" and len(pose) == 25:
-            self.hand.set_joint_positions(pose)
+            result = self.hand.set_joint_positions(pose)
         elif self.hand_joint == "L25" and len(pose) == 25:
-            self.hand.set_joint_positions(pose)
+            result = self.hand.set_joint_positions(pose)
         else:
             ColorMsg(msg=f"Current LinkerHand is {self.hand_type}{self.hand_joint}, action sequence is {pose}, does not match", color="red")
+            return False
         self.last_position = pose
+        # Legacy model drivers return None on success.  Newer drivers may
+        # return an explicit bool so transport failures can cross the sidecar.
+        return True if result is None else bool(result)
+
+    def probe_connection(self):
+        """Verify the configured hand, not only the USB-CAN driver, is alive."""
+        probe = getattr(self.hand, "probe_connection", None)
+        if probe is not None:
+            return bool(probe())
+        # Older model drivers do not yet expose a fresh-response primitive.
+        # Keep their existing connection behavior until their protocol-specific
+        # acknowledgement can be implemented safely.
+        return True
 
     def _get_normal_force(self):
         '''# Get normal force'''
@@ -339,7 +354,17 @@ class LinkerHandApi:
         
     def close_can(self):
         if sys.platform == "linux" and self.modbus=="None":
-            self.open_can.close_can(can=self.can)                         
+            self.open_can.close_can(can=self.can)
+
+    def close(self):
+        """Release the underlying CAN/RS485 object on every platform."""
+        close = getattr(self.hand, "close", None)
+        if close is None:
+            close = getattr(self.hand, "close_can_interface", None)
+        if close is not None:
+            close()
+        if sys.platform == "linux" and self.modbus == "None":
+            self.open_can.close_can(can=self.can)
 
 if __name__ == "__main__":
     hand = LinkerHandApi(hand_type="right", hand_joint="L10")

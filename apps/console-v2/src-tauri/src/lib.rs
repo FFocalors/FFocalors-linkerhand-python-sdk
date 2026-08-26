@@ -647,7 +647,15 @@ impl RuntimeActor {
             let now = now_ms();
             if now.saturating_sub(next_telemetry) >= 50 {
                 next_telemetry = now;
-                self.flush_motion(now);
+                if let Err(error) = self.flush_motion(now) {
+                    self.log(
+                        now,
+                        LogLevel::Error,
+                        "control.transport.failed",
+                        &error.message,
+                        serde_json::json!({ "code": error.code }),
+                    );
+                }
                 self.broadcast_operation();
                 self.broadcast_action();
                 self.broadcast_grasp();
@@ -779,7 +787,7 @@ impl RuntimeActor {
                     let _ = reply.send(result);
                     return;
                 }
-                let result = self
+                let mut result = self
                     .runtime
                     .motion
                     .submit(command.clone())
@@ -796,7 +804,7 @@ impl RuntimeActor {
                         .action_record_command(command.clone(), now_ms());
                 }
                 if result.is_ok() && command.final_command {
-                    self.flush_motion(now_ms());
+                    result = self.flush_motion(now_ms());
                 }
                 self.log_command_result(&result, now_ms(), command.final_command, context);
                 let _ = reply.send(result);
@@ -1205,7 +1213,7 @@ impl RuntimeActor {
         }
         self.applied_control = desired;
     }
-    fn flush_motion(&mut self, now: u64) {
+    fn flush_motion(&mut self, now: u64) -> Result<(), AppError> {
         if let Some(command) = self.runtime.action_tick(now) {
             let _ = self.runtime.motion.submit(command);
         }
@@ -1213,8 +1221,9 @@ impl RuntimeActor {
             let _ = self.runtime.motion.submit(command);
         }
         if let Some(command) = self.runtime.motion.tick(now) {
-            let _ = self.runtime.device.send(&command);
+            self.runtime.device.send(&command).map_err(map_error)?;
         }
+        Ok(())
     }
     fn broadcast_connection(&mut self, value: ConnectionSnapshot) {
         self.connection_channels
@@ -2277,6 +2286,7 @@ mod tests {
     struct CapturingAdapter {
         inner: device_simulator::DeviceSimulator,
         writes: Arc<Mutex<Vec<JointTargetCommand>>>,
+        fail_send: Option<Arc<AtomicBool>>,
     }
     impl DeviceAdapter for CapturingAdapter {
         fn id(&self) -> &str {
@@ -2298,6 +2308,15 @@ mod tests {
             &mut self,
             command: &JointTargetCommand,
         ) -> device_adapter_api::AdapterResult<()> {
+            if self
+                .fail_send
+                .as_ref()
+                .is_some_and(|flag| flag.swap(false, Ordering::AcqRel))
+            {
+                return Err(device_adapter_api::AdapterError::Transport(
+                    "injected CAN send failure".into(),
+                ));
+            }
             self.writes.lock().unwrap().push(command.clone());
             self.inner.send_joint_target(command)
         }
@@ -2318,13 +2337,16 @@ mod tests {
         }
     }
 
-    fn spawn_capturing_runtime() -> (RuntimeHandle, Arc<Mutex<Vec<JointTargetCommand>>>) {
+    fn spawn_capturing_runtime_with_failure(
+        fail_send: Option<Arc<AtomicBool>>,
+    ) -> (RuntimeHandle, Arc<Mutex<Vec<JointTargetCommand>>>) {
         let config = DeviceConfig::new("capture", "capture O6");
         let writes = Arc::new(Mutex::new(Vec::new()));
         let mut runtime = AppRuntime::new(config, adaptive_grasp::Profile::O6);
         runtime.install_adapter(Box::new(CapturingAdapter {
             inner: device_simulator::DeviceSimulator::new("capture", 6),
             writes: writes.clone(),
+            fail_send,
         }));
         let (tx, rx) = mpsc::sync_channel(128);
         let control_state = Arc::new(std::sync::atomic::AtomicU8::new(0));
@@ -2369,6 +2391,10 @@ mod tests {
             },
             writes,
         )
+    }
+
+    fn spawn_capturing_runtime() -> (RuntimeHandle, Arc<Mutex<Vec<JointTargetCommand>>>) {
+        spawn_capturing_runtime_with_failure(None)
     }
 
     fn command(id: &str, value: f64, final_command: bool) -> JointTargetCommand {
@@ -2763,6 +2789,31 @@ mod tests {
         assert!(successes
             .iter()
             .any(|entry| entry.level == LogLevel::Info && entry.fields["finalCommand"] == true));
+        handle.shutdown();
+    }
+
+    #[test]
+    fn final_control_command_reports_transport_send_failure() {
+        let fail_send = Arc::new(AtomicBool::new(false));
+        let (handle, writes) = spawn_capturing_runtime_with_failure(Some(fail_send.clone()));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Connect {
+                reply,
+            }))
+            .unwrap();
+        fail_send.store(true, Ordering::Release);
+        let error = runtime
+            .block_on(dispatch(handle.clone(), |reply| ActorRequest::Submit {
+                command: command("must-reach-can", 0.5, true),
+                reply,
+            }))
+            .expect_err("final command must expose the CAN send failure");
+        assert!(error.message.contains("injected CAN send failure"));
+        assert!(writes.lock().unwrap().is_empty());
         handle.shutdown();
     }
 

@@ -145,6 +145,19 @@ class RealSdkAdapter(BaseAdapter):
         self.output = output or (lambda _text: None)
         self.sdk: Any = None
 
+    def _dispose_sdk(self) -> None:
+        sdk, self.sdk = self.sdk, None
+        self.connected = False
+        if sdk is None:
+            return
+        method = "close" if hasattr(sdk, "close") else "close_can"
+        if hasattr(sdk, method):
+            try:
+                self._capture(lambda: getattr(sdk, method)())
+            except AdapterError:
+                # Preserve the connect/command error that triggered cleanup.
+                pass
+
     def _capture(self, fn: Callable[[], Any]) -> Any:
         captured = io.StringIO()
         try:
@@ -169,10 +182,20 @@ class RealSdkAdapter(BaseAdapter):
             if transport_type == "can": kwargs["can"] = self.transport["channel"]
             else: kwargs["modbus"] = self.transport["port"]
             self.sdk = self._capture(lambda: api_class(**kwargs))
+            probe = getattr(self.sdk, "probe_connection", None)
+            if probe is not None and not self._capture(probe):
+                raise AdapterError(
+                    "DEVICE_NOT_RESPONDING",
+                    "USB-CAN opened, but the configured hand did not answer a probe",
+                    retryable=True,
+                )
             self.connected = True
             return self.capabilities()
-        except AdapterError: raise
+        except AdapterError:
+            self._dispose_sdk()
+            raise
         except Exception as exc:
+            self._dispose_sdk()
             raise AdapterError("SDK_UNAVAILABLE", f"could not load or connect SDK: {exc}", retryable=True) from exc
 
     def _invoke(self, method: str, *args, **kwargs) -> Any:
@@ -185,15 +208,16 @@ class RealSdkAdapter(BaseAdapter):
     def get_current(self): return self._invoke("get_current")
     def get_speed(self): return self._invoke("get_joint_speed")
     def get_touch(self): return self._invoke("get_touch")
-    def set_position(self, values): self.last_position = list(values); self._invoke("finger_move", values)
+    def set_position(self, values):
+        accepted = self._invoke("finger_move", values)
+        if accepted is False:
+            raise AdapterError("COMMAND_REJECTED", "SDK rejected the position command", retryable=False)
+        self.last_position = list(values)
     def set_speed(self, values): self._invoke("set_speed", values)
     def set_current(self, values): self._invoke("set_current", values)
     def set_torque(self, values): self._invoke("set_torque", values)
     def disconnect(self):
-        if self.sdk is not None:
-            method = "close" if hasattr(self.sdk, "close") else "close_can"
-            if hasattr(self.sdk, method): self._capture(lambda: getattr(self.sdk, method)())
-        self.sdk, self.connected = None, False
+        self._dispose_sdk()
     def close(self): self.disconnect()
 
 

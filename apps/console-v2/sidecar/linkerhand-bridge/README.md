@@ -31,6 +31,26 @@ release bundle. Development may launch `main.py` with `--sdk-root` pointing to
 the directory containing `LinkerHand/`. `--fake` is intentionally explicit and
 is only for tests/simulation; real SDK mode is the release default.
 
+## Real USB-CAN verification
+
+Close other programs that may own the CAN adapter, power the hand, and run the
+read-only probe from `apps/console-v2`:
+
+```powershell
+python scripts/verify-real-can.py --model O6 --hand left --channel PCAN_USBBUS1
+```
+
+After checking the returned position, exercise the complete action path by
+sending that same position back once (no displacement is intended):
+
+```powershell
+python scripts/verify-real-can.py --model O6 --hand left --channel PCAN_USBBUS1 --send-hold
+```
+
+For a candle/transparent USB-CAN adapter on Windows, the channel is commonly
+`0`. A pass requires a fresh response from the physical hand; opening the USB
+driver alone is not treated as a connected device.
+
 ## Windows x64 build
 
 From `apps/console-v2`, install the pinned runtime requirements into the build
