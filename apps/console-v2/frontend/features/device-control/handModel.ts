@@ -35,12 +35,13 @@ export interface DriveRule {
   axis: 'x' | 'y' | 'z'; // primary rotation axis
   kind: 'bend' | 'spread'; // bend: 1=open(limit near 0) 0=bent(limit far) ; spread: linear
   /**
-   * For bend joints: the fraction of the URDF bend range at which the
-   * fully-open pose sits (0 = open at the URDF open limit and the bend uses
-   * the full range; 0.7 = open at 70% of the range and the bend uses the top
-   * 30%). The physical O6 thumb only travels the top ~30% of the L20_8 URDF
-   * model's bend range (physical 0-100 ≈ model 70-100), so the twin must sit
-   * in that band instead of over-rotating from the URDF open limit.
+   * For bend joints: the fraction of the URDF bend range that the physical
+   * joint actually travels, measured from the open (straight) end. 0 = the
+   * joint uses the full range (value 1 -> open limit, value 0 -> bent limit).
+   * The physical O6 thumb is much less flexible than the L20_8 URDF model: a
+   * fully bent real thumb only reaches ~30% of the model's bend range (real
+   * 0-100 ≈ model 70-100, where 100 = straight), so bendScale = 0.3 keeps the
+   * twin from over-rotating into poses the real hand can never reach.
    */
   bendScale?: number;
 }
@@ -399,7 +400,7 @@ export const O6_DRIVE_RULES: DriveRule[] = [
     urdfJoints: ['thumb_joint0', 'thumb_joint2', 'thumb_joint3'],
     axis: 'x',
     kind: 'bend',
-    bendScale: 0.7,
+    bendScale: 0.3,
   },
   {
     sdkIndex: 1,
@@ -486,13 +487,13 @@ export function sdkNormalizedToJointAngles(
         const openAngle = absLower < absUpper ? lower : upper;
         const bentAngle = absLower < absUpper ? upper : lower;
 
-        // bendScale is the fraction of the URDF bend range where the physical
-        // "fully open" pose sits. The physical O6 thumb only moves through the
-        // top ~30% of the L20_8 range (physical 0-100 ≈ model 70-100), so the
-        // twin renders value 1 at that offset (70%) and value 0 at the bent
-        // URDF limit (100%) instead of over-rotating from the open limit.
-        const openBias = rule.bendScale ?? 0;
-        angle = openAngle + (bentAngle - openAngle) * (openBias + (1 - value) * (1 - openBias));
+        // bendScale is the fraction of the URDF bend range the physical joint
+        // travels from the open end. For the O6 thumb that is 0.3: value 1
+        // (straight) renders at the open limit and value 0 (fully bent) stops
+        // at 30% of the model range — the twin never rotates into poses the
+        // real thumb cannot reach (real 0-100 ≈ model 70-100).
+        const scale = rule.bendScale ?? 1;
+        angle = openAngle + (1 - value) * (bentAngle - openAngle) * scale;
       } else {
         // Spread joints: the digital twin renders thumb yaw (spread) mirrored
         // relative to the real hand, so invert the linear mapping — value 1
