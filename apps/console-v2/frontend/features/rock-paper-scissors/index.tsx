@@ -220,7 +220,7 @@ export function RockPaperScissors({ capabilities, locked, runtime, actionControl
 
   const state = controller?.snapshot();
   const showMachineMove = Boolean(state && (state.phase === 'reveal' || state.phase === 'score' || state.phase === 'ready' || state.phase === 'matchOver'));
-  const status = state?.cameraError ? `摄像头：${state.cameraError.message}` : !runtime ? '等待应用注入共享 VisionRuntime' : state?.phase === 'countdown' ? `倒计时 ${state.countdown ?? ''}` : state?.phase === 'capture' ? '请保持手势稳定' : state?.phase === 'recognized' ? '已识别，准备揭晓' : state?.phase === 'invalid' ? INVALID_LABELS[state.invalidReason ?? 'unknown'] : state?.phase === 'reveal' ? '揭晓结果' : state?.phase === 'score' ? '正在记分' : state?.phase === 'ready' ? '3 秒后自动开始下一局' : state?.phase === 'matchOver' ? (state.matchWinner === 'player' ? '🎉 你赢得本场！' : state.matchWinner === 'machine' ? '🤖 机械手赢得本场！' : '本场结束') : cameraRunning ? '摄像头已就绪' : '请先开启摄像头';
+  const status = state?.cameraError ? `摄像头：${state.cameraError.message}` : !runtime ? '等待应用注入共享 VisionRuntime' : state?.phase === 'countdown' ? `倒计时 ${state.countdown ?? ''}` : state?.phase === 'capture' ? '请保持手势稳定' : state?.phase === 'recognized' ? '已识别，准备揭晓' : state?.phase === 'invalid' ? INVALID_LABELS[state.invalidReason ?? 'unknown'] : state?.phase === 'reveal' ? '揭晓结果' : state?.phase === 'score' ? '正在记分' : state?.phase === 'ready' ? '即将开始下一局' : state?.phase === 'matchOver' ? (state.matchWinner === 'player' ? '🎉 你赢得本场！' : state.matchWinner === 'machine' ? '🤖 机械手赢得本场！' : '本场结束') : cameraRunning ? '摄像头已就绪' : '请先开启摄像头';
 
   const strategy = state?.strategy ?? 'personalized_adaptive';
   const profile = state?.profile;

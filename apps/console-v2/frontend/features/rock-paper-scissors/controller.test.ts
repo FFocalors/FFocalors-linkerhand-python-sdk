@@ -103,7 +103,7 @@ describe('RPS deterministic controller', () => {
     expect(controller.snapshot().machineMove).toBeNull();
   });
 
-  it('auto-starts the next round after the configured interval instead of waiting for a click', async () => {
+  it('auto-starts the next round immediately by default (no inter-throw gap)', async () => {
     const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler, random: () => 0 }); await ready(controller, runtime);
     controller.beginRound();
     scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
@@ -113,6 +113,31 @@ describe('RPS deterministic controller', () => {
     scheduler.runNext();
     expect(controller.snapshot().phase).toBe('countdown');
     expect(controller.snapshot().round).toBe(2);
+  });
+
+  it('honors a configured inter-throw interval when one is supplied', async () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const controller = new RpsGameController({ runtime, capabilities: capabilities('L7'), scheduler, random: () => 0, autoAdvanceMs: 3000 }); await ready(controller, runtime);
+    controller.beginRound();
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    runtime.emit(paperResult());
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    expect(controller.snapshot().phase).toBe('ready');
+    const delay = scheduler.runNext();
+    expect(delay).toBe(3000);
+    expect(controller.snapshot().phase).toBe('countdown');
+    expect(controller.snapshot().round).toBe(2);
+  });
+
+  it('keeps the 机械手下发 authorization across round completion', async () => {
+    const runtime = new FakeRuntime(); const scheduler = new FakeScheduler(); const action: RpsActionController = { authorize: async () => true, dispatch: async () => ({ status: 'executed' }), cancel: vi.fn(async () => undefined) }; const controller = new RpsGameController({ runtime, capabilities: capabilities('O6'), actionController: action, scheduler, random: () => 0 }); await ready(controller, runtime);
+    await controller.authorizeHardware();
+    expect(controller.snapshot().hardwareAuthorized).toBe(true);
+    controller.beginRound();
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    runtime.emit(paperResult());
+    scheduler.runNext(); scheduler.runNext(); scheduler.runNext();
+    expect(controller.snapshot().phase).toBe('ready');
+    expect(controller.snapshot().hardwareAuthorized).toBe(true);
   });
 
   it('ends a best-of-3 match after two player wins and exposes the winner', async () => {

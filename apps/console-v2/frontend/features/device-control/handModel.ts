@@ -35,9 +35,12 @@ export interface DriveRule {
   axis: 'x' | 'y' | 'z'; // primary rotation axis
   kind: 'bend' | 'spread'; // bend: 1=open(limit near 0) 0=bent(limit far) ; spread: linear
   /**
-   * Optional multiplier for the visual bend range (0..1). The physical O6
-   * thumb only bends through the top ~30% of the L20_8 URDF model's range
-   * (real 0% ≈ model 70%), so the twin would over-rotate without scaling it.
+   * For bend joints: the fraction of the URDF bend range at which the
+   * fully-open pose sits (0 = open at the URDF open limit and the bend uses
+   * the full range; 0.7 = open at 70% of the range and the bend uses the top
+   * 30%). The physical O6 thumb only travels the top ~30% of the L20_8 URDF
+   * model's bend range (physical 0-100 ≈ model 70-100), so the twin must sit
+   * in that band instead of over-rotating from the URDF open limit.
    */
   bendScale?: number;
 }
@@ -483,12 +486,13 @@ export function sdkNormalizedToJointAngles(
         const openAngle = absLower < absUpper ? lower : upper;
         const bentAngle = absLower < absUpper ? upper : lower;
 
-        // bendScale compresses the visual bend so the model matches the
-        // physical hand's real travel (e.g. O6 thumb only bends through 70%
-        // of the L20_8 model range). value 0 then stops at the scaled bent
-        // angle instead of the full URDF limit.
-        const scale = rule.bendScale ?? 1;
-        angle = openAngle + (1 - value) * (bentAngle - openAngle) * scale;
+        // bendScale is the fraction of the URDF bend range where the physical
+        // "fully open" pose sits. The physical O6 thumb only moves through the
+        // top ~30% of the L20_8 range (physical 0-100 ≈ model 70-100), so the
+        // twin renders value 1 at that offset (70%) and value 0 at the bent
+        // URDF limit (100%) instead of over-rotating from the open limit.
+        const openBias = rule.bendScale ?? 0;
+        angle = openAngle + (bentAngle - openAngle) * (openBias + (1 - value) * (1 - openBias));
       } else {
         // Spread joints: the digital twin renders thumb yaw (spread) mirrored
         // relative to the real hand, so invert the linear mapping — value 1

@@ -35,6 +35,17 @@ use thiserror::Error;
 pub const CONTROL_STEP_MS: u64 = 50;
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_STEP_LIMIT: f64 = 0.05;
+/// Gain applied to the raw contact score (0..1) before it is shown in the UI.
+/// A solid contact settles around 0.70-0.73 (the stall term dominates while the
+/// error/jitter terms drop once the joint freezes), but operators expect a
+/// near-perfect contact to read ~95%.
+pub const CONTACT_SCORE_DISPLAY_GAIN: f64 = 1.3;
+/// Lift a raw analyzer contact score into the value shown to the operator.
+/// Keeps 0 as no contact and 1 as perfect, while making a real contact (~0.70)
+/// read as ~95% instead of ~70%.
+pub fn display_contact_score(raw: f64) -> f64 {
+    (raw * CONTACT_SCORE_DISPLAY_GAIN).clamp(0.0, 1.0)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Profile {
@@ -1939,5 +1950,19 @@ mod tests {
             precision_fine_ms > cube_fine_ms,
             "precision needs a larger fine-phase budget: {precision_fine_ms} vs {cube_fine_ms}"
         );
+    }
+
+    #[test]
+    fn display_contact_score_lifts_a_solid_contact_to_near_max() {
+        // A genuine contact (~0.70-0.73 raw) must read ~95% in the UI while a
+        // no-contact read stays at 0 and a perfect score stays capped at 1.
+        assert_eq!(display_contact_score(0.0), 0.0);
+        assert_eq!(display_contact_score(1.0), 1.0);
+        let lifted = display_contact_score(0.73);
+        assert!(
+            (lifted - 0.95).abs() < 0.02,
+            "0.73 should read ~0.95, got {lifted}"
+        );
+        assert!(display_contact_score(0.4) > 0.4, "scores should be lifted");
     }
 }

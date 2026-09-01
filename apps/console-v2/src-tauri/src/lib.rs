@@ -1343,7 +1343,7 @@ impl RuntimeActor {
                     GraspJointState::Error => "error",
                 }
                 .into(),
-                contact_score: *score as f32,
+                contact_score: adaptive_grasp::display_contact_score(*score) as f32,
             })
             .collect();
         let value = GraspStateEvent {
