@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ListOrdered, Save } from 'lucide-react';
 import type { ActionPort, ActionRecording, DeviceCapabilities, MotionPort, TelemetryPort } from '../../shared/contracts';
 import { Badge, Button, Card, Checkbox, EmptyState, Progress, Select, TextField } from '../../shared/ui';
@@ -72,6 +72,12 @@ export interface ActionController {
   /** Optional explicit physical-device safety boundary for draft poses. */
   previewPose?: (pose: PosePreset) => Promise<void>;
   applyPose?: (pose: PosePreset, options: PlaybackOptions) => Promise<void>;
+  /**
+   * Realtime single-joint-target stream (manual source, mirroring the homepage
+   * key-target panel). finalCommand=false keeps the manual motion source live
+   * while dragging; finalCommand=true commits and releases it.
+   */
+  streamPose?: (pose: PosePreset, finalCommand: boolean) => Promise<void>;
   /** Compatibility fallback only; adapters should implement the two complete-data methods above. */
   play: (actionId: string, options: { speed: number; loopCount: number | null; direction?: PlaybackDirection }) => Promise<void>;
   startRecording?: (name: string) => Promise<void>;
@@ -138,6 +144,10 @@ export function ActionCenter({
   const [draftBaseline, setDraftBaseline] = useState<number[]>([]);
   const [draftDirty, setDraftDirty] = useState(false);
   const [previewedPose, setPreviewedPose] = useState<PosePreset>();
+  // 姿态编辑器滑块实时下发：与首页关键目标控制面板一致的 direct manual 指令流。
+  // 拖动时通过 rAF 合帧持续下发 finalCommand=false，松手时 finalCommand=true 提交并释放。
+  const draftStreamRef = useRef<number[]>([]);
+  const poseStreamRaf = useRef<number | undefined>(undefined);
   useEffect(() => { if (localPresets !== undefined) setLocalPoseState(localPresets); }, [localPresets]);
   useEffect(() => { if (programmedActions !== undefined) setLocalActionState(programmedActions); }, [programmedActions]);
   useEffect(() => {
@@ -233,14 +243,43 @@ export function ActionCenter({
   const removeProgrammedAction = (action: ProgrammedAction) => {
     const next = localActionState.filter(item => item.id !== action.id); setLocalActionState(next); onProgrammedActionsChange?.(next);
   };
+  const submitDraftPose = async (finalCommand: boolean) => {
+    if (!controller?.streamPose || locked || !canExecute || isPhysicalDevice !== true) return;
+    const vector = draftStreamRef.current;
+    if (vector.length === 0) return;
+    try {
+      await controller.streamPose({ kind: 'pose', id: 'action-center-draft', name: '编辑中的姿态', source: 'local', positions: vector }, finalCommand);
+      if (finalCommand) setError(undefined);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : typeof error === 'string' ? error : '未知错误';
+      setError(`关节目标未送达：${detail}`);
+    }
+  };
+  const scheduleDraftStream = () => {
+    if (!controller?.streamPose || isPhysicalDevice !== true) return;
+    if (poseStreamRaf.current !== undefined) return;
+    poseStreamRaf.current = requestAnimationFrame(() => {
+      poseStreamRaf.current = undefined;
+      void submitDraftPose(false);
+    });
+  };
+  const finishDraftStream = () => {
+    if (poseStreamRaf.current !== undefined) {
+      cancelAnimationFrame(poseStreamRaf.current);
+      poseStreamRaf.current = undefined;
+    }
+    void submitDraftPose(true);
+  };
   const updateDraftValue = (index: number, value: number) => {
     setDraftDirty(true);
     setDraftValues(previous => {
       const length = capabilities?.jointCount ?? Math.max(previous.length, index + 1);
       const next = Array.from({ length }, (_, itemIndex) => previous[itemIndex] ?? sliderValues[itemIndex] ?? 0);
       next[index] = value;
+      draftStreamRef.current = [...next];
       return next;
     });
+    scheduleDraftStream();
   };
   const readCurrentPosition = async () => {
     if (!telemetry || !capabilities) return;
@@ -289,7 +328,7 @@ export function ActionCenter({
           <div className="card-header"><div><h2>姿态编辑器</h2><span className="muted">{capabilities!.jointCount} 个关节 · {isPhysicalDevice === true ? '真机优先：必须预览后再应用' : debugMode ? '无真机时使用虚拟机械手调试' : '先读取当前位置，再预览或应用'}</span></div><div className="heading-actions"><Badge tone={isPhysicalDevice === true ? 'amber' : debugMode ? 'blue' : 'amber'}>{isPhysicalDevice === true ? '真机安全预览' : debugMode ? '虚拟机械手' : '安全预览'}</Badge><Button variant="ghost" onClick={() => void readCurrentPosition()}>读取当前位置</Button><Button variant="ghost" onClick={resetDraft} disabled={!editorReady}>重置草稿</Button></div></div>
           {debugMode && <div className="permission-note" role="status">{isPhysicalDevice === true ? '已检测到真实机械手：真机优先，调试模式不会绕过预览→应用安全门槛。' : '无真实机械手：调试滑块与未保存姿态同步虚拟机械手，不会发送真实硬件命令。'}</div>}
           {poseDrafting && <div className="settings-row pose-draft"><TextField label="姿态名称" id="pose-name" value={poseName} onChange={event => setPoseName(event.target.value)} placeholder="例如：准备姿态" /><Button variant="ghost" onClick={() => setPoseDrafting(false)}>取消</Button><Button variant="primary" disabled={Boolean(poseSaveReason)} onClick={savePose}>保存到自定义姿态</Button>{poseSaveReason && <span className="muted pose-save-reason" role="status">{poseSaveReason}</span>}</div>}
-          <div className="joint-slider-grid">{Array.from({ length: capabilities!.jointCount }, (_, index) => <div className="joint-slider-item" key={index}><JointSlider index={index} label={O6_JOINT_NAMES[index]} value={draftValues[index] ?? sliderValues[index] ?? 0} disabled={!debugMode || locked} onBegin={() => undefined} onInput={updateDraftValue} onFinish={() => undefined} /><span className="visually-hidden">{Math.round((draftValues[index] ?? sliderValues[index] ?? 0) * 100)}%</span></div>)}</div>
+          <div className="joint-slider-grid">{Array.from({ length: capabilities!.jointCount }, (_, index) => <div className="joint-slider-item" key={index}><JointSlider index={index} label={O6_JOINT_NAMES[index]} value={draftValues[index] ?? sliderValues[index] ?? 0} disabled={locked || !canExecute} onBegin={() => undefined} onInput={updateDraftValue} onFinish={() => finishDraftStream()} /><span className="visually-hidden">{Math.round((draftValues[index] ?? sliderValues[index] ?? 0) * 100)}%</span></div>)}</div>
           <div className="heading-actions pose-editor-actions"><Button variant="ghost" disabled={!editorReady || locked || !canExecute} onClick={previewDraft}>预览当前姿态</Button>{previewedPose && <><span className="muted">已预览：{previewedPose.name}</span><Button variant="primary" disabled={!physicalSafetyPath || locked || !canExecute} onClick={applyPreview}>应用到设备</Button></>}</div>
           <div className="heading-actions"><Button variant="ghost" onClick={() => setPoseDrafting(true)}><Save size={14} />保存当前姿态为自定义姿态</Button></div>
         </Card>}

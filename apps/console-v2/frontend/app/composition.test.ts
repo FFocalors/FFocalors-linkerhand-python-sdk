@@ -103,12 +103,12 @@ describe('runtime composition adapters', () => {
     const action: ProgrammedAction = { kind: 'sequence', id: 'sequence-1', name: '序列', source: 'local', poseIds: ['a', 'b'], poses, playback: { mode: 'loop', speed: 1.5, direction: 'reverse', loopCount: 3 }, createdAt: 'now' };
     await controller.playProgrammedAction!(action, action.playback);
     expect(playFrames).toHaveBeenCalledWith('sequence-1', '序列', expect.arrayContaining([
-      expect.objectContaining({ positions: poses[0].positions, durationMs: 500 }),
-      expect.objectContaining({ positions: poses[1].positions, durationMs: 500 }),
+      expect.objectContaining({ positions: poses[0].positions, durationMs: 1500 }),
+      expect.objectContaining({ positions: poses[1].positions, durationMs: 1500 }),
     ]), action.playback);
     expect(stop).not.toHaveBeenCalled();
     await controller.playPose!(poses[0], { mode: 'single', speed: 1, direction: 'forward', loopCount: 1 });
-    expect(playFrames).toHaveBeenLastCalledWith('a', 'A', [expect.objectContaining({ positions: poses[0].positions, durationMs: 500 })], { mode: 'single', speed: 1, direction: 'forward', loopCount: 1 });
+    expect(playFrames).toHaveBeenLastCalledWith('a', 'A', [expect.objectContaining({ positions: poses[0].positions, durationMs: 1500 })], { mode: 'single', speed: 1, direction: 'forward', loopCount: 1 });
     await controller.pausePlayback?.();
     await controller.resumePlayback?.();
     expect(extras.pause).toHaveBeenCalledOnce();
