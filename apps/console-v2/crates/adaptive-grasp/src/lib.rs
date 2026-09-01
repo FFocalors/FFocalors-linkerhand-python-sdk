@@ -276,6 +276,10 @@ pub struct GraspConfig {
     pub coarse_timeout_ratio: f64,
     /// Ticks to let the hand settle at the approach pose before closing (D1).
     pub approach_settle_ticks: usize,
+    /// Minimum closing time before an empty-grasp (zero contact) is declared.
+    /// Guards against judging a hand that starts partially closed (e.g. the
+    /// half-fist of a precision pinch) as empty before it can reach contact.
+    pub min_empty_grasp_ms: u64,
 }
 impl Default for GraspConfig {
     fn default() -> Self {
@@ -311,6 +315,7 @@ impl GraspConfig {
             verify_ms: 800,
             coarse_timeout_ratio: 0.6,
             approach_settle_ticks: 10,
+            min_empty_grasp_ms: 1500,
         };
         match preset {
             // Soft: gentle, contact-sensitive (low threshold, small steps).
@@ -335,15 +340,21 @@ impl GraspConfig {
                 verify_ms: 1000,
                 ..base
             },
-            // Precision: fingertip pinch, strict confirmation, longer verify.
+            // Precision: fingertip pinch of small objects. The fine phase is
+            // deliberately slow, so it needs a larger overall budget and a
+            // bigger fine share, and the step sizes must cover the remaining
+            // displacement in time — otherwise a half-fist reach is judged as
+            // "抓取超时" before the pinch confirms.
             GraspPreset::Precision => GraspConfig {
-                coarse_step_limit: 0.02,
-                fine_step_limit: 0.004,
+                coarse_step_limit: 0.03,
+                fine_step_limit: 0.006,
                 preload_step_limit: 0.003,
                 preload_max_steps: 1,
                 contact_score_threshold: 0.75,
                 minimum_contacts: 1,
                 verify_ms: 1200,
+                timeout_ms: 16_000,
+                coarse_timeout_ratio: 0.4,
                 ..base
             },
         }
@@ -757,16 +768,16 @@ impl GraspMachine {
         self.state = GraspState::ClosingCoarse;
         Ok(())
     }
-    pub fn approach_complete(&mut self) -> Result<(), GraspError> {
+    pub fn approach_complete(&mut self, now_ms: u64) -> Result<(), GraspError> {
         if self.state != GraspState::Approaching {
             return Err(GraspError::Invalid(self.state.clone()));
         }
+        // The grasp-execution clock starts now. The operator may hold at the
+        // pre-grasp pose for as long as they want (no auto-cancel), so time
+        // spent waiting must not consume the closing timeout budget.
+        self.started_at_ms = Some(now_ms);
+        self.phase_started_at_ms = Some(now_ms);
         self.state = GraspState::ClosingCoarse;
-        self.phase_started_at_ms = Some(
-            self.started_at_ms
-                .unwrap_or(0)
-                .saturating_add(self.config.approach_settle_ticks as u64 * CONTROL_STEP_MS),
-        );
         Ok(())
     }
     pub fn grasp_complete(&mut self) -> Result<(), GraspError> {
@@ -866,8 +877,14 @@ impl GraspMachine {
                     .unwrap_or(0),
             }));
         }
+        // Overall grasp timeout. The operator may wait at the pre-grasp pose
+        // indefinitely (pre-grasp is only a positioning step, never an
+        // auto-cancel), so the wait state is excluded; the clock is reset when
+        // closing actually starts (approach_complete).
         if let Some(start) = self.started_at_ms {
-            if now_ms.saturating_sub(start) > self.config.timeout_ms {
+            if !matches!(self.state, GraspState::Approaching)
+                && now_ms.saturating_sub(start) > self.config.timeout_ms
+            {
                 return Err(self.fail(FailureReason::Timeout));
             }
         }
@@ -1243,7 +1260,19 @@ impl GraspMachine {
 
         if stopped >= moving_total && moving_total > 0 {
             if confirmed == 0 {
-                self.fail(FailureReason::EmptyGrasp);
+                // Never declare an empty grasp instantly: a hand that starts
+                // partially closed (e.g. the half-fist of a precision pinch)
+                // must get a grace period to reach contact before being judged
+                // as having no object at all.
+                let started = self.started_at_ms.unwrap_or(now_ms);
+                if now_ms.saturating_sub(started) >= self.config.min_empty_grasp_ms {
+                    self.fail(FailureReason::EmptyGrasp);
+                    return;
+                }
+                // Not enough elapsed time yet: hold the closing phase so the
+                // per-joint targets keep advancing toward contact. The phased
+                // timeout still bounds this window.
+                let _ = now_ms;
                 return;
             }
             // Partial contact: try to secure via preload; verification in
@@ -1553,7 +1582,7 @@ mod tests {
         // the approach must HOLD (not auto-close); closing only begins when
         // the operator explicitly completes the approach
         assert_eq!(*machine.state(), GraspState::Approaching);
-        machine.approach_complete().unwrap();
+        machine.approach_complete(17 * 50).unwrap();
         // force contact via the tactile channel
         t.tactile_available = true;
         t.raw_touch = vec![20; 6];
@@ -1703,7 +1732,7 @@ mod tests {
             );
         }
         // only an explicit start transitions to closing
-        machine.approach_complete().unwrap();
+        machine.approach_complete(41 * 50).unwrap();
         assert_eq!(*machine.state(), GraspState::ClosingCoarse);
     }
 
@@ -1823,6 +1852,92 @@ mod tests {
             *machine.state(),
             GraspState::Ready,
             "release on a real clock should return to Ready"
+        );
+    }
+
+    #[test]
+    fn approach_wait_never_times_out_until_closing_starts() {
+        // Regression: after the pre-grasp step the machine holds and must not
+        // auto-cancel after ~10s of operator inactivity.
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.start_approach(0, &[0.8; 6], &[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        // tick far beyond the 10s grasp timeout: the pre-grasp wait must hold
+        let mut now_ms = 20_000u64;
+        for _ in 0..20 {
+            t.positions = vec![0.8; 6];
+            let tick = machine.tick(now_ms, &t);
+            assert!(
+                tick.is_ok(),
+                "approach wait must not time out, got {tick:?}"
+            );
+            assert_eq!(*machine.state(), GraspState::Approaching);
+            now_ms += 50;
+        }
+        // the closing budget starts fresh when the operator starts the grasp
+        machine.approach_complete(now_ms).unwrap();
+        assert_eq!(*machine.state(), GraspState::ClosingCoarse);
+    }
+
+    #[test]
+    fn empty_grasp_is_not_judged_before_the_grace_period() {
+        // Regression: a no-load run closes to the limit with zero contact. The
+        // empty-grasp judgment must wait out the grace window instead of firing
+        // the moment the joints stop.
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        let mut failed_at_ms = None;
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Failed {
+                failed_at_ms = Some(step * 50);
+                break;
+            }
+            if step * 50 < 1500 {
+                assert_eq!(
+                    *machine.state(),
+                    GraspState::ClosingCoarse,
+                    "must keep closing during the empty-grasp grace window (step {step})"
+                );
+            }
+        }
+        let failed_at_ms = failed_at_ms.expect("an empty grasp should fail after the grace period");
+        assert!(
+            failed_at_ms >= 1500,
+            "empty grasp must not be judged before the grace window, failed at {failed_at_ms}ms"
+        );
+        assert_eq!(machine.failure(), Some(&FailureReason::EmptyGrasp));
+    }
+
+    #[test]
+    fn precision_preset_gets_more_time_and_fine_budget() {
+        let precision = GraspConfig::for_preset(GraspPreset::Precision);
+        let cube = GraspConfig::for_preset(GraspPreset::Cube);
+        assert!(
+            precision.timeout_ms > cube.timeout_ms,
+            "precision needs a larger overall budget"
+        );
+        let precision_fine_ms =
+            (1.0 - precision.coarse_timeout_ratio) * precision.timeout_ms as f64;
+        let cube_fine_ms = (1.0 - cube.coarse_timeout_ratio) * cube.timeout_ms as f64;
+        assert!(
+            precision_fine_ms > cube_fine_ms,
+            "precision needs a larger fine-phase budget: {precision_fine_ms} vs {cube_fine_ms}"
         );
     }
 }

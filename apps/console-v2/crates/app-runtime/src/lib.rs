@@ -360,7 +360,7 @@ impl AppRuntime {
             // The operator already ran the pre-grasp step: complete it and
             // start closing.
             adaptive_grasp::GraspState::Approaching => {
-                self.grasp.approach_complete().map_err(unsupported)
+                self.grasp.approach_complete(now_ms).map_err(unsupported)
             }
             // Direct start without the explicit pre-grasp step, or retry after
             // a failed/aborted grasp: reset to Ready (keeps the session
@@ -379,7 +379,7 @@ impl AppRuntime {
                 self.grasp
                     .start_approach(now_ms, &pregrasp, &close)
                     .map_err(unsupported)?;
-                self.grasp.approach_complete().map_err(unsupported)
+                self.grasp.approach_complete(now_ms).map_err(unsupported)
             }
             _ => Err(AppRuntimeError::Unsupported(
                 "当前状态无法开始抓取，请先完成标定或中止后重试。".into(),
