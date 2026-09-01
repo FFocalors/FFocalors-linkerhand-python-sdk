@@ -119,6 +119,33 @@ describe('ActionCenter pose editor', () => {
     fireEvent.change(slider, { target: { value: '0.75' } });
     await waitFor(() => expect(onVirtual).toHaveBeenCalledWith(expect.arrayContaining([0.75])));
   });
+
+  it('streams the draft pose to a physical hand while dragging and commits on release', async () => {
+    const port = controller();
+    const streamPose = vi.fn(async (_pose: PosePreset, _finalCommand: boolean) => undefined);
+    const wired = { ...port, streamPose };
+    render(<ActionCenter actions={actions} motion={motion} locked={false} controller={wired} capabilities={capabilities} telemetry={telemetry()} isPhysicalDevice />);
+    const slider = await screen.findByLabelText('大拇指弯曲 目标');
+    fireEvent.change(slider, { target: { value: '0.75' } });
+    await waitFor(() => expect(streamPose).toHaveBeenCalled());
+    const dragCall = streamPose.mock.calls[streamPose.mock.calls.length - 1]!;
+    expect(dragCall[0].positions).toEqual(expect.arrayContaining([0.75]));
+    expect(dragCall[1]).toBe(false);
+    fireEvent.pointerUp(slider);
+    await waitFor(() => expect(streamPose.mock.calls[streamPose.mock.calls.length - 1]![1]).toBe(true));
+  });
+
+  it('does not stream draft poses when no physical hand is connected', async () => {
+    const port = controller();
+    const streamPose = vi.fn(async (_pose: PosePreset, _finalCommand: boolean) => undefined);
+    const wired = { ...port, streamPose };
+    render(<ActionCenter actions={actions} motion={motion} locked={false} controller={wired} capabilities={capabilities} telemetry={telemetry()} debugMode />);
+    const slider = await screen.findByLabelText('大拇指弯曲 目标');
+    fireEvent.change(slider, { target: { value: '0.75' } });
+    // Give a rAF-frame's worth of time for any (incorrect) scheduled stream.
+    await waitFor(() => expect(streamPose).not.toHaveBeenCalled(), { timeout: 120 });
+    expect(streamPose).not.toHaveBeenCalled();
+  });
 });
 
 describe('ActionCenter collections and safety', () => {

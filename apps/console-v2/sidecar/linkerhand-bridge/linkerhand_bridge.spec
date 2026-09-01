@@ -6,6 +6,7 @@ checkouts under Chinese or space-containing Windows paths.
 """
 from pathlib import Path
 import os
+import sys
 
 spec_root = Path(SPECPATH).resolve()
 repo_root = spec_root.parents[3]
@@ -49,16 +50,44 @@ hiddenimports = [
     "pymodbus",
     "serial",
     "numpy",
+    # PyInstaller 6+ ships a `pyi_rth_pkgres` runtime hook that imports
+    # `jaraco` via pkg_resources (setuptools >= 68). If these are not declared
+    # here, the frozen sidecar crashes immediately with
+    # `ModuleNotFoundError: No module named 'jaraco'` before any NDJSON line
+    # is written to stdout, and the Tauri runtime reports the transport as
+    # "sidecar crashed: stdout closed".
+    "pkg_resources",
+    "jaraco",
+    "jaraco.functools",
+    "jaraco.context",
+    "jaraco.text",
 ]
 
 # LinkerHand is a source checkout rather than an installed wheel, so use an
 # explicit data TOC instead of collect_data_files (which intentionally skips
 # source-tree modules that are not importable distributions).
 datas = [(str(path), "LinkerHand/config") for path in sorted((sdk_package / "config").glob("*.yaml"))]
+
+# pyi_rth_pkgres -> pkg_resources -> plistlib -> xml.parsers.expat pulls in
+# `pyexpat.pyd`, which depends on the conda-supplied `expat.dll` living in
+# `<env>/Library/bin/` (not under `DLLs/`). PyInstaller's analysis can't
+# resolve it there, so the frozen exe crashes at startup with
+# "DLL load failed while importing pyexpat: 找不到指定的模块". Bundle it
+# explicitly so the sidecar can import stdlib `plistlib` / `xml.parsers.expat`.
+_py_dir = Path(sys.executable).parent
+_expat_candidates = [
+    _py_dir / "DLLs" / "expat.dll",
+    # Conda Python puts third-party C library DLLs under
+    # `<env>/Library/bin/`, not under `DLLs/` (that's stdlib only).
+    _py_dir / "Library" / "bin" / "expat.dll",
+]
+_expat_binaries = [(str(p), ".") for p in _expat_candidates if p.is_file()]
+
 a = Analysis(
     [str(spec_root / "main.py")],
     # linker_hand_api imports ``core`` and ``utils`` as top-level modules.
     pathex=[str(sdk_root), str(sdk_package), str(spec_root)],
+    binaries=_expat_binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     excludes=["IPython", "matplotlib", "mediapipe", "PyQt5", "pytest"],
