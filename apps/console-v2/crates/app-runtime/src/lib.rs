@@ -823,4 +823,83 @@ mod tests {
             adaptive_grasp::GraspState::Releasing
         );
     }
+
+    /// Adapter whose transport drops after connect: sends report NotConnected.
+    struct DroppingAdapter(device_simulator::DeviceSimulator, bool);
+    impl device_adapter_api::DeviceAdapter for DroppingAdapter {
+        fn id(&self) -> &str {
+            "dropping"
+        }
+        fn connect(
+            &mut self,
+        ) -> device_adapter_api::AdapterResult<console_contracts::DeviceCapabilities> {
+            self.0.connect()
+        }
+        fn disconnect(&mut self) -> device_adapter_api::AdapterResult<()> {
+            self.0.disconnect()
+        }
+        fn is_connected(&self) -> bool {
+            self.0.is_connected()
+        }
+        fn capabilities(&self) -> Option<&console_contracts::DeviceCapabilities> {
+            self.0.capabilities()
+        }
+        fn send_joint_target(
+            &mut self,
+            _command: &console_contracts::JointTargetCommand,
+        ) -> device_adapter_api::AdapterResult<()> {
+            if self.1 {
+                Err(device_adapter_api::AdapterError::NotConnected)
+            } else {
+                Ok(())
+            }
+        }
+        fn read_telemetry(
+            &mut self,
+            monotonic_time_ms: u64,
+        ) -> device_adapter_api::AdapterResult<console_contracts::TelemetrySnapshot> {
+            if self.1 {
+                Err(device_adapter_api::AdapterError::NotConnected)
+            } else {
+                self.0.read_telemetry(monotonic_time_ms)
+            }
+        }
+    }
+
+    #[test]
+    fn dropped_transport_on_joint_target_drops_connection_state() {
+        // Regression: sending a joint target to a dropped transport used to
+        // fail with "adapter: not connected" while the runtime still reported
+        // Connected, so every later send failed too and the UI never disabled.
+        let mut runtime = AppRuntime::new(DeviceConfig::new("sim", "sim"), Profile::O6);
+        runtime.install_adapter(Box::new(DroppingAdapter(
+            device_simulator::DeviceSimulator::new("sim", 6),
+            false,
+        )));
+        runtime.connect().unwrap();
+        assert_eq!(
+            runtime.device.snapshot().state,
+            console_contracts::ConnectionState::Connected
+        );
+        // transport drops mid-session
+        runtime.install_adapter(Box::new(DroppingAdapter(
+            device_simulator::DeviceSimulator::new("sim", 6),
+            true,
+        )));
+        let command = JointTargetCommand {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            command_id: "manual-drop".into(),
+            source: console_contracts::CommandSource::Manual,
+            positions: vec![0.5; 6],
+            duration_ms: None,
+            final_command: true,
+        };
+        let result = ui::DevicePort::set_joint_target(&mut runtime, command, 0);
+        assert!(result.is_err(), "send must surface the transport failure");
+        assert_eq!(
+            runtime.device.snapshot().state,
+            console_contracts::ConnectionState::Disconnected,
+            "runtime must stop reporting connected after a dropped transport"
+        );
+    }
 }
