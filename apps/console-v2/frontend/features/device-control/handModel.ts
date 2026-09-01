@@ -34,6 +34,12 @@ export interface DriveRule {
   urdfJoints: string[]; // e.g. ["thumb_joint0", "thumb_joint2", "thumb_joint3"]
   axis: 'x' | 'y' | 'z'; // primary rotation axis
   kind: 'bend' | 'spread'; // bend: 1=open(limit near 0) 0=bent(limit far) ; spread: linear
+  /**
+   * Optional multiplier for the visual bend range (0..1). The physical O6
+   * thumb only bends through the top ~30% of the L20_8 URDF model's range
+   * (real 0% ≈ model 70%), so the twin would over-rotate without scaling it.
+   */
+  bendScale?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +396,7 @@ export const O6_DRIVE_RULES: DriveRule[] = [
     urdfJoints: ['thumb_joint0', 'thumb_joint2', 'thumb_joint3'],
     axis: 'x',
     kind: 'bend',
+    bendScale: 0.7,
   },
   {
     sdkIndex: 1,
@@ -439,7 +446,9 @@ export const O6_DRIVE_RULES: DriveRule[] = [
  *   The URDF "open" rest is the limit closer to zero; the "bent" extreme is
  *   the one farther from zero.  This matches both positive-limit joints
  *   (L20_8: 0 .. 1.57) and negative-limit joints (L20_6: -1.57 .. 0).
- * - **spread** kind: 0 -> lower, 1 -> upper.
+ * - **spread** kind: inverted — 1 -> lower, 0 -> upper.  The twin renders
+ *   thumb yaw mirrored relative to the real hand, so the visual angle flips
+ *   while the numeric slider->SDK value stays unchanged.
  *
  * Fixed joints and joints without limits are silently skipped.
  */
@@ -474,10 +483,18 @@ export function sdkNormalizedToJointAngles(
         const openAngle = absLower < absUpper ? lower : upper;
         const bentAngle = absLower < absUpper ? upper : lower;
 
-        angle = openAngle + (1 - value) * (bentAngle - openAngle);
+        // bendScale compresses the visual bend so the model matches the
+        // physical hand's real travel (e.g. O6 thumb only bends through 70%
+        // of the L20_8 model range). value 0 then stops at the scaled bent
+        // angle instead of the full URDF limit.
+        const scale = rule.bendScale ?? 1;
+        angle = openAngle + (1 - value) * (bentAngle - openAngle) * scale;
       } else {
-        // Spread joints: linear mapping from lower to upper.
-        angle = lower + value * (upper - lower);
+        // Spread joints: the digital twin renders thumb yaw (spread) mirrored
+        // relative to the real hand, so invert the linear mapping — value 1
+        // maps to the lower limit and value 0 to the upper limit. The numeric
+        // slider->SDK path is untouched; only the twin's visual angle flips.
+        angle = upper - value * (upper - lower);
       }
 
       // Clamp to URDF joint limits.

@@ -204,10 +204,30 @@ class RealSdkAdapter(BaseAdapter):
             raise AdapterError("UNSUPPORTED_CAPABILITY", f"SDK does not provide {method}")
         return _jsonable(self._capture(lambda: getattr(self.sdk, method)(*args, **kwargs)))
 
-    def get_position(self): return self._invoke("get_state")
-    def get_current(self): return self._invoke("get_current")
-    def get_speed(self): return self._invoke("get_joint_speed")
-    def get_touch(self): return self._invoke("get_touch")
+    def _read_vector(self, method: str) -> Any:
+        """Read one telemetry channel and keep the wire contract byte-clean.
+
+        Several legacy drivers cache ``-1`` as the "no data" placeholder for
+        channels the hand does not answer (e.g. O6 current).  The NDJSON
+        contract declares raw vectors as bytes 0..255, so negative placeholders
+        are mapped to 0 here and noted on the SDK output stream; the Rust client
+        stays strict about the protocol boundary.
+        """
+        values = self._invoke(method)
+        if not isinstance(values, list):
+            return values
+        sanitized = [
+            0 if isinstance(value, (int, float)) and value < 0 else value
+            for value in values
+        ]
+        if sanitized != values:
+            self.output(f"linkerhand-bridge: {method} reported no-data markers, mapped to 0\n")
+        return sanitized
+
+    def get_position(self): return self._read_vector("get_state")
+    def get_current(self): return self._read_vector("get_current")
+    def get_speed(self): return self._read_vector("get_joint_speed")
+    def get_touch(self): return self._read_vector("get_touch")
     def set_position(self, values):
         accepted = self._invoke("finger_move", values)
         if accepted is False:

@@ -231,6 +231,13 @@ pub mod process {
         pub request_timeout: Duration,
         pub shutdown_timeout: Duration,
         pub max_pending: usize,
+        /// When set, the sidecar's stderr is redirected to this file instead of
+        /// a pipe. The real LinkerHand SDK crashes the Python process when BOTH
+        /// stdout and stderr are pipes (observed as a hard exit without a
+        /// traceback at random times after the first SDK call). Production
+        /// redirects stderr to a file because `stderr_tail` diagnostics are not
+        /// surfaced anywhere, while stdout must stay a pipe for NDJSON.
+        pub stderr_path: Option<PathBuf>,
     }
     impl ProcessConfig {
         pub fn python(script: impl Into<PathBuf>) -> Self {
@@ -241,6 +248,7 @@ pub mod process {
                 request_timeout: Duration::from_secs(10),
                 shutdown_timeout: Duration::from_millis(1500),
                 max_pending: 64,
+                stderr_path: None,
             }
         }
         pub fn fake(script: impl Into<PathBuf>) -> Self {
@@ -260,11 +268,19 @@ pub mod process {
                 request_timeout: Duration::from_secs(10),
                 shutdown_timeout: Duration::from_millis(1500),
                 max_pending: 64,
+                stderr_path: None,
             }
         }
 
         pub fn with_working_dir(mut self, working_dir: impl Into<PathBuf>) -> Self {
             self.working_dir = Some(working_dir.into());
+            self
+        }
+
+        /// Redirect the sidecar's stderr to the given file. Avoids piping both
+        /// stdout and stderr, which crashes the real SDK bridge process.
+        pub fn with_stderr_path(mut self, path: impl Into<PathBuf>) -> Self {
+            self.stderr_path = Some(path.into());
             self
         }
     }
@@ -281,6 +297,7 @@ pub mod process {
         last_response_sequence: u64,
         state: SidecarState,
         stderr_tail: String,
+        generation: u64,
     }
     impl Inner {
         fn reject_all(&mut self, error: ProcessError) {
@@ -308,6 +325,7 @@ pub mod process {
                     last_response_sequence: 0,
                     state: SidecarState::NotStarted,
                     stderr_tail: String::new(),
+                    generation: 0,
                 })),
                 next_sequence: AtomicU64::new(0),
                 next_request: AtomicU64::new(0),
@@ -315,6 +333,9 @@ pub mod process {
         }
         pub fn state(&self) -> SidecarState {
             self.inner.lock().unwrap().state.clone()
+        }
+        pub fn stderr_tail(&self) -> String {
+            self.inner.lock().unwrap().stderr_tail.clone()
         }
         pub fn shutdown_timeout(&self) -> Duration {
             self.config.shutdown_timeout
@@ -349,8 +370,24 @@ pub mod process {
                 command
                     .args(&self.config.args)
                     .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
+                    .stdout(Stdio::piped());
+                if let Some(path) = &self.config.stderr_path {
+                    // The real SDK crashes the Python bridge when both stdout
+                    // and stderr are pipes, so diagnostics go to a file.
+                    let file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                        .map_err(|e| {
+                            ProcessError::Spawn(format!(
+                                "cannot open sidecar stderr file {}: {e}",
+                                path.display()
+                            ))
+                        })?;
+                    command.stderr(Stdio::from(file));
+                } else {
+                    command.stderr(Stdio::piped());
+                }
                 if let Some(dir) = &self.config.working_dir {
                     command.current_dir(dir);
                 }
@@ -365,21 +402,37 @@ pub mod process {
                     .stdout
                     .take()
                     .ok_or_else(|| ProcessError::Spawn("sidecar stdout unavailable".into()))?;
-                let stderr = child
-                    .stderr
-                    .take()
-                    .ok_or_else(|| ProcessError::Spawn("sidecar stderr unavailable".into()))?;
+                let stderr_pipe = if self.config.stderr_path.is_none() {
+                    Some(
+                        child
+                            .stderr
+                            .take()
+                            .ok_or_else(|| {
+                                ProcessError::Spawn("sidecar stderr unavailable".into())
+                            })?,
+                    )
+                } else {
+                    None
+                };
                 inner.stdin = Some(stdin);
                 inner.child = Some(child);
                 inner.state = SidecarState::Running;
                 inner.last_response_sequence = 0;
                 inner.stderr_tail.clear();
-                Self::spawn_stdout(Arc::clone(&self.inner), stdout);
-                Self::spawn_stderr(Arc::clone(&self.inner), stderr);
+                inner.generation = inner.generation.saturating_add(1);
+                let generation = inner.generation;
+                Self::spawn_stdout(Arc::clone(&self.inner), stdout, generation);
+                if let Some(stderr) = stderr_pipe {
+                    Self::spawn_stderr(Arc::clone(&self.inner), stderr, generation);
+                }
             }
             Ok(())
         }
-        fn spawn_stdout(inner: Arc<Mutex<Inner>>, stdout: impl std::io::Read + Send + 'static) {
+        fn spawn_stdout(
+            inner: Arc<Mutex<Inner>>,
+            stdout: impl std::io::Read + Send + 'static,
+            generation: u64,
+        ) {
             thread::Builder::new()
                 .name("linkerhand-sidecar-stdout".into())
                 .spawn(move || {
@@ -387,27 +440,42 @@ pub mod process {
                     for line in reader.lines() {
                         match line {
                             Ok(line) if line.trim().is_empty() => continue,
-                            Ok(line) => Self::route_line(&inner, &line),
+                            Ok(line) => Self::route_line(&inner, &line, generation),
                             Err(error) => {
-                                Self::mark_dead(&inner, ProcessError::Crashed(error.to_string()));
+                                Self::mark_dead(
+                                    &inner,
+                                    ProcessError::Crashed(error.to_string()),
+                                    generation,
+                                );
                                 break;
                             }
                         }
                     }
                     let state = inner.lock().unwrap().state.clone();
                     if matches!(state, SidecarState::Running) {
-                        Self::mark_dead(&inner, ProcessError::Crashed("stdout closed".into()));
+                        Self::mark_dead(
+                            &inner,
+                            ProcessError::Crashed("stdout closed".into()),
+                            generation,
+                        );
                     }
                 })
                 .expect("spawn stdout thread");
         }
-        fn spawn_stderr(inner: Arc<Mutex<Inner>>, stderr: impl std::io::Read + Send + 'static) {
+        fn spawn_stderr(
+            inner: Arc<Mutex<Inner>>,
+            stderr: impl std::io::Read + Send + 'static,
+            generation: u64,
+        ) {
             thread::Builder::new()
                 .name("linkerhand-sidecar-stderr".into())
                 .spawn(move || {
                     let reader = BufReader::new(stderr);
                     for line in reader.lines().map_while(Result::ok) {
                         let mut guard = inner.lock().unwrap();
+                        if guard.generation != generation {
+                            break;
+                        }
                         if guard.stderr_tail.len() > 4096 {
                             guard.stderr_tail.clear();
                         }
@@ -417,19 +485,26 @@ pub mod process {
                 })
                 .expect("spawn stderr thread");
         }
-        fn mark_dead(inner: &Arc<Mutex<Inner>>, error: ProcessError) {
+        fn mark_dead(inner: &Arc<Mutex<Inner>>, error: ProcessError, generation: u64) {
             let mut guard = inner.lock().unwrap();
-            if matches!(guard.state, SidecarState::Running) {
+            if guard.generation == generation && matches!(guard.state, SidecarState::Running) {
                 guard.state = SidecarState::Crashed;
                 guard.stdin = None;
                 guard.reject_all(error);
             }
         }
-        fn route_line(inner: &Arc<Mutex<Inner>>, line: &str) {
+        fn route_line(inner: &Arc<Mutex<Inner>>, line: &str, generation: u64) {
+            if inner.lock().unwrap().generation != generation {
+                return;
+            }
             let message = match NdjsonFramer::decode::<serde_json::Value>(line) {
                 Ok(message) => message,
                 Err(error) => {
-                    Self::mark_dead(inner, ProcessError::Contamination(error.to_string()));
+                    Self::mark_dead(
+                        inner,
+                        ProcessError::Contamination(error.to_string()),
+                        generation,
+                    );
                     return;
                 }
             };
@@ -442,6 +517,7 @@ pub mod process {
                     ProcessError::Protocol(
                         "sidecar stdout message must be response or error".into(),
                     ),
+                    generation,
                 );
                 return;
             }
@@ -611,7 +687,7 @@ pub mod process {
                 payload: serde_json::json!({}),
             };
             let line = serde_json::to_string(&envelope).unwrap();
-            SidecarProcessManager::route_line(&manager.inner, &line);
+            SidecarProcessManager::route_line(&manager.inner, &line, 0);
             assert_eq!(manager.state(), SidecarState::Crashed);
         }
     }
@@ -779,20 +855,39 @@ impl device_adapter_api::DeviceAdapter for SidecarDeviceAdapter {
         let transport =
             serde_json::to_value(&self.config.transport).map_err(|e| invalid(e.to_string()))?;
         let payload = serde_json::json!({"deviceId": self.config.device_id, "model": self.config.model, "hand": self.config.hand, "transport": transport, "mode": if matches!(self.config.transport, console_contracts::Transport::Can { ref channel } if channel == "fake") { "fake" } else { "real" }});
-        self.command(SidecarOperation::Connect, payload)?;
-        let result = self.command(SidecarOperation::Capabilities, serde_json::json!({}))?;
-        let capabilities = Self::capabilities_from(result.payload, &self.config)?;
-        self.capabilities = Some(capabilities.clone());
-        self.connected = true;
-        Ok(capabilities)
+        let result = (|| {
+            self.command(SidecarOperation::Connect, payload)?;
+            let result = self.command(SidecarOperation::Capabilities, serde_json::json!({}))?;
+            Self::capabilities_from(result.payload, &self.config)
+        })();
+        match result {
+            Ok(capabilities) => {
+                self.capabilities = Some(capabilities.clone());
+                self.connected = true;
+                Ok(capabilities)
+            }
+            Err(error) => {
+                // A failed SDK constructor can already have opened PCAN before
+                // it returns an error. Terminating the bridge process is the
+                // only reliable cross-backend way to release that partial
+                // native state before the next retry.
+                self.shutdown_bounded(self.manager.shutdown_timeout());
+                Err(error)
+            }
+        }
     }
     fn disconnect(&mut self) -> device_adapter_api::AdapterResult<()> {
-        if self.connected {
-            self.command(SidecarOperation::Disconnect, serde_json::json!({}))?;
-        }
-        self.connected = false;
-        self.capabilities = None;
-        Ok(())
+        let result = if self.connected {
+            self.command(SidecarOperation::Disconnect, serde_json::json!({}))
+                .map(|_| ())
+        } else {
+            Ok(())
+        };
+        // Do not reuse a Python process across real CAN lifecycles. Some
+        // native drivers retain a stale PCAN handle even after their public
+        // shutdown call, while process exit releases it deterministically.
+        self.shutdown_bounded(self.manager.shutdown_timeout());
+        result
     }
     fn is_connected(&self) -> bool {
         self.connected
@@ -1064,6 +1159,12 @@ mod tests {
         adapter.unlock().unwrap();
         device_adapter_api::DeviceAdapter::send_joint_target(&mut adapter, &command).unwrap();
         device_adapter_api::DeviceAdapter::disconnect(&mut adapter).unwrap();
+        assert!(!adapter.is_connected());
+        let capabilities = adapter
+            .connect()
+            .expect("disconnect starts a fresh sidecar on reconnect");
+        assert_eq!(capabilities.joint_count, 6);
+        device_adapter_api::DeviceAdapter::disconnect(&mut adapter).unwrap();
         adapter.close();
     }
     #[test]
@@ -1117,5 +1218,92 @@ mod tests {
         manager.restart().unwrap();
         assert_eq!(manager.state(), SidecarState::Running);
         manager.close_bounded(Duration::from_millis(100));
+    }
+
+    /// Full-stack real-hardware check: the exact adapter the runtime actor uses,
+    /// driven against the packaged sidecar exe and a physical O6 on PCAN. This
+    /// isolates the Rust->sidecar->PCAN telemetry path from the GUI wiring.
+    /// Only run with the Console V2 app closed (PCAN must be free).
+    #[test]
+    #[ignore = "requires a real LinkerHand O6 on a free PCAN_USBBUS1"]
+    fn real_o6_adapter_telemetry_round_trip() {
+        use device_adapter_api::DeviceAdapter;
+        // Allow forcing the source bridge for debugging the packaged exe:
+        // REAL_O6_SIDECAR=python uses `python main.py`, anything else (or
+        // unset) uses the packaged exe.
+        let exe = std::env::var("REAL_O6_SIDECAR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../target/debug/linkerhand-sidecar.exe")
+            });
+        let mut config = if exe.to_string_lossy() == "python" {
+            process::ProcessConfig::python(
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../sidecar/linkerhand-bridge/main.py"),
+            )
+        } else {
+            if !exe.is_file() {
+                panic!("packaged sidecar not found at {exe:?}; build it first");
+            }
+            process::ProcessConfig::executable(exe)
+        }
+        .with_stderr_path(std::env::temp_dir().join("linkerhand-sidecar-test-stderr.log"));
+        config.request_timeout = Duration::from_secs(10);
+        let manager = process::SidecarProcessManager::new(config);
+        let mut device_config = console_contracts::DeviceConfig::new("real-o6-test", "LinkerHand O6");
+        device_config.transport = console_contracts::Transport::Can {
+            channel: "PCAN_USBBUS1".into(),
+        };
+        let mut adapter = SidecarDeviceAdapter::new(device_config, manager);
+        let capabilities = adapter.connect().expect("real O6 connect");
+        assert_eq!(capabilities.joint_count, 6);
+        // Sustained sampling (the app polls telemetry continuously) to shake
+        // out any delayed sidecar crash / disconnect.
+        for round in 0..400 {
+            let telemetry = DeviceAdapter::read_telemetry(&mut adapter, 0).unwrap_or_else(|error| {
+                eprintln!(
+                    "read_telemetry #{round} failed at {:.1}s; state={:?}; stderr:\n{}",
+                    round as f64 * 0.026,
+                    adapter.manager().state(),
+                    adapter.manager().stderr_tail()
+                );
+                panic!("real O6 telemetry read #{round} failed: {error}");
+            });
+            assert_eq!(telemetry.raw_position.len(), 6);
+            assert_eq!(telemetry.raw_current.len(), 6);
+            assert_eq!(telemetry.raw_speed.len(), 6);
+            assert_eq!(telemetry.raw_touch.len(), 6);
+            if round % 100 == 0 {
+                eprintln!("round {round}: positions={:?}", telemetry.raw_position);
+            }
+        }
+        eprintln!("400 sustained telemetry reads OK; manager state={:?}", adapter.manager().state());
+        // Exercise the command path with a zero-displacement write: read the
+        // current positions and send them straight back. This verifies the
+        // exact set_joint_target flow the UI uses without moving the hand.
+        let telemetry = DeviceAdapter::read_telemetry(&mut adapter, 0).expect("position read for hold");
+        let hold = console_contracts::JointTargetCommand {
+            schema_version: console_contracts::CURRENT_SCHEMA_VERSION,
+            command_id: "hold-current".into(),
+            source: console_contracts::CommandSource::Manual,
+            positions: telemetry.positions.clone(),
+            duration_ms: None,
+            final_command: true,
+        };
+        let started = std::time::Instant::now();
+        DeviceAdapter::send_joint_target(&mut adapter, &hold)
+            .expect("real O6 hold write (zero displacement)");
+        eprintln!(
+            "hold write OK in {:?}; positions sent back = {:?}",
+            started.elapsed(),
+            telemetry.positions
+        );
+        // Confirm the hand is still readable afterwards.
+        let after = DeviceAdapter::read_telemetry(&mut adapter, 0).expect("post-write telemetry");
+        eprintln!("post-write positions = {:?}", after.positions);
+        DeviceAdapter::disconnect(&mut adapter).expect("real O6 disconnect");
+        assert!(!adapter.is_connected());
+        adapter.close();
     }
 }

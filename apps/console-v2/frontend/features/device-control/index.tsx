@@ -54,7 +54,15 @@ const clamp = (value: number) => Math.max(0, Math.min(1, Number.isFinite(value) 
 export const toVector = (values: number[], length: number) => Array.from({ length }, (_, index) => clamp(values[index] ?? 0));
 const connectionLabels: Record<ConnectionSnapshot['state'], string> = { disconnected: '未连接', connecting: '连接中', connected: '已连接', reconnecting: '重连中', error: '连接错误' };
 function statusTone(state: ConnectionSnapshot['state']): 'blue' | 'green' | 'amber' | 'red' { if (state === 'connected') return 'green'; if (state === 'error') return 'red'; if (state === 'disconnected') return 'amber'; return 'blue'; }
-function errorText(error: unknown) { if (error instanceof Error) return error.message; return typeof error === 'string' ? error : '操作未完成，请查看诊断中心。'; }
+function errorText(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  // Tauri invoke rejects with the AppError object { code, message, retryable }.
+  if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
+    return (error as { message: string }).message;
+  }
+  return '操作未完成，请查看诊断中心。';
+}
 
 /** O6 joint display names (order must match capabilities.jointCount). Fall back to J{n} for other models. */
 const CURVE_COLORS = ['#3568f2', '#208c60', '#a9680f', '#b65144', '#7450a7', '#0f9ba8'];
@@ -298,11 +306,20 @@ function JointCurveChart({ telemetry, jointCount, virtual, sample, subscribeTele
   useEffect(() => {
     const onVisibility = () => { if (document.visibilityState === 'hidden' && rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } else scheduleDraw(); };
     document.addEventListener('visibilitychange', onVisibility);
-    return () => { document.removeEventListener('visibilitychange', onVisibility); if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); };
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      // StrictMode (dev) mounts -> cleans up -> remounts synchronously. The
+      // cancelled RAF id must be cleared, otherwise scheduleDraw keeps seeing
+      // a "scheduled" frame and never draws again (blank curve).
+      if (rafRef.current !== undefined) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = undefined;
+      }
+    };
   }, [scheduleDraw]);
 
   return <Card className="joint-curve-card">
-    <div className="card-header"><div><h2>实时关节曲线</h2><span className="muted">最近 {CURVE_MAX_POINTS} 个采样点 · 0–255</span></div><div className="heading-actions"><Badge tone={virtual ? 'blue' : telemetry ? 'green' : 'amber'}>{virtual ? '调试虚拟遥测' : telemetry ? '实时采样' : '遥测未接入'}</Badge><Button variant="ghost" size="sm" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>清空</Button></div></div>
+    <div className="card-header"><div><h2>实时关节曲线</h2><span className="muted">最近 {CURVE_MAX_POINTS} 个采样点 · 0–255</span></div><div className="heading-actions"><Badge tone={virtual ? 'blue' : (telemetry || sample) ? 'green' : 'amber'}>{virtual ? '调试虚拟遥测' : (telemetry || sample) ? '实时采样' : '遥测未接入'}</Badge><Button variant="ghost" size="sm" onClick={() => { samplesRef.current = []; scheduleDraw(); }}>清空</Button></div></div>
     <div className="joint-curve-legend">{Array.from({ length: jointCount }, (_, index) => <Button key={index} variant="quiet" size="sm" className={`curve-legend-item ${visibleJoints.has(index) ? '' : 'curve-legend-hidden'}`} onClick={() => toggleJoint(index)} title={visibleJoints.has(index) ? `点击隐藏 ${jointName(index, jointCount)}` : `点击显示 ${jointName(index, jointCount)}`}><i style={{ background: visibleJoints.has(index) ? CURVE_COLORS[index % CURVE_COLORS.length] : 'transparent' }} />{jointName(index, jointCount)}</Button>)}</div>
     <div className="joint-curve-plot"><canvas ref={canvasRef} className="joint-curve-canvas" aria-label="6 关节实时位置曲线" /></div>
   </Card>;
@@ -335,6 +352,10 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   const commandNumber = useRef(0);
   const connectionRef = useRef(connection);
   const lockedRef = useRef(locked);
+  // Latest real-hand telemetry positions. The digital twin is driven by this
+  // (not the joint-target sliders) so it mirrors the physical hand 1:1 even
+  // while the operator is dragging a target.
+  const livePositionsRef = useRef<number[] | undefined>(undefined);
   const isLocked = locked;
   const canOperate = (isPhysicalDevice ?? false) || (debugMode ?? false);
   // The shell owns the virtual stream. Features only select that shared stream
@@ -399,7 +420,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     const animate = () => {
       if (disposed || !renderer) return;
       if (rig) {
-        updateTwinHand(rig, valuesRef.current);
+        updateTwinHand(rig, livePositionsRef.current ?? valuesRef.current);
       }
       if (autoSpin && rig) {
         yawRef.current += 0.005;
@@ -564,6 +585,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     let mounted = true;
     const mergeTelemetry = (snapshot: TelemetrySnapshot) => {
       setLive(snapshot);
+      livePositionsRef.current = snapshot.positions;
       // Virtual samples animate around the target but must not feed back into
       // the target sliders. Physical samples remain authoritative for them.
       if (virtualHand) return;
@@ -578,12 +600,28 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     // read is in flight; never let that stale snapshot overwrite a newer drag
     // or telemetry update.
     let receivedLiveTelemetry = false;
-    const unsubscribe = telemetrySource.subscribe(snapshot => { receivedLiveTelemetry = true; mergeTelemetry(snapshot); });
-    void telemetrySource.read().then(snapshot => { if (mounted && !receivedLiveTelemetry) mergeTelemetry(snapshot); }).catch(error => { if (mounted && canOperate && !debugMode) setErrorMessage('未连接机械手，无法读取遥测。'); else if (mounted && canOperate) setErrorMessage(errorText(error)); });
+    let clearedStaleError = false;
+    const unsubscribe = telemetrySource.subscribe(snapshot => {
+      receivedLiveTelemetry = true;
+      // First valid live packet proves the telemetry link is up; clear any
+      // warning left by the pre-connect read attempt.
+      if (!clearedStaleError) {
+        clearedStaleError = true;
+        setErrorMessage('');
+      }
+      mergeTelemetry(snapshot);
+    });
+    void telemetrySource.read().then(snapshot => { if (mounted && !receivedLiveTelemetry) mergeTelemetry(snapshot); }).catch(error => {
+      // The initial read runs before Connect and is expected to fail while
+      // the device is not connected; do not turn that into an operation
+      // error. Only surface failures after the connection is established.
+      if (!mounted || !canOperate || connectionRef.current.state !== 'connected') return;
+      setErrorMessage(debugMode ? errorText(error) : `遥测读取失败：${errorText(error)}`);
+    });
     return () => { mounted = false; unsubscribe(); };
   }, [jointCount, telemetrySource, virtualHand, canOperate, debugMode]);
   useEffect(() => { if (!controller || virtualHand) return undefined; const unsubscribeConnection = controller.subscribeConnection(applyConnection); const unsubscribeOperation = controller.subscribeOperation?.(snapshot => setOperation(snapshot)); return () => { unsubscribeConnection(); unsubscribeOperation?.(); }; }, [applyConnection, controller, virtualHand]);
-  useEffect(() => () => { if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current); }, []);
+  useEffect(() => () => { if (rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } }, []);
 
   const submitJointVector = useCallback(async (vector: number[], finalCommand: boolean) => {
     if (!controller || lockedRef.current || connectionRef.current.state !== 'connected' || !canOperate) return;
@@ -610,7 +648,13 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
         pendingVector.current = vector;
         setValues(vector);
       }
-      if (!virtualHand) await controller.startQuickAction(action.id);
+      // Position-bearing presets are fully delivered by setJointTarget above;
+      // only actions without an embedded pose need the action engine (e.g. the
+      // built-in "safe-position" -> neutral pose). Calling startQuickAction for
+      // "open"/"fist"/… would invoke a non-existent action and fail.
+      if (!virtualHand && !(action.positions && action.positions.length === jointCount)) {
+        await controller.startQuickAction(action.id);
+      }
     } catch (error) { setErrorMessage(`预设未送达：${errorText(error)}`); }
   };
   const saveCustomPreset = useCallback(() => {
@@ -680,7 +724,7 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
   return <div className="stack device-control-page">
     <div className="page-heading"><div><h1>{t('device.title')}</h1><p className="muted">{t('device.subtitle')}</p></div><div className="heading-actions"><Badge tone={statusTone(connection.state)}>{localizedConnectionLabel(connection.state)}</Badge><Button aria-label={locale === 'en' ? 'Restore initial state' : '恢复初始状态'} variant="primary" onClick={() => void restoreInitialState()} disabled={!controller || isLocked || busy || connection.state !== 'connected' || !canOperate || Boolean(submittingQuickAction || submittingLoop)}>{submittingQuickAction === 'open' ? (locale === 'en' ? 'Restoring…' : '恢复中…') : (locale === 'en' ? 'Restore initial state' : '恢复初始状态')}</Button></div></div>
     {!controller && <div className="permission-note">{locale === 'en' ? 'No device controller is wired; connection, joints, speed, torque, and actions are disabled to avoid pretending to run hardware.' : '未接入设备控制器：为避免伪造硬件执行，连接、关节、速度、扭矩和动作控制均已禁用。集成 runtime adapter 后可用。'}</div>}
-    {controller && !canOperate && <div className="permission-note">{locale === 'en' ? 'The hand is not connected, so device control is unavailable. Connect it in Settings or enable debug mode for a virtual hand.' : '未连接机械手，设备控制不可用。请在设置中连接设备，或启用调试模式以使用虚拟机械手。'}</div>}
+    {controller && !canOperate && <div className="permission-note">{locale === 'en' ? 'The hand is not connected, so motion controls are unavailable. Use Connect below, or enable debug mode for a virtual hand.' : '未连接机械手，动作控制暂不可用。请点击下方“连接”，或启用调试模式以使用虚拟机械手。'}</div>}
     {controller && virtualHand && <div className="permission-note" role="status">{locale === 'en' ? 'Debug mode: actions target a virtual hand and are not sent to real hardware.' : '调试模式：当前操作作用于虚拟调试机械手，不会发送到真实硬件。'}</div>}
     {errorMessage && <div className="lock-banner" role="alert"><span><strong>{locale === 'en' ? 'Operation incomplete' : '操作未完成'}</strong> {errorMessage}</span><Button variant="quiet" size="sm" onClick={() => setErrorMessage('')}>{t('common.button.close')}</Button></div>}
     <div className="device-control-layout">
@@ -721,9 +765,9 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
         <Card>
           <div className="card-header"><div><h2>{t('device.connection.title')}</h2><span className="muted">{t('device.connection.attempt', { count: connection.attempt })}</span></div><Badge tone={controller ? statusTone(connection.state) : 'amber'}>{controller ? localizedConnectionLabel(connection.state) : t('device.connection.controllerMissing')}</Badge></div>
           <div className="grid grid-3" style={{ marginTop: 10 }}>
-            <Button variant="primary" disabled={!controller || busy || connection.state === 'connected' || !canOperate} onClick={connect}>连接</Button>
-            <Button variant="secondary" disabled={!controller || busy || connection.state === 'disconnected' || !canOperate} onClick={disconnect}>断开</Button>
-            <Button variant="ghost" disabled={!controller || busy || !canOperate} onClick={reconnect}>重连</Button>
+            <Button variant="primary" disabled={!controller || busy || connection.state === 'connected'} onClick={connect}>连接</Button>
+            <Button variant="secondary" disabled={!controller || busy || connection.state === 'disconnected'} onClick={disconnect}>断开</Button>
+            <Button variant="ghost" disabled={!controller || busy} onClick={reconnect}>重连</Button>
           </div>
           {connection.lastError && <p className="permission-note" style={{ marginTop: 8 }}>{connection.lastError.message}</p>}
         </Card>

@@ -85,7 +85,10 @@ describe('device control', () => {
     fireEvent.click(await screen.findByRole('button', { name: '恢复初始状态' }));
     await waitFor(() => expect(fixtureValue.controller.setJointTarget).toHaveBeenCalled());
     expect(fixtureValue.controller.setJointTarget).toHaveBeenCalledWith(expect.objectContaining({ positions: Array(6).fill(250 / 255), finalCommand: true }));
-    expect(fixtureValue.controller.startQuickAction).toHaveBeenCalledWith('open');
+    // Position-bearing presets are delivered by setJointTarget alone; the
+    // action engine has no "open"/"fist"/… recordings, so calling
+    // startQuickAction would fail with "action open not found".
+    expect(fixtureValue.controller.startQuickAction).not.toHaveBeenCalled();
     expect(fixtureValue.device.stopAll).not.toHaveBeenCalled();
     expect(screen.queryByText(/停止全部动作是软件锁定/)).not.toBeInTheDocument();
   });
@@ -105,17 +108,42 @@ describe('device control', () => {
   });
   it('disables all controls when not connected and debug mode is off', async () => {
     const { controller } = fixture(2);
+    const disconnected: ConnectionSnapshot = { schemaVersion: 1, deviceId: config.deviceId, state: 'disconnected', attempt: 0, lastError: null };
+    controller.subscribeConnection = vi.fn(listener => { listener(disconnected); return () => undefined; });
     const o6Capabilities = { ...capabilities(2), model: 'O6' as const };
-    render(<DeviceControl device={fixture(2).device} telemetry={telemetry(2)} config={{ ...config, model: 'O6' }} capabilities={o6Capabilities} controller={controller} debugMode={false} isPhysicalDevice={false} />);
-    expect(await screen.findByText(/未连接机械手，设备控制不可用/)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '连接' })).toBeDisabled();
+    const device = fixture(2).device;
+    device.getConnection = async () => disconnected;
+    render(<DeviceControl device={device} telemetry={telemetry(2)} config={{ ...config, model: 'O6' }} capabilities={o6Capabilities} controller={controller} debugMode={false} isPhysicalDevice={false} />);
+    expect(await screen.findByText(/未连接机械手，动作控制暂不可用/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '连接' })).toBeEnabled();
     expect(screen.getByRole('button', { name: '断开' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '重连' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '重连' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '连接' }));
+    await waitFor(() => expect(controller.connect).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('slider', { name: '大拇指弯曲 目标' })).toBeDisabled();
     expect(screen.getByRole('button', { name: '张开' })).toBeDisabled();
     expect(screen.getByRole('slider', { name: '速度' })).toBeDisabled();
     expect(screen.getByRole('slider', { name: '扭矩' })).toBeDisabled();
     expect(screen.getByText('实时关节曲线')).toBeInTheDocument();
     expect(screen.getByText('遥测未接入')).toBeInTheDocument();
+  });
+  it('does not surface the pre-connect telemetry read failure and flips to live sampling after connect', async () => {
+    const fixtureValue = fixture(2);
+    const disconnected: ConnectionSnapshot = { schemaVersion: 1, deviceId: config.deviceId, state: 'disconnected', attempt: 0, lastError: null };
+    fixtureValue.controller.subscribeConnection = vi.fn(listener => { listener(disconnected); return () => undefined; });
+    fixtureValue.device.getConnection = async () => disconnected;
+    let liveListener: ((value: TelemetrySnapshot) => void) | undefined;
+    const source: TelemetryPort = {
+      read: async () => { throw new Error('TELEMETRY_UNAVAILABLE: telemetry is unavailable: device: adapter: transport'); },
+      subscribe: next => { liveListener = next; return () => undefined; },
+    };
+    render(<DeviceControl device={fixtureValue.device} telemetry={source} config={config} capabilities={capabilities(2)} controller={fixtureValue.controller} debugMode={false} isPhysicalDevice />);
+    await screen.findByRole('button', { name: '连接' });
+    // The pre-connect read is expected to fail; it must not become an alert.
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    // First valid live packet proves the link is up: no stale warning, badge live.
+    liveListener?.(snapshot(2, [0.5, 0.5]));
+    await waitFor(() => expect(screen.getByText('实时采样')).toBeInTheDocument());
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 });

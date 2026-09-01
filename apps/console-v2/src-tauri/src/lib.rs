@@ -566,6 +566,8 @@ struct RuntimeActor {
     stopped: Arc<AtomicBool>,
     simulator: bool,
     log_sequence: u64,
+    /// Last telemetry sampling error, for change-aware logging.
+    telemetry_error: Option<String>,
 }
 impl RuntimeActor {
     fn log(
@@ -620,6 +622,7 @@ impl RuntimeActor {
             "LinkerHand Console 运行时已启动",
             serde_json::json!({ "source": "runtime", "simulator": self.simulator }),
         );
+        let mut next_motion = now_ms();
         let mut next_telemetry = now_ms();
         loop {
             self.apply_control();
@@ -645,8 +648,12 @@ impl RuntimeActor {
                 break;
             }
             let now = now_ms();
-            if now.saturating_sub(next_telemetry) >= 50 {
-                next_telemetry = now;
+            // Motion is flushed on its own 50ms cadence, independent of
+            // telemetry sampling. Telemetry can block on the sidecar (e.g. a
+            // slow sensor read), and coupling the two starved command
+            // delivery, making the real hand move sluggishly.
+            if now.saturating_sub(next_motion) >= 50 {
+                next_motion = now;
                 if let Err(error) = self.flush_motion(now) {
                     self.log(
                         now,
@@ -659,6 +666,9 @@ impl RuntimeActor {
                 self.broadcast_operation();
                 self.broadcast_action();
                 self.broadcast_grasp();
+            }
+            if now.saturating_sub(next_telemetry) >= 50 {
+                next_telemetry = now;
                 if !self.telemetry_channels.is_empty() || !self.grasp_channels.is_empty() {
                     self.sample_and_broadcast(now);
                 }
@@ -787,6 +797,20 @@ impl RuntimeActor {
                     let _ = reply.send(result);
                     return;
                 }
+                // Manual operator commands take priority over automation. A
+                // running playback/loop owns the motion source, so an operator
+                // joint/preset command would be rejected with SourceBusy and
+                // the hand could never be steered until the loop stops. Cancel
+                // the automation so the manual command can proceed.
+                if command.source == console_contracts::CommandSource::Manual
+                    && matches!(
+                        self.runtime.motion.active_source(),
+                        Some(console_contracts::CommandSource::Playback)
+                            | Some(console_contracts::CommandSource::Loop)
+                    )
+                {
+                    self.runtime.action_stop();
+                }
                 let mut result = self
                     .runtime
                     .motion
@@ -837,20 +861,20 @@ impl RuntimeActor {
                 )));
             }
             ActorRequest::ReadTelemetry { reply } => {
-                let result = self
-                    .latest
-                    .clone()
-                    .or_else(|| self.runtime.sample_telemetry(now_ms()).ok())
-                    .ok_or_else(|| {
-                        app_error(
+                let result = match self.latest.clone() {
+                    Some(value) => Ok(value),
+                    None => match self.runtime.sample_telemetry(now_ms()) {
+                        Ok(value) => {
+                            self.latest = Some(value.clone());
+                            Ok(value)
+                        }
+                        Err(error) => Err(app_error(
                             "TELEMETRY_UNAVAILABLE",
-                            "telemetry is not available until the device is connected",
+                            format!("遥测不可用：{error}"),
                             true,
-                        )
-                    });
-                if let Ok(value) = &result {
-                    self.latest = Some(value.clone());
-                }
+                        )),
+                    },
+                };
                 let _ = reply.send(result);
             }
             ActorRequest::SubscribeTelemetry { channel, reply } => {
@@ -1314,12 +1338,31 @@ impl RuntimeActor {
             .retain(|channel| channel.send(value.clone()).is_ok());
     }
     fn sample_and_broadcast(&mut self, now: u64) {
-        let Ok(value) = self.runtime.sample_telemetry(now) else {
-            return;
-        };
-        self.latest = Some(value.clone());
-        self.telemetry_channels
-            .retain(|channel| channel.send(value.clone()).is_ok());
+        match self.runtime.sample_telemetry(now) {
+            Ok(value) => {
+                self.telemetry_error = None;
+                self.latest = Some(value.clone());
+                self.telemetry_channels
+                    .retain(|channel| channel.send(value.clone()).is_ok());
+            }
+            Err(error) => {
+                // Sampling runs at ~20 Hz whenever a subscriber is attached, so
+                // a persistent fault would flood the log if logged every tick.
+                // Record one structured entry per distinct failure so the
+                // cause is visible in the diagnostics log without drowning it.
+                let message = error.to_string();
+                if self.telemetry_error.as_deref() != Some(message.as_str()) {
+                    self.log(
+                        now,
+                        LogLevel::Error,
+                        "telemetry.sample.failed",
+                        "遥测采样失败",
+                        serde_json::json!({ "error": message }),
+                    );
+                }
+                self.telemetry_error = Some(message);
+            }
+        }
     }
     fn shutdown(&mut self) {
         self.log(
@@ -1447,7 +1490,13 @@ fn sidecar_process_with_roots(
         .clone()
         .or_else(|| sidecar_candidates(None, &roots).into_iter().next())
         .unwrap_or_else(|| PathBuf::from("linkerhand-sidecar.exe"));
-    (ProcessConfig::executable(program), selected)
+    // The real LinkerHand SDK crashes its Python process when both stdout and
+    // stderr are pipes (hard exit, no traceback, shortly after the first SDK
+    // call). stdout must stay a pipe for NDJSON, so stderr diagnostics are
+    // redirected to a file instead.
+    let stderr_log = std::env::temp_dir().join("linkerhand-sidecar-stderr.log");
+    let process = ProcessConfig::executable(program).with_stderr_path(stderr_log);
+    (process, selected)
 }
 
 fn spawn_runtime(
@@ -1486,6 +1535,7 @@ fn spawn_runtime(
                 stopped: actor_stopped,
                 simulator,
                 log_sequence: 0,
+                telemetry_error: None,
             }
             .run()
         })

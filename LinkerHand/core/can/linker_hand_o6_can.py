@@ -387,11 +387,15 @@ class LinkerHandO6Can:
 
     def get_touch(self):
         '''Get touch data'''
-        self.send_frame(0xb1,[],sleep=0.03)
-        self.send_frame(0xb2,[],sleep=0.03)
-        self.send_frame(0xb3,[],sleep=0.03)
-        self.send_frame(0xb4,[],sleep=0.03)
-        self.send_frame(0xb5,[],sleep=0.03)
+        # Small inter-frame waits: the values are read from the receive
+        # thread's cache, so long sleeps only delay telemetry. Console V2 polls
+        # this continuously, and a ~160ms stall per read starved the runtime's
+        # command path (slow hand movement, queued commands).
+        self.send_frame(0xb1,[],sleep=0.003)
+        self.send_frame(0xb2,[],sleep=0.003)
+        self.send_frame(0xb3,[],sleep=0.003)
+        self.send_frame(0xb4,[],sleep=0.003)
+        self.send_frame(0xb5,[],sleep=0.003)
         return [self.xb1[1],self.xb2[1],self.xb3[1],self.xb4[1],self.xb5[1],0] # The last digit is palm, currently not available
     
     def get_matrix_touch(self):

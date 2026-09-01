@@ -153,7 +153,13 @@ export function TelemetryChart({ telemetry, jointCount = 0, virtual = false }: {
     document.addEventListener('visibilitychange', onVisibility);
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
-      if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current);
+      // StrictMode (dev) mounts -> cleans up -> remounts synchronously. The
+      // cancelled RAF id must be cleared, otherwise scheduleDraw keeps seeing
+      // a "scheduled" frame and never draws again (blank curve).
+      if (rafRef.current !== undefined) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = undefined;
+      }
     };
   }, [scheduleDraw]);
 
