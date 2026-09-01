@@ -52,3 +52,44 @@
   .action-editor-footer { flex-wrap: wrap; }
   .action-editor-footer .muted { flex-basis: 100%; margin-right: 0; }
 }
+
+/* ---- 创建/编辑动作流程的响应式适配 ---- */
+
+/* 双栏在中等宽度下会把右栏最小宽度(360px)以外全部压给左栏，
+   导致姿态库表格与滑块被严重压缩；在更早的断点退化为单栏。 */
+@media (max-width: 960px) {
+  .actions-workspace { grid-template-columns: 1fr; }
+}
+
+/* 动作编辑卡片：播放模式/倍速/方向/循环次数 4 个下拉在窄栏挤在一行，
+   改为可换行，每个字段保持合理最小宽度，窄栏自动折成 2×2。 */
+.action-editor-card .settings-row {
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: flex-end;
+  min-height: 0;
+  padding: 10px 0;
+}
+.action-editor-card .settings-row > label {
+  flex: 1 1 minmax(110px, 1fr);
+  min-width: 0;
+}
+.action-editor-card .settings-row > label:first-child:last-child {
+  flex-basis: 100%;
+}
+
+/* 关键帧顺序项：窄栏下名称与按钮可换行，名称超长省略号截断，按钮不被挤出。 */
+.loop-order-item { flex-wrap: wrap; }
+.loop-order-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loop-order-item .heading-actions { flex: 0 0 auto; }
+
+/* 保存姿态输入区：窄栏下输入框独占一行，取消/保存按钮换行到下一行。 */
+.pose-draft { flex-wrap: wrap; gap: 8px 10px; min-height: 0; padding: 10px; }
+.pose-draft > label { flex: 1 1 100%; min-width: 0; }
+.pose-draft .button { flex: 0 0 auto; }
+.pose-draft .pose-save-reason { flex-basis: 100%; margin-left: 0; }
+
+/* 姿态编辑器头部按钮组（读取当前位置/重置草稿）：窄栏下换行且不挤压标题。 */
+.joint-slider-card .card-header { flex-wrap: wrap; }
+.joint-slider-card .card-header > div:first-child { min-width: 0; }
+.joint-slider-card .card-header .heading-actions { margin-left: auto; }
