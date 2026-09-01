@@ -1132,7 +1132,9 @@ impl RuntimeActor {
                 let _ = reply.send(self.runtime.grasp_release().map_err(map_error));
             }
             ActorRequest::GraspAbort { reply } => {
-                self.runtime.grasp.abort();
+                // Abort also releases the Grasp motion source so a following
+                // operator (Manual) command is not rejected.
+                self.runtime.grasp_abort();
                 let _ = reply.send(Ok(()));
             }
             ActorRequest::SubscribeGrasp { channel, reply } => {
@@ -2423,6 +2425,7 @@ mod tests {
                     stopped: actor_stopped,
                     simulator: true,
                     log_sequence: 0,
+                    telemetry_error: None,
                 }
                 .run()
             })

@@ -328,21 +328,22 @@ impl AppRuntime {
             .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
     pub fn grasp_start_approach(&mut self, now_ms: u64) -> Result<(), AppRuntimeError> {
-        let current = self
-            .telemetry
-            .latest()
-            .map(|t| t.positions.clone())
-            .unwrap_or_else(|| vec![0.5; self.grasp.profile().joint_count()]);
-        let target = vec![0.8; self.grasp.profile().joint_count()];
+        // The pre-grasp step drives the hand to the model's pregrasp pose and
+        // then HOLDS. The close limits are captured as the future grasp target
+        // so closing begins only when the operator presses "开始抓取".
+        let (pregrasp, close) =
+            self.grasp.profile().default_grasp_poses().ok_or_else(|| {
+                AppRuntimeError::Unsupported("该型号暂不支持智能自适应抓取。".into())
+            })?;
         self.grasp
-            .start_approach(now_ms, &current, &target)
+            .start_approach(now_ms, &pregrasp, &close)
             .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
     pub fn grasp_start(
         &mut self,
         preset_id: &str,
         degraded: bool,
-        _now_ms: u64,
+        now_ms: u64,
     ) -> Result<(), AppRuntimeError> {
         // P0: preset-specific closure parameters
         if let Some(preset) = adaptive_grasp::GraspPreset::from_id(preset_id) {
@@ -353,14 +354,49 @@ impl AppRuntime {
             ..self.grasp.config().clone()
         };
         self.grasp.set_config(config);
-        self.grasp
-            .approach_complete()
-            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+        let unsupported =
+            |error: adaptive_grasp::GraspError| AppRuntimeError::Unsupported(error.to_string());
+        match self.grasp.state() {
+            // The operator already ran the pre-grasp step: complete it and
+            // start closing.
+            adaptive_grasp::GraspState::Approaching => {
+                self.grasp.approach_complete().map_err(unsupported)
+            }
+            // Direct start without the explicit pre-grasp step, or retry after
+            // a failed/aborted grasp: reset to Ready (keeps the session
+            // calibration), seed the pre-grasp pose + close limits, then start
+            // closing.
+            adaptive_grasp::GraspState::Ready
+            | adaptive_grasp::GraspState::Failed
+            | adaptive_grasp::GraspState::Aborted => {
+                if !matches!(self.grasp.state(), adaptive_grasp::GraspState::Ready) {
+                    self.grasp.reset();
+                }
+                let (pregrasp, close) =
+                    self.grasp.profile().default_grasp_poses().ok_or_else(|| {
+                        AppRuntimeError::Unsupported("该型号暂不支持智能自适应抓取。".into())
+                    })?;
+                self.grasp
+                    .start_approach(now_ms, &pregrasp, &close)
+                    .map_err(unsupported)?;
+                self.grasp.approach_complete().map_err(unsupported)
+            }
+            _ => Err(AppRuntimeError::Unsupported(
+                "当前状态无法开始抓取，请先完成标定或中止后重试。".into(),
+            )),
+        }
     }
     pub fn grasp_release(&mut self) -> Result<(), AppRuntimeError> {
         self.grasp
             .release()
             .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
+    }
+    /// Abort the grasp AND release the Grasp motion source so operator (Manual)
+    /// commands are not rejected afterwards (issue fix).
+    pub fn grasp_abort(&mut self) {
+        self.grasp.abort();
+        self.motion
+            .cancel_source(console_contracts::CommandSource::Grasp);
     }
     pub fn grasp_tick(
         &mut self,
@@ -376,11 +412,23 @@ impl AppRuntime {
             raw_current: t.raw_current.clone(),
             positions: t.positions.clone(),
         };
-        Ok(self
-            .grasp
-            .tick(now_ms, &sample)
-            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))?
-            .map(|o| o.command))
+        let result = self.grasp.tick(now_ms, &sample);
+        // Once the grasp reaches a terminal state (holding / failed / aborted)
+        // the Grasp source must be released, otherwise the next operator
+        // (Manual) command fails with "source Grasp owns motion; Manual
+        // rejected" and the state can no longer be reset.
+        if matches!(
+            self.grasp.state(),
+            adaptive_grasp::GraspState::Holding
+                | adaptive_grasp::GraspState::Failed
+                | adaptive_grasp::GraspState::Aborted
+        ) {
+            self.motion
+                .cancel_source(console_contracts::CommandSource::Grasp);
+        }
+        result
+            .map(|output| output.map(|o| o.command))
+            .map_err(|e| AppRuntimeError::Unsupported(e.to_string()))
     }
     /// Stop every feature and report the physical adapter result.  The UI
     /// safety path still uses `stop_all` for its fire-and-forget contract, but
@@ -660,5 +708,119 @@ mod tests {
             .action_list()
             .iter()
             .any(|item| item.id == recording.id));
+    }
+
+    fn grasp_snapshot(positions: Vec<f64>) -> TelemetrySnapshot {
+        let len = positions.len();
+        TelemetrySnapshot {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            device_id: "test".into(),
+            sequence: 0,
+            monotonic_time_ms: 0,
+            positions,
+            raw_position: vec![0; len],
+            raw_current: vec![0; len],
+            raw_speed: vec![0; len],
+            raw_touch: vec![0; len],
+            connected: true,
+        }
+    }
+
+    #[test]
+    fn grasp_approach_holds_and_failure_releases_motion_source() {
+        let mut runtime = AppRuntime::new(DeviceConfig::new("sim", "sim"), Profile::O6);
+        runtime.grasp_calibrate(0).unwrap();
+        runtime.grasp_complete_calibration().unwrap();
+        runtime.grasp_start_approach(0).unwrap();
+        assert_eq!(
+            *runtime.grasp.state(),
+            adaptive_grasp::GraspState::Approaching
+        );
+        // run well past the settle window: the pre-grasp must HOLD instead of
+        // auto-starting the grasp (issue fix)
+        for step in 1..=30 {
+            runtime
+                .telemetry
+                .publish_status(grasp_snapshot(vec![0.5; 6]));
+            let _ = runtime.grasp_tick(step * 50).unwrap();
+            assert_eq!(
+                *runtime.grasp.state(),
+                adaptive_grasp::GraspState::Approaching,
+                "pre-grasp must hold, got {:?}",
+                runtime.grasp.state()
+            );
+        }
+        // only the explicit start transitions to closing
+        runtime.grasp_start("cube", true, 31 * 50).unwrap();
+        assert!(matches!(
+            runtime.grasp.state(),
+            adaptive_grasp::GraspState::ClosingCoarse
+                | adaptive_grasp::GraspState::ClosingFine
+                | adaptive_grasp::GraspState::Preloading
+                | adaptive_grasp::GraspState::Holding
+        ));
+        // submit one closing command so the Grasp source owns motion...
+        runtime
+            .telemetry
+            .publish_status(grasp_snapshot(vec![0.5; 6]));
+        if let Ok(Some(cmd)) = runtime.grasp_tick(32 * 50) {
+            runtime.motion.submit(cmd).unwrap();
+        }
+        assert_eq!(
+            runtime.motion.active_source(),
+            Some(&console_contracts::CommandSource::Grasp)
+        );
+        // ...then force a failure (disconnect) and verify the Grasp source is
+        // released so a Manual command is no longer rejected (issue fix).
+        let disconnected = TelemetrySnapshot {
+            connected: false,
+            ..grasp_snapshot(vec![0.5; 6])
+        };
+        runtime.telemetry.publish_status(disconnected);
+        let _ = runtime.grasp_tick(40 * 50);
+        assert_eq!(*runtime.grasp.state(), adaptive_grasp::GraspState::Failed);
+        assert_eq!(runtime.motion.active_source(), None);
+        let manual = JointTargetCommand {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            command_id: "manual-recovery".into(),
+            source: console_contracts::CommandSource::Manual,
+            positions: vec![0.8; 6],
+            duration_ms: None,
+            final_command: true,
+        };
+        assert!(
+            runtime.motion.submit(manual).is_ok(),
+            "manual command must not be rejected after a grasp failure"
+        );
+    }
+
+    #[test]
+    fn grasp_start_works_from_ready_and_release_recovers_after_failure() {
+        let mut runtime = AppRuntime::new(DeviceConfig::new("sim", "sim"), Profile::O6);
+        runtime.grasp_calibrate(0).unwrap();
+        runtime.grasp_complete_calibration().unwrap();
+        // starting the grasp directly from Ready (skipping the explicit
+        // pre-grasp step) must work
+        runtime.grasp_start("soft", true, 0).unwrap();
+        assert!(matches!(
+            runtime.grasp.state(),
+            adaptive_grasp::GraspState::ClosingCoarse
+                | adaptive_grasp::GraspState::ClosingFine
+                | adaptive_grasp::GraspState::Preloading
+        ));
+        // force a failure
+        let disconnected = TelemetrySnapshot {
+            connected: false,
+            ..grasp_snapshot(vec![0.5; 6])
+        };
+        runtime.telemetry.publish_status(disconnected);
+        let _ = runtime.grasp_tick(50);
+        assert_eq!(*runtime.grasp.state(), adaptive_grasp::GraspState::Failed);
+        // emergency release must be allowed from the failed state
+        runtime.grasp_release().unwrap();
+        assert_eq!(
+            *runtime.grasp.state(),
+            adaptive_grasp::GraspState::Releasing
+        );
     }
 }

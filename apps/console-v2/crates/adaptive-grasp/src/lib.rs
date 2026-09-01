@@ -72,6 +72,48 @@ impl Profile {
             Self::L25 => DeviceModel::L25,
         }
     }
+    /// Indices of the joints that belong to the thumb. During the no-load
+    /// calibration sweep these move in a separate phase from the fingers so
+    /// the thumb can never fight the index finger (they never share a tick).
+    pub fn thumb_joint_indices(&self) -> &'static [usize] {
+        match self {
+            Self::O6 | Self::L6 => &[0, 1],
+            Self::L7 => &[0, 1, 6],
+            Self::L10 => &[0, 1, 9],
+            Self::L20 => &[0, 1, 2, 3, 4, 5],
+            Self::G20 | Self::L21 | Self::L25 => &[],
+        }
+    }
+    /// Default `(pregrasp, close_limits)` poses, normalized to [0, 1]. They
+    /// mirror the proven v1 `default_power_grasp_*` profiles so the pre-grasp
+    /// pose and the safe closed limits match the physical hand.
+    pub fn default_grasp_poses(&self) -> Option<(Vec<f64>, Vec<f64>)> {
+        let (pregrasp, close): (&[u8], &[u8]) = match self {
+            Self::O6 => (&[250, 80, 250, 250, 250, 250], &[20, 80, 10, 10, 10, 10]),
+            Self::L6 => (&[250, 40, 250, 250, 250, 250], &[20, 40, 10, 10, 10, 10]),
+            Self::L7 => (
+                &[250, 15, 250, 250, 250, 250, 170],
+                &[40, 15, 20, 20, 20, 20, 170],
+            ),
+            Self::L10 => (
+                &[255, 255, 255, 255, 255, 255, 128, 67, 89, 255],
+                &[90, 255, 20, 20, 20, 20, 128, 67, 89, 255],
+            ),
+            Self::L20 => (
+                &[
+                    255, 255, 255, 255, 255, 255, 10, 100, 180, 240, 245, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255,
+                ],
+                &[
+                    40, 20, 20, 20, 20, 255, 10, 100, 180, 240, 130, 255, 255, 255, 255, 135, 20,
+                    20, 20, 20,
+                ],
+            ),
+            Self::G20 | Self::L21 | Self::L25 => return None,
+        };
+        let normalize = |values: &[u8]| values.iter().map(|v| *v as f64 / 255.0).collect();
+        Some((normalize(pregrasp), normalize(close)))
+    }
     pub fn label(&self) -> &'static str {
         match self {
             Self::O6 => "O6",
@@ -519,6 +561,9 @@ pub struct GraspMachine {
     /// Calibration sweep history (error / jitter samples per joint).
     calib_errors: Vec<Vec<f64>>,
     calib_jitters: Vec<Vec<f64>>,
+    /// Calibration sweep phase: 0 = fingers first, 1 = thumb afterwards, so
+    /// the thumb and the fingers never move on the same tick (issue fix).
+    calib_phase: usize,
 }
 
 impl GraspMachine {
@@ -551,6 +596,7 @@ impl GraspMachine {
             calibration: vec![None; n],
             calib_errors: vec![Vec::new(); n],
             calib_jitters: vec![Vec::new(); n],
+            calib_phase: 0,
         }
     }
     pub fn try_new(profile: Profile) -> Result<Self, GraspError> {
@@ -610,7 +656,13 @@ impl GraspMachine {
     }
     pub fn start_calibration(&mut self, now_ms: u64) -> Result<(), GraspError> {
         self.ensure_supported()?;
-        if self.state != GraspState::Idle {
+        // Idle/Ready for a normal run; Failed/Aborted are terminal states that
+        // a recalibration must be able to recover from (issue fix: after a
+        // failed grasp the operator can always restart calibration).
+        if !matches!(
+            self.state,
+            GraspState::Idle | GraspState::Ready | GraspState::Failed | GraspState::Aborted
+        ) {
             return Err(GraspError::Invalid(self.state.clone()));
         }
         // Reset sweep collectors.
@@ -618,6 +670,7 @@ impl GraspMachine {
         self.calibration = vec![None; n];
         self.calib_errors = vec![Vec::new(); n];
         self.calib_jitters = vec![Vec::new(); n];
+        self.calib_phase = 0;
         self.current = vec![0.5; n];
         self.grasp_target = vec![0.5; n];
         self.closing_directions = self.derive_directions(&self.grasp_target, &self.grasp_target);
@@ -654,8 +707,14 @@ impl GraspMachine {
         self.ensure_supported()?;
         self.validate(approach)?;
         self.validate(target)?;
+        // A failed/aborted grasp can go straight back to the pre-grasp pose:
+        // reset() returns to Ready whenever a session calibration still exists.
+        let from = self.state.clone();
+        if !matches!(self.state, GraspState::Ready) {
+            self.reset();
+        }
         if self.state != GraspState::Ready {
-            return Err(GraspError::Invalid(self.state.clone()));
+            return Err(GraspError::Invalid(from));
         }
         self.approach_target = approach.to_vec();
         self.grasp_target = target.to_vec();
@@ -725,9 +784,19 @@ impl GraspMachine {
         Ok(())
     }
     pub fn release(&mut self) -> Result<(), GraspError> {
-        if self.state != GraspState::Holding {
+        // Holding is the normal success path; Failed/Aborted are the emergency
+        // path where the operator still needs to open the hand after a stop.
+        if !matches!(
+            self.state,
+            GraspState::Holding | GraspState::Failed | GraspState::Aborted
+        ) {
             return Err(GraspError::Invalid(self.state.clone()));
         }
+        if !matches!(self.state, GraspState::Holding) {
+            // Emergency open: drive every joint back toward the open pose.
+            self.approach_target = vec![0.8; self.profile.joint_count()];
+        }
+        self.last_failure = None;
         self.state = GraspState::Releasing;
         self.started_at_ms = Some(0);
         self.phase_started_at_ms = Some(0);
@@ -864,6 +933,30 @@ impl GraspMachine {
         self.last_tick_ms = None;
         self.phase_started_at_ms = None;
     }
+    /// Recover from a terminal state (failed/aborted). Returns to `Ready` when
+    /// a session calibration still exists, otherwise back to `Idle`. This lets
+    /// an operator re-approach / re-grasp or recalibrate after a stop instead
+    /// of being stuck in a dead-end state (issue fix).
+    pub fn reset(&mut self) {
+        let calibrated = self.is_calibrated();
+        self.state = if calibrated {
+            GraspState::Ready
+        } else {
+            GraspState::Idle
+        };
+        self.started_at_ms = None;
+        self.phase_started_at_ms = None;
+        self.last_tick_ms = None;
+        self.last_failure = None;
+        self.degraded = false;
+        self.settle_ticks = 0;
+        self.preload_steps_taken = 0;
+        self.confirmation_counts.fill(0);
+        self.joint_states.fill(GraspJointState::Idle);
+        self.failed_joints.fill(false);
+        self.contact.fill(false);
+        self.contact_scores.fill(0.0);
+    }
     pub fn stop_all(&mut self) {
         self.abort();
     }
@@ -872,9 +965,18 @@ impl GraspMachine {
 
     fn calibration_step(&mut self, _now_ms: u64, telemetry: &GraspTelemetry) {
         let n = self.profile.joint_count();
+        let thumb = self.profile.thumb_joint_indices();
+        let finger_phase = self.calib_phase == 0;
         let mut all_done = true;
         let mut target_updated = false;
         for i in 0..n {
+            let is_thumb = thumb.contains(&i);
+            if finger_phase == is_thumb {
+                // This joint belongs to the other sweep group; leave it parked
+                // until its phase starts so the thumb and the fingers never
+                // move on the same tick (issue fix: no more thumb/index fight).
+                continue;
+            }
             let actual = telemetry.positions[i];
             let target = self.grasp_target[i];
             let limit = 0.05; // closed limit for the sweep
@@ -896,13 +998,19 @@ impl GraspMachine {
             self.current = self.grasp_target.clone();
         }
         if all_done {
-            self.compute_calibration();
-            // back to the open pose, ready
-            self.current = vec![0.5; n];
-            self.grasp_target = vec![0.5; n];
-            self.state = GraspState::Ready;
-            self.started_at_ms = None;
-            self.phase_started_at_ms = None;
+            if finger_phase {
+                // Fingers reached their closed limits first; move on to the
+                // thumb sweep so both groups stay asynchronous.
+                self.calib_phase = 1;
+            } else {
+                self.compute_calibration();
+                // back to the open pose, ready
+                self.current = vec![0.5; n];
+                self.grasp_target = vec![0.5; n];
+                self.state = GraspState::Ready;
+                self.started_at_ms = None;
+                self.phase_started_at_ms = None;
+            }
         }
     }
     /// P1/B1: derive per-joint thresholds from the no-load sweep using
@@ -937,9 +1045,9 @@ impl GraspMachine {
 
     // ── approach / closing / preload / release ──
 
-    fn approach_step(&mut self, now_ms: u64) {
-        // D1: settle at the approach pose for `approach_settle_ticks` before
-        // closing so motors can catch up (v1 waited a fixed 500ms).
+    fn approach_step(&mut self, _now_ms: u64) {
+        // D1: settle at the approach pose for `approach_settle_ticks` so
+        // motors can catch up (v1 waited a fixed 500ms).
         if self.settle_ticks < self.config.approach_settle_ticks {
             move_towards(
                 &mut self.current,
@@ -949,16 +1057,15 @@ impl GraspMachine {
             self.settle_ticks += 1;
             return;
         }
-        if close_enough(&self.current, &self.approach_target) {
-            self.state = GraspState::ClosingCoarse;
-            self.phase_started_at_ms = Some(now_ms);
-        } else {
-            move_towards(
-                &mut self.current,
-                &self.approach_target,
-                self.config.step_limit,
-            );
-        }
+        // Hold the pre-grasp pose until the operator explicitly starts the
+        // grasp (approach_complete()). Selecting/clicking the pre-grasp step
+        // must never auto-start closing (issue fix: the grasp only begins when
+        // the operator chooses a preset and presses "开始抓取").
+        move_towards(
+            &mut self.current,
+            &self.approach_target,
+            self.config.step_limit,
+        );
     }
 
     fn closing_step(&mut self, now_ms: u64, telemetry: &GraspTelemetry) {
@@ -1430,6 +1537,10 @@ mod tests {
                 break;
             }
         }
+        // the approach must HOLD (not auto-close); closing only begins when
+        // the operator explicitly completes the approach
+        assert_eq!(*machine.state(), GraspState::Approaching);
+        machine.approach_complete().unwrap();
         // force contact via the tactile channel
         t.tactile_available = true;
         t.raw_touch = vec![20; 6];
@@ -1479,7 +1590,8 @@ mod tests {
         let mut t = telemetry(6);
         let mut positions = vec![0.5; 6];
         let mut ready = false;
-        for step in 1..=60 {
+        // two-phase sweep (fingers then thumb) needs up to ~60 ticks
+        for step in 1..=120 {
             t.positions = positions.clone();
             t.positions[0] += (step % 5) as f64 * 0.01; // jittery joint
             if let Some(out) = machine.tick(step * 50, &t).unwrap() {
@@ -1504,5 +1616,154 @@ mod tests {
             thresholds[0] > thresholds[1],
             "noisy joint should get a higher threshold: {thresholds:?}"
         );
+    }
+
+    #[test]
+    fn calibration_sweeps_fingers_before_thumb() {
+        // Issue fix: the thumb and the fingers must never move on the same
+        // tick during the no-load sweep (they would otherwise "fight").
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.start_calibration(0).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.5; 6];
+        let mut prev = positions.clone();
+        let mut saw_thumb_move = false;
+        let mut fingers_done_before_thumb = false;
+        for step in 1..=120 {
+            t.positions = positions.clone();
+            let Some(out) = machine.tick(step * 50, &t).unwrap() else {
+                break;
+            };
+            positions = out.command.positions;
+            if machine.state() == &GraspState::Ready {
+                break;
+            }
+            let thumb_changed = positions[0] != prev[0] || positions[1] != prev[1];
+            let finger_changed = positions[2] != prev[2]
+                || positions[3] != prev[3]
+                || positions[4] != prev[4]
+                || positions[5] != prev[5];
+            if thumb_changed && !saw_thumb_move {
+                saw_thumb_move = true;
+                fingers_done_before_thumb = !finger_changed;
+            }
+            // no tick may move thumb AND fingers together
+            assert!(
+                !(thumb_changed && finger_changed),
+                "thumb and fingers must not move on the same tick (step {step})"
+            );
+            prev = positions.clone();
+        }
+        assert!(saw_thumb_move, "thumb joints should eventually move");
+        assert!(
+            fingers_done_before_thumb,
+            "fingers should finish sweeping before the thumb starts"
+        );
+    }
+
+    #[test]
+    fn approach_holds_until_explicit_start() {
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.start_approach(0, &[0.8; 6], &[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        // run well past the settle window — the machine must stay in
+        // Approaching and never auto-transition to ClosingCoarse
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            assert_eq!(
+                *machine.state(),
+                GraspState::Approaching,
+                "approach must hold, got {:?} at step {step}",
+                machine.state()
+            );
+        }
+        // only an explicit start transitions to closing
+        machine.approach_complete().unwrap();
+        assert_eq!(*machine.state(), GraspState::ClosingCoarse);
+    }
+
+    #[test]
+    fn failed_grasp_can_be_reset_and_recalibrated() {
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        let mut failed = false;
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Failed {
+                failed = true;
+                break;
+            }
+        }
+        assert!(failed, "expected an empty-grasp failure");
+        // the operator can recover: start_calibration must accept Failed
+        assert!(machine.calibrate().is_ok());
+        assert_eq!(*machine.state(), GraspState::Calibrating);
+        machine.calibration_complete().unwrap();
+        assert_eq!(*machine.state(), GraspState::Ready);
+    }
+
+    #[test]
+    fn release_recovers_after_failure() {
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        let mut failed = false;
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Failed {
+                failed = true;
+                break;
+            }
+        }
+        assert!(failed, "expected an empty-grasp failure");
+        // emergency open after a failure must be allowed and reach Ready
+        assert!(machine.release().is_ok());
+        assert_eq!(*machine.state(), GraspState::Releasing);
+        for step in 41..=160 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Ready {
+                break;
+            }
+        }
+        assert_eq!(
+            *machine.state(),
+            GraspState::Ready,
+            "release after failure should return to Ready"
+        );
+        assert_eq!(machine.failure(), None, "release clears the failure banner");
     }
 }
