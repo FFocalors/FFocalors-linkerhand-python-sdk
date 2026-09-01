@@ -98,6 +98,14 @@ export function createRpsActionController(runtime: ConsolePorts, capabilities: D
       }
     },
     async cancel(reason) {
+      // Releasing the motion source after a completed round must NOT revoke the
+      // operator's 机械手下发 authorization, otherwise only the first round of
+      // a continuous game would ever move the hand. Authorization is dropped
+      // explicitly via revoke() (lock/stop/revoke/reset/device-lost).
+      scissorsToken += 1;
+      if (!simulator) await tauriRuntimeExtras.motionCancelSource('rockPaperScissors', reason);
+    },
+    async revoke(reason) {
       authorized = false;
       scissorsToken += 1;
       if (!simulator) await tauriRuntimeExtras.motionCancelSource('rockPaperScissors', reason);

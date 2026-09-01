@@ -28,4 +28,23 @@ describe('application motion controllers', () => {
     ];
     expect(commands.map(command => command.positions)).toEqual(expected);
   });
+
+  it('keeps RPS hardware authorization across a completed round and only revokes explicitly', async () => {
+    const commands: Array<{ source: string; positions: number[]; finalCommand: boolean }> = [];
+    const runtime = { ...mockRuntime, device: { ...mockRuntime.device, setJointTarget: async (command: JointTargetCommand) => { commands.push(command); } } };
+    const controller = createRpsActionController(runtime, await mockRuntime.device.getCapabilities(), true);
+    expect(await controller.authorize()).toBe(true);
+    // round 1 executes
+    expect((await controller.dispatch({ move: 'rock', round: 1, reason: 'rps-reveal' })).status).toBe('executed');
+    // completing a round calls cancel() to release the motion source — this must
+    // NOT revoke the operator's 机械手下发 authorization (regression: only the
+    // first round used to execute because cancel() dropped authorized)
+    await controller.cancel('stopped');
+    expect((await controller.dispatch({ move: 'paper', round: 2, reason: 'rps-reveal' })).status).toBe('executed');
+    // an explicit revoke does drop the authorization
+    await controller.revoke?.('stopped');
+    const after = await controller.dispatch({ move: 'scissors', round: 3, reason: 'rps-reveal' });
+    expect(after.status).toBe('error');
+    expect(commands.length).toBe(2);
+  });
 });

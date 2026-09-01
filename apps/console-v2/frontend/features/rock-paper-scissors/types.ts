@@ -52,7 +52,11 @@ export type RpsActionResult = { status: 'executed' | 'cancelled' | 'error'; mess
 export interface RpsActionSink {
   authorize(): Promise<boolean>;
   dispatch(request: RpsActionRequest): Promise<RpsActionResult>;
+  /** Release the feature's motion source WITHOUT revoking the authorization, so
+   *  a completed round can hand the source back while 机械手下发 stays checked. */
   cancel(reason: 'locked' | 'stopped' | 'unmounted' | 'reset'): Promise<void>;
+  /** Revoke the authorization (机械手下发 off) and release the motion source. */
+  revoke?(reason: 'locked' | 'stopped' | 'unmounted' | 'reset'): Promise<void>;
   snapshot?(): { status: RpsActionStatus; detail?: string };
 }
 export type RpsActionController = RpsActionSink;

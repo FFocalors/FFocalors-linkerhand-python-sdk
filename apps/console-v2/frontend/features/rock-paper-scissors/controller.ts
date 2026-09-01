@@ -268,7 +268,16 @@ export class RpsGameController {
 
   private async cancelAction(reason: 'locked' | 'stopped' | 'unmounted' | 'reset', token: number, updateStatus = true, resetAuthorization = true): Promise<void> {
     if (!this.actionController) return;
-    try { await this.actionController.cancel(reason); }
+    try {
+      // resetAuthorization: hard revocation (lock/stop/revoke/reset) -> revoke;
+      // otherwise (normal round completion) -> release the motion source only
+      // and keep the operator's 机械手下发 authorization.
+      if (resetAuthorization && this.actionController.revoke) {
+        await this.actionController.revoke(reason);
+      } else {
+        await this.actionController.cancel(reason);
+      }
+    }
     finally {
       if (this.isCurrent(token) && updateStatus && this.state.action.status !== 'disabled') {
         const reset = resetAuthorization ? { hardwareAuthorized: false } : {};
