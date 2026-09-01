@@ -36,7 +36,7 @@ export class RpsGameController {
   constructor(options: RpsControllerOptions) {
     this.runtime = options.runtime; this.capabilities = options.capabilities; this.actionController = options.actionController;
     this.scheduler = options.scheduler ?? realScheduler; this.random = options.random ?? defaultRandom;
-    this.countdownMs = options.countdownMs ?? 1000; this.captureMs = options.captureMs ?? 700; this.revealMs = options.revealMs ?? 280; this.scoreMs = options.scoreMs ?? 420; this.autoAdvanceMs = options.autoAdvanceMs ?? 3000;
+    this.countdownMs = options.countdownMs ?? 1000; this.captureMs = options.captureMs ?? 700; this.revealMs = options.revealMs ?? 280; this.scoreMs = options.scoreMs ?? 420; this.autoAdvanceMs = options.autoAdvanceMs ?? 0;
     const hardware = this.hardwareAvailable() ? 'idle' : 'disabled';
     this.state = { ...this.state, action: { status: hardware, detail: hardware === 'disabled' ? '仅 O6 且接入动作控制器时可控制机械手' : null }, roundMode: options.roundMode ?? 'unlimited' };
   }
@@ -235,12 +235,14 @@ export class RpsGameController {
     this.generation += 1; const token = this.generation;
     const wasDispatching = this.state.action.status === 'dispatching';
     if (this.matchCompleteFor(this.state.roundMode)) {
-      this.emit({ phase: 'matchOver', countdown: null, hardwareAuthorized: false, profile: updatedProfile, chain: null, matchWinner: this.state.score.player > this.state.score.machine ? 'player' : 'machine' });
+      this.emit({ phase: 'matchOver', countdown: null, profile: updatedProfile, chain: null, matchWinner: this.state.score.player > this.state.score.machine ? 'player' : 'machine' });
     } else {
-      this.emit({ phase: 'ready', countdown: null, hardwareAuthorized: false, profile: updatedProfile, chain: null, matchWinner: null });
+      this.emit({ phase: 'ready', countdown: null, profile: updatedProfile, chain: null, matchWinner: null });
       this.schedule(() => { if (this.state.phase === 'ready') this.beginRound(); }, this.autoAdvanceMs);
     }
-    await this.cancelAction('stopped', token, wasDispatching);
+    // Keep the operator's 机械手下发 authorization across throws: cancelling the
+    // dispatched action must not reset the checkbox on normal round completion.
+    await this.cancelAction('stopped', token, wasDispatching, false);
   }
 
   private matchCompleteFor(mode: RpsRoundMode): boolean {
@@ -264,10 +266,24 @@ export class RpsGameController {
     } finally { this.dispatchInFlight = false; }
   }
 
-  private async cancelAction(reason: 'locked' | 'stopped' | 'unmounted' | 'reset', token: number, updateStatus = true): Promise<void> {
+  private async cancelAction(reason: 'locked' | 'stopped' | 'unmounted' | 'reset', token: number, updateStatus = true, resetAuthorization = true): Promise<void> {
     if (!this.actionController) return;
-    try { await this.actionController.cancel(reason); }
-    finally { if (this.isCurrent(token) && updateStatus && this.state.action.status !== 'disabled') this.emit({ action: { status: 'cancelled', detail: '动作已撤销' }, hardwareAuthorized: false }); }
+    try {
+      // resetAuthorization: hard revocation (lock/stop/revoke/reset) -> revoke;
+      // otherwise (normal round completion) -> release the motion source only
+      // and keep the operator's 机械手下发 authorization.
+      if (resetAuthorization && this.actionController.revoke) {
+        await this.actionController.revoke(reason);
+      } else {
+        await this.actionController.cancel(reason);
+      }
+    }
+    finally {
+      if (this.isCurrent(token) && updateStatus && this.state.action.status !== 'disabled') {
+        const reset = resetAuthorization ? { hardwareAuthorized: false } : {};
+        this.emit({ action: { status: 'cancelled', detail: '动作已撤销' }, ...reset });
+      }
+    }
   }
 
   private emit(changes: Partial<RpsState> = {}): void { this.state = { ...this.state, ...changes }; this.listeners.forEach(listener => listener(this.state)); }

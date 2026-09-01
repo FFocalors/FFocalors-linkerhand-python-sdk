@@ -629,8 +629,14 @@ export function DeviceControl({ device, telemetry, config, capabilities, locked 
     try {
       await controller.setJointTarget({ schemaVersion: 1, commandId: `manual-${++commandNumber.current}`, source: 'manual', positions: toVector(vector, jointCount), finalCommand });
       if (finalCommand) setErrorMessage('');
-    } catch (error) { setErrorMessage(`关节目标未送达：${errorText(error)}`); }
-  }, [controller, jointCount, canOperate, virtualHand]);
+    } catch (error) {
+      setErrorMessage(`关节目标未送达：${errorText(error)}`);
+      // A transport drop (e.g. "adapter: not connected") leaves the UI showing
+      // 已连接 until the backend broadcast arrives; refresh the connection now
+      // so motion controls disable immediately and the operator can reconnect.
+      void device.getConnection().then(applyConnection).catch(() => undefined);
+    }
+  }, [controller, jointCount, canOperate, virtualHand, device, applyConnection]);
   const commitJointFrame = useCallback((finalCommand: boolean) => { if (rafRef.current !== undefined) { cancelAnimationFrame(rafRef.current); rafRef.current = undefined; } const vector = toVector(pendingVector.current, jointCount); valuesRef.current = vector; pendingVector.current = vector; setValues(vector); void submitJointVector(vector, finalCommand); }, [jointCount, submitJointVector]);
   const scheduleJointVector = useCallback((vector: number[]) => { pendingVector.current = toVector(vector, jointCount); if (rafRef.current !== undefined) return; rafRef.current = requestAnimationFrame(() => { rafRef.current = undefined; commitJointFrame(false); }); }, [commitJointFrame, jointCount]);
   const beginJoint = (index: number) => { dragging.current.add(index); };

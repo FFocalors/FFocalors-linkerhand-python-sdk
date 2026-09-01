@@ -161,13 +161,17 @@ export function createActionController(runtime: ConsolePorts, simulator: boolean
   const set = (next: ActionControllerState) => { state = next; listeners.emit(state); };
   const extras = simulator ? undefined : actionExtrasOverride ?? tauriRuntimeExtras.actions;
   let simulatorTimer: number | undefined;
+  let manualCommandSequence = 0;
+  // 每个关键帧在设备上的停留时长：机械手需要足够时间完成关节弯曲到位，
+  // 再切换到下一个姿态，避免动作序列播放过快导致姿态尚未到位就被打断。
+  const FRAME_DURATION_MS = 1500;
   const validateFrames = async (id: string, poses: PosePreset[]): Promise<JointTargetCommand[]> => {
     const capabilities = await runtime.device.getCapabilities();
     const expected = capabilities.jointCount;
     if (poses.length === 0) throw new Error('动作至少需要一个姿态。');
     return poses.map((pose, index) => {
       if (!pose.positions || pose.positions.length !== expected || pose.positions.some(value => !Number.isFinite(value) || value < 0 || value > 1)) throw new Error(`姿态“${pose.name}”的关节向量必须包含 ${expected} 个 0..1 数值。`);
-      return { schemaVersion: 1, commandId: `${id}:frame:${index}`, source: 'preset' as const, positions: [...pose.positions], durationMs: 500, finalCommand: index === poses.length - 1 };
+      return { schemaVersion: 1, commandId: `${id}:frame:${index}`, source: 'preset' as const, positions: [...pose.positions], durationMs: FRAME_DURATION_MS, finalCommand: index === poses.length - 1 };
     });
   };
   const validationFailure = async (message: string) => {
@@ -185,13 +189,31 @@ export function createActionController(runtime: ConsolePorts, simulator: boolean
         set({ state: 'playing', actionId: id, progress: 0, detail: simulator ? '浏览器模拟器执行中' : name });
         if (simulatorTimer !== undefined) window.clearTimeout(simulatorTimer);
         const repetitions = options.mode === 'loop' ? options.loopCount === null ? null : options.loopCount + 1 : 1;
-        if (repetitions !== null) simulatorTimer = window.setTimeout(() => { simulatorTimer = undefined; set({ state: 'completed', actionId: id, progress: 1, detail: '动作执行完成' }); }, Math.max(20, Math.round(frames.length * 500 * repetitions / Math.max(.25, options.speed))));
+        if (repetitions !== null) simulatorTimer = window.setTimeout(() => { simulatorTimer = undefined; set({ state: 'completed', actionId: id, progress: 1, detail: '动作执行完成' }); }, Math.max(20, Math.round(frames.length * FRAME_DURATION_MS * repetitions / Math.max(.25, options.speed))));
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       set({ state: 'error', actionId: id, progress: 0, detail: message });
       throw error;
     }
+  };
+  /** 校验姿态向量并直接以 manual source 下发到设备（与首页关键目标控制面板一致）。 */
+  const sendManualTarget = async (pose: PosePreset, finalCommand: boolean) => {
+    const capabilities = await runtime.device.getCapabilities();
+    const expected = capabilities.jointCount;
+    if (!pose.positions || pose.positions.length !== expected || pose.positions.some(value => !Number.isFinite(value) || value < 0 || value > 1)) {
+      const message = `姿态“${pose.name}”的关节向量必须包含 ${expected} 个 0..1 数值。`;
+      set({ state: 'error', progress: 0, detail: message });
+      throw new Error(message);
+    }
+    await runtime.device.setJointTarget({
+      schemaVersion: 1,
+      commandId: `${pose.id}:manual:${Date.now()}:${manualCommandSequence += 1}`,
+      source: 'manual' as const,
+      positions: [...pose.positions],
+      durationMs: null,
+      finalCommand,
+    });
   };
   return {
     async startRecording(name) { if (extras) { await extras.startRecording(name); return; } set({ state: 'recording', progress: 0, detail: '浏览器模拟器录制中' }); },
@@ -200,6 +222,30 @@ export function createActionController(runtime: ConsolePorts, simulator: boolean
     async finishRecording() { if (extras) { await extras.finishRecording(); return; } set({ state: 'idle', progress: 0 }); },
     async cancelRecording() { if (extras) { await extras.cancelRecording(); return; } set({ state: 'cancelled', progress: 0 }); },
     async play(actionId, options) { if (extras) { await extras.play(actionId, options); return; } set({ state: 'playing', actionId, progress: 0, detail: '浏览器模拟器执行中' }); },
+    async previewPose(pose) {
+      // 真机安全预览：直接下发一次完整的手动关节目标，让机械手先动到预览
+      // 位置。finalCommand 为 true 会在发送后立即释放 motion 源，保证后续
+      // “应用到设备”能以 manual 源重新占用而不被 SourceBusy 拒绝。
+      await sendManualTarget(pose, true);
+    },
+    async applyPose(pose, _options) {
+      // 复刻首页关键目标控制面板：单姿态直接以 manual source 下发，不走
+      // action engine 的帧播放（时序播放会被 motion 源占用/锁定拒绝）。
+      set({ state: 'playing', actionId: pose.id, progress: 0, detail: pose.name });
+      try {
+        await sendManualTarget(pose, true);
+        set({ state: 'completed', actionId: pose.id, progress: 1, detail: '姿态已应用到设备' });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        set({ state: 'error', actionId: pose.id, progress: 0, detail: message });
+        throw error;
+      }
+    },
+    async streamPose(pose, finalCommand) {
+      // 滑块实时下发：manual source 保持 motion 源占用（finalCommand=false），
+      // 松手时 finalCommand=true 提交并释放，与首页关键目标控制面板行为一致。
+      await sendManualTarget(pose, finalCommand);
+    },
     async playPose(pose, options) { await runFrames(pose.id, pose.name, [pose], options); },
     async playProgrammedAction(action, options) { await runFrames(action.id, action.name, action.poses, options); },
     async pausePlayback() { if (extras) { await extras.pause(); return; } set({ ...state, state: 'paused' }); },
@@ -212,7 +258,11 @@ export function createActionController(runtime: ConsolePorts, simulator: boolean
   };
 }
 
-function graspController(runtime: ConsolePorts, simulator: boolean): GraspController {
+export function graspController(
+  runtime: ConsolePorts,
+  simulator: boolean,
+  graspExtrasOverride?: typeof tauriRuntimeExtras.grasp,
+): GraspController {
   const JOINT_NAMES = ['拇指弯曲', '拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小指弯曲'];
   const jointName = (i: number) => JOINT_NAMES[i] ?? `J${i + 1}`;
   const makeJoints = (count: number) => Array.from({ length: count }, (_, i) => ({
@@ -234,7 +284,7 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
   };
   const listeners = stateListeners<GraspControllerState>();
   const set = (next: Partial<GraspControllerState>) => { state = { ...state, ...next }; listeners.emit(state); };
-  const extras = simulator ? undefined : tauriRuntimeExtras.grasp;
+  const extras = simulator ? undefined : (graspExtrasOverride ?? tauriRuntimeExtras.grasp);
   /** Map the Tauri wire state into the feature-local state (phase + joints). */
   const mapRemote = (s: import('../shared/contracts/tauri-runtime').TauriGraspState): GraspControllerState => {
     const phaseMap: Record<string, GraspControllerState['phase']> = {
@@ -259,11 +309,28 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
       tactileAvailable: s.tactileAvailable,
       rawTouch: s.rawTouch ?? null,
       degraded: s.degraded,
-      calibrated: phaseMap[s.phase] === 'calibrated' || phaseMap[s.phase] === 'holding' || phaseMap[s.phase] === 'approaching' || phaseMap[s.phase] === 'closingCoarse' || phaseMap[s.phase] === 'closingFine' || phaseMap[s.phase] === 'preloading',
+      // The backend retains the session calibration in every non-idle state
+      // (even failed/aborted/releasing), so the UI cache must not look lost
+      // after a grasp, a release, or a page switch.
+      calibrated: [
+        'calibrated', 'holding', 'approaching', 'closingCoarse', 'closingFine',
+        'preloading', 'releasing', 'failed', 'aborted',
+      ].includes(phaseMap[s.phase] ?? 'idle'),
       joints,
       jointCount: joints.length,
     };
   };
+  // The composition owns a persistent wire subscription so the cached
+  // controller state (and therefore getState()) always mirrors the backend,
+  // even across page switches where the smart-grasp feature component is
+  // unmounted. Without this, returning to the page reads a stale local
+  // snapshot through getState() and the session calibration cache looks lost.
+  if (extras) {
+    extras.subscribe((s) => {
+      state = mapRemote(s);
+      listeners.emit(state);
+    });
+  }
   return {
     async calibrate() {
       if (extras) { await extras.calibrate(); return; }
@@ -334,9 +401,10 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
     },
     getState: async () => state,
     subscribe(listener) {
-      const remove = listeners.add(listener);
-      const remote = extras?.subscribe((s: import('../shared/contracts/tauri-runtime').TauriGraspState) => listener(mapRemote(s)));
-      return () => { remove(); remote?.(); };
+      // The wire channel is owned by the composition (see the permanent
+      // subscription above); feature-level subscribers only observe the
+      // cached state so getState() and subscribe() always agree.
+      return listeners.add(listener);
     },
   };
 }

@@ -56,4 +56,13 @@ describe('SmartGrasp controller boundary', () => {
     expect(screen.getByRole('button', { name: /开始抓取/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /释放/ })).toBeDisabled();
   });
+  it('allows recalibration and emergency release after a failure', async () => {
+    // Issue fix: a failed grasp must not leave the operator in a dead-end.
+    // Recalibration and the emergency release (open hand) stay available.
+    const state = { ...makeIdleState(), phase: 'failed' as const, failure: { code: 'timeout', message: '抓取超时' } };
+    render(<SmartGrasp grasp={grasp} locked={false} tactileAvailable={false} controller={controller(state)} jointCount={6} debugMode />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('抓取超时');
+    expect(screen.getByRole('button', { name: /空载标定/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /释放/ })).toBeEnabled();
+  });
 });

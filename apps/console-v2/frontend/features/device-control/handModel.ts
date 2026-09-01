@@ -35,9 +35,13 @@ export interface DriveRule {
   axis: 'x' | 'y' | 'z'; // primary rotation axis
   kind: 'bend' | 'spread'; // bend: 1=open(limit near 0) 0=bent(limit far) ; spread: linear
   /**
-   * Optional multiplier for the visual bend range (0..1). The physical O6
-   * thumb only bends through the top ~30% of the L20_8 URDF model's range
-   * (real 0% ≈ model 70%), so the twin would over-rotate without scaling it.
+   * For bend joints: the fraction of the URDF bend range that the physical
+   * joint actually travels, measured from the open (straight) end. 0 = the
+   * joint uses the full range (value 1 -> open limit, value 0 -> bent limit).
+   * The physical O6 thumb is much less flexible than the L20_8 URDF model: a
+   * fully bent real thumb only reaches ~30% of the model's bend range (real
+   * 0-100 ≈ model 70-100, where 100 = straight), so bendScale = 0.3 keeps the
+   * twin from over-rotating into poses the real hand can never reach.
    */
   bendScale?: number;
 }
@@ -396,7 +400,7 @@ export const O6_DRIVE_RULES: DriveRule[] = [
     urdfJoints: ['thumb_joint0', 'thumb_joint2', 'thumb_joint3'],
     axis: 'x',
     kind: 'bend',
-    bendScale: 0.7,
+    bendScale: 0.3,
   },
   {
     sdkIndex: 1,
@@ -483,10 +487,11 @@ export function sdkNormalizedToJointAngles(
         const openAngle = absLower < absUpper ? lower : upper;
         const bentAngle = absLower < absUpper ? upper : lower;
 
-        // bendScale compresses the visual bend so the model matches the
-        // physical hand's real travel (e.g. O6 thumb only bends through 70%
-        // of the L20_8 model range). value 0 then stops at the scaled bent
-        // angle instead of the full URDF limit.
+        // bendScale is the fraction of the URDF bend range the physical joint
+        // travels from the open end. For the O6 thumb that is 0.3: value 1
+        // (straight) renders at the open limit and value 0 (fully bent) stops
+        // at 30% of the model range — the twin never rotates into poses the
+        // real thumb cannot reach (real 0-100 ≈ model 70-100).
         const scale = rule.bendScale ?? 1;
         angle = openAngle + (1 - value) * (bentAngle - openAngle) * scale;
       } else {

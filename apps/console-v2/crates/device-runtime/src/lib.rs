@@ -157,33 +157,64 @@ impl DeviceRuntime {
     pub fn capabilities(&self) -> Option<&DeviceCapabilities> {
         self.capabilities.as_ref()
     }
+    /// A send/read against a dropped transport surfaces the real state: if the
+    /// adapter reports NotConnected the runtime must stop claiming "connected"
+    /// so the UI disables motion controls and the operator can reconnect.
+    /// Without this, every later joint target keeps failing with
+    /// "adapter: not connected" while the UI still shows 已连接.
+    fn mark_disconnected_if_adapter_says_so(&mut self, error: &RuntimeError) {
+        if matches!(error, RuntimeError::Adapter(AdapterError::NotConnected)) {
+            self.state = ConnectionState::Disconnected;
+            self.last_error = Some(error.to_string());
+        }
+    }
     pub fn send(&mut self, c: &JointTargetCommand) -> Result<(), RuntimeError> {
-        self.adapter
+        let result = self
+            .adapter
             .as_mut()
             .ok_or(RuntimeError::NoAdapter)?
             .send_joint_target(c)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        if let Err(error) = &result {
+            self.mark_disconnected_if_adapter_says_so(error);
+        }
+        result
     }
     pub fn set_speed(&mut self, values: &[u8]) -> Result<(), RuntimeError> {
-        self.adapter
+        let result = self
+            .adapter
             .as_mut()
             .ok_or(RuntimeError::NoAdapter)?
             .set_speed(values)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        if let Err(error) = &result {
+            self.mark_disconnected_if_adapter_says_so(error);
+        }
+        result
     }
     pub fn set_torque(&mut self, values: &[u8]) -> Result<(), RuntimeError> {
-        self.adapter
+        let result = self
+            .adapter
             .as_mut()
             .ok_or(RuntimeError::NoAdapter)?
             .set_torque(values)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        if let Err(error) = &result {
+            self.mark_disconnected_if_adapter_says_so(error);
+        }
+        result
     }
     pub fn telemetry(&mut self, now: u64) -> Result<TelemetrySnapshot, RuntimeError> {
-        self.adapter
+        let result = self
+            .adapter
             .as_mut()
             .ok_or(RuntimeError::NoAdapter)?
             .read_telemetry(now)
-            .map_err(Into::into)
+            .map_err(Into::into);
+        if let Err(error) = &result {
+            self.mark_disconnected_if_adapter_says_so(error);
+        }
+        result
     }
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
         self.adapter
@@ -210,6 +241,7 @@ impl DeviceRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use device_adapter_api::AdapterResult;
     use device_simulator::DeviceSimulator;
     #[test]
     fn lifecycle_and_reconnect() {
@@ -268,5 +300,69 @@ mod tests {
             );
             assert_eq!(actual.torque_command_length.map(usize::from), torque);
         }
+    }
+
+    /// Adapter whose transport "drops" after connect: sends/reads report
+    /// NotConnected while the runtime would otherwise keep claiming connected.
+    struct DroppingAdapter(DeviceSimulator, bool);
+    impl DeviceAdapter for DroppingAdapter {
+        fn id(&self) -> &str {
+            "dropping"
+        }
+        fn connect(&mut self) -> AdapterResult<DeviceCapabilities> {
+            self.0.connect()
+        }
+        fn disconnect(&mut self) -> AdapterResult<()> {
+            self.0.disconnect()
+        }
+        fn is_connected(&self) -> bool {
+            self.0.is_connected()
+        }
+        fn capabilities(&self) -> Option<&DeviceCapabilities> {
+            self.0.capabilities()
+        }
+        fn send_joint_target(&mut self, _command: &JointTargetCommand) -> AdapterResult<()> {
+            if self.1 {
+                Err(AdapterError::NotConnected)
+            } else {
+                Ok(())
+            }
+        }
+        fn read_telemetry(&mut self, monotonic_time_ms: u64) -> AdapterResult<TelemetrySnapshot> {
+            if self.1 {
+                Err(AdapterError::NotConnected)
+            } else {
+                self.0.read_telemetry(monotonic_time_ms)
+            }
+        }
+    }
+
+    #[test]
+    fn not_connected_on_send_drops_the_runtime_to_disconnected() {
+        use console_contracts::{JointTargetCommand, CURRENT_SCHEMA_VERSION};
+        let mut runtime = DeviceRuntime::new(DeviceConfig::new("s", "sim"));
+        runtime.install_adapter(Box::new(DroppingAdapter(
+            DeviceSimulator::new("s", 2),
+            false,
+        )));
+        runtime.connect().unwrap();
+        assert_eq!(*runtime.state(), ConnectionState::Connected);
+        // transport drops -> next send fails and the runtime must stop
+        // reporting connected so the UI disables motion and shows 未连接
+        runtime.adapter = Some(Box::new(DroppingAdapter(
+            DeviceSimulator::new("s", 2),
+            true,
+        )));
+        let command = JointTargetCommand {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            command_id: "drop-me".into(),
+            source: console_contracts::CommandSource::Manual,
+            positions: vec![0.5; 2],
+            duration_ms: None,
+            final_command: false,
+        };
+        assert!(runtime.send(&command).is_err());
+        assert_eq!(*runtime.state(), ConnectionState::Disconnected);
+        assert!(runtime.last_error.is_some());
     }
 }

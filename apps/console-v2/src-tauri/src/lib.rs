@@ -568,6 +568,9 @@ struct RuntimeActor {
     log_sequence: u64,
     /// Last telemetry sampling error, for change-aware logging.
     telemetry_error: Option<String>,
+    /// Last connection snapshot sent to subscribers, so the loop can broadcast
+    /// when a transport drop (e.g. "adapter: not connected") changes the state.
+    last_connection: Option<ConnectionSnapshot>,
 }
 impl RuntimeActor {
     fn log(
@@ -666,6 +669,9 @@ impl RuntimeActor {
                 self.broadcast_operation();
                 self.broadcast_action();
                 self.broadcast_grasp();
+                // A failed send/telemetry can drop the runtime to Disconnected;
+                // surface that to the UI so motion controls disable.
+                self.broadcast_connection_if_changed();
             }
             if now.saturating_sub(next_telemetry) >= 50 {
                 next_telemetry = now;
@@ -1132,7 +1138,9 @@ impl RuntimeActor {
                 let _ = reply.send(self.runtime.grasp_release().map_err(map_error));
             }
             ActorRequest::GraspAbort { reply } => {
-                self.runtime.grasp.abort();
+                // Abort also releases the Grasp motion source so a following
+                // operator (Manual) command is not rejected.
+                self.runtime.grasp_abort();
                 let _ = reply.send(Ok(()));
             }
             ActorRequest::SubscribeGrasp { channel, reply } => {
@@ -1253,6 +1261,18 @@ impl RuntimeActor {
         self.connection_channels
             .retain(|channel| channel.send(value.clone()).is_ok());
     }
+    /// Push the current connection snapshot to subscribers whenever it changed
+    /// (the explicit connect/disconnect handlers also broadcast, but a dropped
+    /// transport that surfaces through a failed send/telemetry would otherwise
+    /// leave the UI showing 已连接 while every joint target fails with
+    /// "adapter: not connected").
+    fn broadcast_connection_if_changed(&mut self) {
+        let current = app_runtime::ui::DevicePort::get_connection(&self.runtime);
+        if self.last_connection.as_ref() != Some(&current) {
+            self.last_connection = Some(current.clone());
+            self.broadcast_connection(current);
+        }
+    }
     fn operation_snapshot(&self) -> OperationSnapshot {
         app_runtime::ui::MotionPort::get_operation(&self.runtime)
     }
@@ -1323,7 +1343,7 @@ impl RuntimeActor {
                     GraspJointState::Error => "error",
                 }
                 .into(),
-                contact_score: *score as f32,
+                contact_score: adaptive_grasp::display_contact_score(*score) as f32,
             })
             .collect();
         let value = GraspStateEvent {
@@ -1536,6 +1556,7 @@ fn spawn_runtime(
                 simulator,
                 log_sequence: 0,
                 telemetry_error: None,
+                last_connection: None,
             }
             .run()
         })
@@ -2423,6 +2444,8 @@ mod tests {
                     stopped: actor_stopped,
                     simulator: true,
                     log_sequence: 0,
+                    telemetry_error: None,
+                    last_connection: None,
                 }
                 .run()
             })

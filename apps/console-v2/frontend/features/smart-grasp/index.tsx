@@ -186,16 +186,17 @@ export function SmartGrasp({
   }, [telemetry, jointCount]);
 
   const controllerReady = Boolean(controller);
-  // 空载标定：可随时重新标定（仅空闲/已标定时可操作）
-  const canCalibrate = controllerReady && available && canOperate && !locked && (state.phase === 'idle' || state.phase === 'calibrated');
+  // 空载标定：可随时重新标定（含失败/中止后的恢复，标定会复位状态机）
+  const canCalibrate = controllerReady && available && canOperate && !locked && (state.phase === 'idle' || state.phase === 'calibrated' || state.phase === 'failed' || state.phase === 'aborted');
   // 预抓取定位：必须先完成标定（会话缓存）
   const canApproach = controllerReady && available && canOperate && !locked && state.calibrated && (state.phase === 'idle' || state.phase === 'calibrated');
   // 开始抓取：首次必须标定，之后缓存标定可直接开始
   const canGrasp = controllerReady && available && canOperate && !locked && state.calibrated && Boolean(selected) && (state.phase === 'approaching' || state.phase === 'calibrated' || state.phase === 'idle');
   const isRunning = state.phase !== 'idle' && state.phase !== 'calibrated' && state.phase !== 'success' && state.phase !== 'aborted' && state.phase !== 'failed';
   const canAbort = controllerReady && canOperate && isRunning;
-  // 释放 = 急停：任何运行/保持/成功状态均可立即回到张开姿态
-  const canRelease = controllerReady && canOperate && (isRunning || state.phase === 'holding' || state.phase === 'success');
+  // 释放 = 急停：任何运行/保持/成功/失败/中止状态均可立即回到张开姿态
+  // （标定扫描中不可释放，与 v1 一致；标定中可用"中止"后释放）
+  const canRelease = controllerReady && canOperate && state.phase !== 'calibrating' && (isRunning || state.phase === 'holding' || state.phase === 'success' || state.phase === 'failed' || state.phase === 'aborted');
 
   const invoke = async (operation: () => Promise<void>, failure: string) => {
     setError(undefined);

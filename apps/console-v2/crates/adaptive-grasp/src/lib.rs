@@ -35,6 +35,17 @@ use thiserror::Error;
 pub const CONTROL_STEP_MS: u64 = 50;
 pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 pub const DEFAULT_STEP_LIMIT: f64 = 0.05;
+/// Gain applied to the raw contact score (0..1) before it is shown in the UI.
+/// A solid contact settles around 0.70-0.73 (the stall term dominates while the
+/// error/jitter terms drop once the joint freezes), but operators expect a
+/// near-perfect contact to read ~95%.
+pub const CONTACT_SCORE_DISPLAY_GAIN: f64 = 1.3;
+/// Lift a raw analyzer contact score into the value shown to the operator.
+/// Keeps 0 as no contact and 1 as perfect, while making a real contact (~0.70)
+/// read as ~95% instead of ~70%.
+pub fn display_contact_score(raw: f64) -> f64 {
+    (raw * CONTACT_SCORE_DISPLAY_GAIN).clamp(0.0, 1.0)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Profile {
@@ -71,6 +82,48 @@ impl Profile {
             Self::L21 => DeviceModel::L21,
             Self::L25 => DeviceModel::L25,
         }
+    }
+    /// Indices of the joints that belong to the thumb. During the no-load
+    /// calibration sweep these move in a separate phase from the fingers so
+    /// the thumb can never fight the index finger (they never share a tick).
+    pub fn thumb_joint_indices(&self) -> &'static [usize] {
+        match self {
+            Self::O6 | Self::L6 => &[0, 1],
+            Self::L7 => &[0, 1, 6],
+            Self::L10 => &[0, 1, 9],
+            Self::L20 => &[0, 1, 2, 3, 4, 5],
+            Self::G20 | Self::L21 | Self::L25 => &[],
+        }
+    }
+    /// Default `(pregrasp, close_limits)` poses, normalized to [0, 1]. They
+    /// mirror the proven v1 `default_power_grasp_*` profiles so the pre-grasp
+    /// pose and the safe closed limits match the physical hand.
+    pub fn default_grasp_poses(&self) -> Option<(Vec<f64>, Vec<f64>)> {
+        let (pregrasp, close): (&[u8], &[u8]) = match self {
+            Self::O6 => (&[250, 80, 250, 250, 250, 250], &[20, 80, 10, 10, 10, 10]),
+            Self::L6 => (&[250, 40, 250, 250, 250, 250], &[20, 40, 10, 10, 10, 10]),
+            Self::L7 => (
+                &[250, 15, 250, 250, 250, 250, 170],
+                &[40, 15, 20, 20, 20, 20, 170],
+            ),
+            Self::L10 => (
+                &[255, 255, 255, 255, 255, 255, 128, 67, 89, 255],
+                &[90, 255, 20, 20, 20, 20, 128, 67, 89, 255],
+            ),
+            Self::L20 => (
+                &[
+                    255, 255, 255, 255, 255, 255, 10, 100, 180, 240, 245, 255, 255, 255, 255, 255,
+                    255, 255, 255, 255,
+                ],
+                &[
+                    40, 20, 20, 20, 20, 255, 10, 100, 180, 240, 130, 255, 255, 255, 255, 135, 20,
+                    20, 20, 20,
+                ],
+            ),
+            Self::G20 | Self::L21 | Self::L25 => return None,
+        };
+        let normalize = |values: &[u8]| values.iter().map(|v| *v as f64 / 255.0).collect();
+        Some((normalize(pregrasp), normalize(close)))
     }
     pub fn label(&self) -> &'static str {
         match self {
@@ -234,6 +287,10 @@ pub struct GraspConfig {
     pub coarse_timeout_ratio: f64,
     /// Ticks to let the hand settle at the approach pose before closing (D1).
     pub approach_settle_ticks: usize,
+    /// Minimum closing time before an empty-grasp (zero contact) is declared.
+    /// Guards against judging a hand that starts partially closed (e.g. the
+    /// half-fist of a precision pinch) as empty before it can reach contact.
+    pub min_empty_grasp_ms: u64,
 }
 impl Default for GraspConfig {
     fn default() -> Self {
@@ -269,6 +326,7 @@ impl GraspConfig {
             verify_ms: 800,
             coarse_timeout_ratio: 0.6,
             approach_settle_ticks: 10,
+            min_empty_grasp_ms: 1500,
         };
         match preset {
             // Soft: gentle, contact-sensitive (low threshold, small steps).
@@ -293,15 +351,21 @@ impl GraspConfig {
                 verify_ms: 1000,
                 ..base
             },
-            // Precision: fingertip pinch, strict confirmation, longer verify.
+            // Precision: fingertip pinch of small objects. The fine phase is
+            // deliberately slow, so it needs a larger overall budget and a
+            // bigger fine share, and the step sizes must cover the remaining
+            // displacement in time — otherwise a half-fist reach is judged as
+            // "抓取超时" before the pinch confirms.
             GraspPreset::Precision => GraspConfig {
-                coarse_step_limit: 0.02,
-                fine_step_limit: 0.004,
+                coarse_step_limit: 0.03,
+                fine_step_limit: 0.006,
                 preload_step_limit: 0.003,
                 preload_max_steps: 1,
                 contact_score_threshold: 0.75,
                 minimum_contacts: 1,
                 verify_ms: 1200,
+                timeout_ms: 16_000,
+                coarse_timeout_ratio: 0.4,
                 ..base
             },
         }
@@ -519,6 +583,9 @@ pub struct GraspMachine {
     /// Calibration sweep history (error / jitter samples per joint).
     calib_errors: Vec<Vec<f64>>,
     calib_jitters: Vec<Vec<f64>>,
+    /// Calibration sweep phase: 0 = fingers first, 1 = thumb afterwards, so
+    /// the thumb and the fingers never move on the same tick (issue fix).
+    calib_phase: usize,
 }
 
 impl GraspMachine {
@@ -551,6 +618,7 @@ impl GraspMachine {
             calibration: vec![None; n],
             calib_errors: vec![Vec::new(); n],
             calib_jitters: vec![Vec::new(); n],
+            calib_phase: 0,
         }
     }
     pub fn try_new(profile: Profile) -> Result<Self, GraspError> {
@@ -610,7 +678,13 @@ impl GraspMachine {
     }
     pub fn start_calibration(&mut self, now_ms: u64) -> Result<(), GraspError> {
         self.ensure_supported()?;
-        if self.state != GraspState::Idle {
+        // Idle/Ready for a normal run; Failed/Aborted are terminal states that
+        // a recalibration must be able to recover from (issue fix: after a
+        // failed grasp the operator can always restart calibration).
+        if !matches!(
+            self.state,
+            GraspState::Idle | GraspState::Ready | GraspState::Failed | GraspState::Aborted
+        ) {
             return Err(GraspError::Invalid(self.state.clone()));
         }
         // Reset sweep collectors.
@@ -618,6 +692,7 @@ impl GraspMachine {
         self.calibration = vec![None; n];
         self.calib_errors = vec![Vec::new(); n];
         self.calib_jitters = vec![Vec::new(); n];
+        self.calib_phase = 0;
         self.current = vec![0.5; n];
         self.grasp_target = vec![0.5; n];
         self.closing_directions = self.derive_directions(&self.grasp_target, &self.grasp_target);
@@ -654,8 +729,14 @@ impl GraspMachine {
         self.ensure_supported()?;
         self.validate(approach)?;
         self.validate(target)?;
+        // A failed/aborted grasp can go straight back to the pre-grasp pose:
+        // reset() returns to Ready whenever a session calibration still exists.
+        let from = self.state.clone();
+        if !matches!(self.state, GraspState::Ready) {
+            self.reset();
+        }
         if self.state != GraspState::Ready {
-            return Err(GraspError::Invalid(self.state.clone()));
+            return Err(GraspError::Invalid(from));
         }
         self.approach_target = approach.to_vec();
         self.grasp_target = target.to_vec();
@@ -698,16 +779,16 @@ impl GraspMachine {
         self.state = GraspState::ClosingCoarse;
         Ok(())
     }
-    pub fn approach_complete(&mut self) -> Result<(), GraspError> {
+    pub fn approach_complete(&mut self, now_ms: u64) -> Result<(), GraspError> {
         if self.state != GraspState::Approaching {
             return Err(GraspError::Invalid(self.state.clone()));
         }
+        // The grasp-execution clock starts now. The operator may hold at the
+        // pre-grasp pose for as long as they want (no auto-cancel), so time
+        // spent waiting must not consume the closing timeout budget.
+        self.started_at_ms = Some(now_ms);
+        self.phase_started_at_ms = Some(now_ms);
         self.state = GraspState::ClosingCoarse;
-        self.phase_started_at_ms = Some(
-            self.started_at_ms
-                .unwrap_or(0)
-                .saturating_add(self.config.approach_settle_ticks as u64 * CONTROL_STEP_MS),
-        );
         Ok(())
     }
     pub fn grasp_complete(&mut self) -> Result<(), GraspError> {
@@ -725,12 +806,35 @@ impl GraspMachine {
         Ok(())
     }
     pub fn release(&mut self) -> Result<(), GraspError> {
-        if self.state != GraspState::Holding {
+        // Release is the emergency-open path and must work from every active
+        // state where the hand can be holding or closing: Holding (success),
+        // Failed/Aborted (after a stop), and the closing/approach phases (a
+        // mid-grasp operator still needs a way out).
+        if !matches!(
+            self.state,
+            GraspState::Holding
+                | GraspState::Failed
+                | GraspState::Aborted
+                | GraspState::Approaching
+                | GraspState::ClosingCoarse
+                | GraspState::ClosingFine
+                | GraspState::Preloading
+                | GraspState::Releasing
+        ) {
             return Err(GraspError::Invalid(self.state.clone()));
         }
+        if !matches!(self.state, GraspState::Holding | GraspState::Releasing) {
+            // Emergency open: drive every joint back toward the open pose.
+            self.approach_target = vec![0.8; self.profile.joint_count()];
+        }
+        self.last_failure = None;
         self.state = GraspState::Releasing;
-        self.started_at_ms = Some(0);
-        self.phase_started_at_ms = Some(0);
+        // The overall grasp timeout and the phased closing budget must NOT
+        // apply to the release phase. Previously started_at_ms was seeded with
+        // 0, so on a real monotonic clock the very next tick failed with
+        // Timeout ("抓取在规定时间内未完成") and the release never happened.
+        self.started_at_ms = None;
+        self.phase_started_at_ms = None;
         Ok(())
     }
     pub fn release_complete(&mut self) -> Result<(), GraspError> {
@@ -784,8 +888,14 @@ impl GraspMachine {
                     .unwrap_or(0),
             }));
         }
+        // Overall grasp timeout. The operator may wait at the pre-grasp pose
+        // indefinitely (pre-grasp is only a positioning step, never an
+        // auto-cancel), so the wait state is excluded; the clock is reset when
+        // closing actually starts (approach_complete).
         if let Some(start) = self.started_at_ms {
-            if now_ms.saturating_sub(start) > self.config.timeout_ms {
+            if !matches!(self.state, GraspState::Approaching)
+                && now_ms.saturating_sub(start) > self.config.timeout_ms
+            {
                 return Err(self.fail(FailureReason::Timeout));
             }
         }
@@ -864,6 +974,30 @@ impl GraspMachine {
         self.last_tick_ms = None;
         self.phase_started_at_ms = None;
     }
+    /// Recover from a terminal state (failed/aborted). Returns to `Ready` when
+    /// a session calibration still exists, otherwise back to `Idle`. This lets
+    /// an operator re-approach / re-grasp or recalibrate after a stop instead
+    /// of being stuck in a dead-end state (issue fix).
+    pub fn reset(&mut self) {
+        let calibrated = self.is_calibrated();
+        self.state = if calibrated {
+            GraspState::Ready
+        } else {
+            GraspState::Idle
+        };
+        self.started_at_ms = None;
+        self.phase_started_at_ms = None;
+        self.last_tick_ms = None;
+        self.last_failure = None;
+        self.degraded = false;
+        self.settle_ticks = 0;
+        self.preload_steps_taken = 0;
+        self.confirmation_counts.fill(0);
+        self.joint_states.fill(GraspJointState::Idle);
+        self.failed_joints.fill(false);
+        self.contact.fill(false);
+        self.contact_scores.fill(0.0);
+    }
     pub fn stop_all(&mut self) {
         self.abort();
     }
@@ -872,9 +1006,18 @@ impl GraspMachine {
 
     fn calibration_step(&mut self, _now_ms: u64, telemetry: &GraspTelemetry) {
         let n = self.profile.joint_count();
+        let thumb = self.profile.thumb_joint_indices();
+        let finger_phase = self.calib_phase == 0;
         let mut all_done = true;
         let mut target_updated = false;
         for i in 0..n {
+            let is_thumb = thumb.contains(&i);
+            if finger_phase == is_thumb {
+                // This joint belongs to the other sweep group; leave it parked
+                // until its phase starts so the thumb and the fingers never
+                // move on the same tick (issue fix: no more thumb/index fight).
+                continue;
+            }
             let actual = telemetry.positions[i];
             let target = self.grasp_target[i];
             let limit = 0.05; // closed limit for the sweep
@@ -896,13 +1039,19 @@ impl GraspMachine {
             self.current = self.grasp_target.clone();
         }
         if all_done {
-            self.compute_calibration();
-            // back to the open pose, ready
-            self.current = vec![0.5; n];
-            self.grasp_target = vec![0.5; n];
-            self.state = GraspState::Ready;
-            self.started_at_ms = None;
-            self.phase_started_at_ms = None;
+            if finger_phase {
+                // Fingers reached their closed limits first; move on to the
+                // thumb sweep so both groups stay asynchronous.
+                self.calib_phase = 1;
+            } else {
+                self.compute_calibration();
+                // back to the open pose, ready
+                self.current = vec![0.5; n];
+                self.grasp_target = vec![0.5; n];
+                self.state = GraspState::Ready;
+                self.started_at_ms = None;
+                self.phase_started_at_ms = None;
+            }
         }
     }
     /// P1/B1: derive per-joint thresholds from the no-load sweep using
@@ -937,9 +1086,9 @@ impl GraspMachine {
 
     // ── approach / closing / preload / release ──
 
-    fn approach_step(&mut self, now_ms: u64) {
-        // D1: settle at the approach pose for `approach_settle_ticks` before
-        // closing so motors can catch up (v1 waited a fixed 500ms).
+    fn approach_step(&mut self, _now_ms: u64) {
+        // D1: settle at the approach pose for `approach_settle_ticks` so
+        // motors can catch up (v1 waited a fixed 500ms).
         if self.settle_ticks < self.config.approach_settle_ticks {
             move_towards(
                 &mut self.current,
@@ -949,16 +1098,15 @@ impl GraspMachine {
             self.settle_ticks += 1;
             return;
         }
-        if close_enough(&self.current, &self.approach_target) {
-            self.state = GraspState::ClosingCoarse;
-            self.phase_started_at_ms = Some(now_ms);
-        } else {
-            move_towards(
-                &mut self.current,
-                &self.approach_target,
-                self.config.step_limit,
-            );
-        }
+        // Hold the pre-grasp pose until the operator explicitly starts the
+        // grasp (approach_complete()). Selecting/clicking the pre-grasp step
+        // must never auto-start closing (issue fix: the grasp only begins when
+        // the operator chooses a preset and presses "开始抓取").
+        move_towards(
+            &mut self.current,
+            &self.approach_target,
+            self.config.step_limit,
+        );
     }
 
     fn closing_step(&mut self, now_ms: u64, telemetry: &GraspTelemetry) {
@@ -1123,7 +1271,19 @@ impl GraspMachine {
 
         if stopped >= moving_total && moving_total > 0 {
             if confirmed == 0 {
-                self.fail(FailureReason::EmptyGrasp);
+                // Never declare an empty grasp instantly: a hand that starts
+                // partially closed (e.g. the half-fist of a precision pinch)
+                // must get a grace period to reach contact before being judged
+                // as having no object at all.
+                let started = self.started_at_ms.unwrap_or(now_ms);
+                if now_ms.saturating_sub(started) >= self.config.min_empty_grasp_ms {
+                    self.fail(FailureReason::EmptyGrasp);
+                    return;
+                }
+                // Not enough elapsed time yet: hold the closing phase so the
+                // per-joint targets keep advancing toward contact. The phased
+                // timeout still bounds this window.
+                let _ = now_ms;
                 return;
             }
             // Partial contact: try to secure via preload; verification in
@@ -1430,6 +1590,10 @@ mod tests {
                 break;
             }
         }
+        // the approach must HOLD (not auto-close); closing only begins when
+        // the operator explicitly completes the approach
+        assert_eq!(*machine.state(), GraspState::Approaching);
+        machine.approach_complete(17 * 50).unwrap();
         // force contact via the tactile channel
         t.tactile_available = true;
         t.raw_touch = vec![20; 6];
@@ -1479,7 +1643,8 @@ mod tests {
         let mut t = telemetry(6);
         let mut positions = vec![0.5; 6];
         let mut ready = false;
-        for step in 1..=60 {
+        // two-phase sweep (fingers then thumb) needs up to ~60 ticks
+        for step in 1..=120 {
             t.positions = positions.clone();
             t.positions[0] += (step % 5) as f64 * 0.01; // jittery joint
             if let Some(out) = machine.tick(step * 50, &t).unwrap() {
@@ -1504,5 +1669,300 @@ mod tests {
             thresholds[0] > thresholds[1],
             "noisy joint should get a higher threshold: {thresholds:?}"
         );
+    }
+
+    #[test]
+    fn calibration_sweeps_fingers_before_thumb() {
+        // Issue fix: the thumb and the fingers must never move on the same
+        // tick during the no-load sweep (they would otherwise "fight").
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.start_calibration(0).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.5; 6];
+        let mut prev = positions.clone();
+        let mut saw_thumb_move = false;
+        let mut fingers_done_before_thumb = false;
+        for step in 1..=120 {
+            t.positions = positions.clone();
+            let Some(out) = machine.tick(step * 50, &t).unwrap() else {
+                break;
+            };
+            positions = out.command.positions;
+            if machine.state() == &GraspState::Ready {
+                break;
+            }
+            let thumb_changed = positions[0] != prev[0] || positions[1] != prev[1];
+            let finger_changed = positions[2] != prev[2]
+                || positions[3] != prev[3]
+                || positions[4] != prev[4]
+                || positions[5] != prev[5];
+            if thumb_changed && !saw_thumb_move {
+                saw_thumb_move = true;
+                fingers_done_before_thumb = !finger_changed;
+            }
+            // no tick may move thumb AND fingers together
+            assert!(
+                !(thumb_changed && finger_changed),
+                "thumb and fingers must not move on the same tick (step {step})"
+            );
+            prev = positions.clone();
+        }
+        assert!(saw_thumb_move, "thumb joints should eventually move");
+        assert!(
+            fingers_done_before_thumb,
+            "fingers should finish sweeping before the thumb starts"
+        );
+    }
+
+    #[test]
+    fn approach_holds_until_explicit_start() {
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.start_approach(0, &[0.8; 6], &[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        // run well past the settle window — the machine must stay in
+        // Approaching and never auto-transition to ClosingCoarse
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            assert_eq!(
+                *machine.state(),
+                GraspState::Approaching,
+                "approach must hold, got {:?} at step {step}",
+                machine.state()
+            );
+        }
+        // only an explicit start transitions to closing
+        machine.approach_complete(41 * 50).unwrap();
+        assert_eq!(*machine.state(), GraspState::ClosingCoarse);
+    }
+
+    #[test]
+    fn failed_grasp_can_be_reset_and_recalibrated() {
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        let mut failed = false;
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Failed {
+                failed = true;
+                break;
+            }
+        }
+        assert!(failed, "expected an empty-grasp failure");
+        // the operator can recover: start_calibration must accept Failed
+        assert!(machine.calibrate().is_ok());
+        assert_eq!(*machine.state(), GraspState::Calibrating);
+        machine.calibration_complete().unwrap();
+        assert_eq!(*machine.state(), GraspState::Ready);
+    }
+
+    #[test]
+    fn release_recovers_after_failure() {
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        let mut failed = false;
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Failed {
+                failed = true;
+                break;
+            }
+        }
+        assert!(failed, "expected an empty-grasp failure");
+        // emergency open after a failure must be allowed and reach Ready
+        assert!(machine.release().is_ok());
+        assert_eq!(*machine.state(), GraspState::Releasing);
+        for step in 41..=160 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Ready {
+                break;
+            }
+        }
+        assert_eq!(
+            *machine.state(),
+            GraspState::Ready,
+            "release after failure should return to Ready"
+        );
+        assert_eq!(machine.failure(), None, "release clears the failure banner");
+    }
+
+    #[test]
+    fn release_does_not_time_out_on_a_real_clock() {
+        // Regression: release() used to seed started_at_ms with 0, so on a real
+        // monotonic clock (now_ms already far past the 10s timeout) the very
+        // next tick failed with Timeout and the release never completed.
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut holding = false;
+        for step in 1..=40 {
+            // actual never follows the closing command -> immediate stall contact
+            t.positions = vec![0.8; 6];
+            let _ = machine.tick(step * 50, &t).unwrap();
+            if machine.state() == &GraspState::Holding {
+                holding = true;
+                break;
+            }
+        }
+        assert!(holding, "expected the grasp to reach Holding");
+        machine.release().unwrap();
+        // tick at a wall-clock time far beyond the 10s grasp timeout
+        let mut now_ms = 60_000u64;
+        for _ in 0..40 {
+            t.positions = vec![0.8; 6];
+            let tick = machine.tick(now_ms, &t);
+            assert!(
+                tick.is_ok(),
+                "release must not fail with Timeout, got {tick:?}"
+            );
+            if machine.state() == &GraspState::Ready {
+                break;
+            }
+            now_ms += 50;
+        }
+        assert_eq!(
+            *machine.state(),
+            GraspState::Ready,
+            "release on a real clock should return to Ready"
+        );
+    }
+
+    #[test]
+    fn approach_wait_never_times_out_until_closing_starts() {
+        // Regression: after the pre-grasp step the machine holds and must not
+        // auto-cancel after ~10s of operator inactivity.
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.start_approach(0, &[0.8; 6], &[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        // tick far beyond the 10s grasp timeout: the pre-grasp wait must hold
+        let mut now_ms = 20_000u64;
+        for _ in 0..20 {
+            t.positions = vec![0.8; 6];
+            let tick = machine.tick(now_ms, &t);
+            assert!(
+                tick.is_ok(),
+                "approach wait must not time out, got {tick:?}"
+            );
+            assert_eq!(*machine.state(), GraspState::Approaching);
+            now_ms += 50;
+        }
+        // the closing budget starts fresh when the operator starts the grasp
+        machine.approach_complete(now_ms).unwrap();
+        assert_eq!(*machine.state(), GraspState::ClosingCoarse);
+    }
+
+    #[test]
+    fn empty_grasp_is_not_judged_before_the_grace_period() {
+        // Regression: a no-load run closes to the limit with zero contact. The
+        // empty-grasp judgment must wait out the grace window instead of firing
+        // the moment the joints stop.
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut positions = vec![0.8; 6];
+        let mut failed_at_ms = None;
+        for step in 1..=40 {
+            t.positions = positions.clone();
+            if let Some(out) = machine.tick(step * 50, &t).unwrap() {
+                positions = out.command.positions;
+            }
+            if machine.state() == &GraspState::Failed {
+                failed_at_ms = Some(step * 50);
+                break;
+            }
+            if step * 50 < 1500 {
+                assert_eq!(
+                    *machine.state(),
+                    GraspState::ClosingCoarse,
+                    "must keep closing during the empty-grasp grace window (step {step})"
+                );
+            }
+        }
+        let failed_at_ms = failed_at_ms.expect("an empty grasp should fail after the grace period");
+        assert!(
+            failed_at_ms >= 1500,
+            "empty grasp must not be judged before the grace window, failed at {failed_at_ms}ms"
+        );
+        assert_eq!(machine.failure(), Some(&FailureReason::EmptyGrasp));
+    }
+
+    #[test]
+    fn precision_preset_gets_more_time_and_fine_budget() {
+        let precision = GraspConfig::for_preset(GraspPreset::Precision);
+        let cube = GraspConfig::for_preset(GraspPreset::Cube);
+        assert!(
+            precision.timeout_ms > cube.timeout_ms,
+            "precision needs a larger overall budget"
+        );
+        let precision_fine_ms =
+            (1.0 - precision.coarse_timeout_ratio) * precision.timeout_ms as f64;
+        let cube_fine_ms = (1.0 - cube.coarse_timeout_ratio) * cube.timeout_ms as f64;
+        assert!(
+            precision_fine_ms > cube_fine_ms,
+            "precision needs a larger fine-phase budget: {precision_fine_ms} vs {cube_fine_ms}"
+        );
+    }
+
+    #[test]
+    fn display_contact_score_lifts_a_solid_contact_to_near_max() {
+        // A genuine contact (~0.70-0.73 raw) must read ~95% in the UI while a
+        // no-contact read stays at 0 and a perfect score stays capped at 1.
+        assert_eq!(display_contact_score(0.0), 0.0);
+        assert_eq!(display_contact_score(1.0), 1.0);
+        let lifted = display_contact_score(0.73);
+        assert!(
+            (lifted - 0.95).abs() < 0.02,
+            "0.73 should read ~0.95, got {lifted}"
+        );
+        assert!(display_contact_score(0.4) > 0.4, "scores should be lifted");
     }
 }
