@@ -784,22 +784,35 @@ impl GraspMachine {
         Ok(())
     }
     pub fn release(&mut self) -> Result<(), GraspError> {
-        // Holding is the normal success path; Failed/Aborted are the emergency
-        // path where the operator still needs to open the hand after a stop.
+        // Release is the emergency-open path and must work from every active
+        // state where the hand can be holding or closing: Holding (success),
+        // Failed/Aborted (after a stop), and the closing/approach phases (a
+        // mid-grasp operator still needs a way out).
         if !matches!(
             self.state,
-            GraspState::Holding | GraspState::Failed | GraspState::Aborted
+            GraspState::Holding
+                | GraspState::Failed
+                | GraspState::Aborted
+                | GraspState::Approaching
+                | GraspState::ClosingCoarse
+                | GraspState::ClosingFine
+                | GraspState::Preloading
+                | GraspState::Releasing
         ) {
             return Err(GraspError::Invalid(self.state.clone()));
         }
-        if !matches!(self.state, GraspState::Holding) {
+        if !matches!(self.state, GraspState::Holding | GraspState::Releasing) {
             // Emergency open: drive every joint back toward the open pose.
             self.approach_target = vec![0.8; self.profile.joint_count()];
         }
         self.last_failure = None;
         self.state = GraspState::Releasing;
-        self.started_at_ms = Some(0);
-        self.phase_started_at_ms = Some(0);
+        // The overall grasp timeout and the phased closing budget must NOT
+        // apply to the release phase. Previously started_at_ms was seeded with
+        // 0, so on a real monotonic clock the very next tick failed with
+        // Timeout ("抓取在规定时间内未完成") and the release never happened.
+        self.started_at_ms = None;
+        self.phase_started_at_ms = None;
         Ok(())
     }
     pub fn release_complete(&mut self) -> Result<(), GraspError> {
@@ -1765,5 +1778,51 @@ mod tests {
             "release after failure should return to Ready"
         );
         assert_eq!(machine.failure(), None, "release clears the failure banner");
+    }
+
+    #[test]
+    fn release_does_not_time_out_on_a_real_clock() {
+        // Regression: release() used to seed started_at_ms with 0, so on a real
+        // monotonic clock (now_ms already far past the 10s timeout) the very
+        // next tick failed with Timeout and the release never completed.
+        let mut machine = GraspMachine::new(Profile::O6).with_config(GraspConfig {
+            allow_degraded_without_tactile: true,
+            ..GraspConfig::default()
+        });
+        machine.calibrate().unwrap();
+        machine.calibration_complete().unwrap();
+        machine.grasp(&[0.1; 6]).unwrap();
+        let mut t = telemetry(6);
+        let mut holding = false;
+        for step in 1..=40 {
+            // actual never follows the closing command -> immediate stall contact
+            t.positions = vec![0.8; 6];
+            let _ = machine.tick(step * 50, &t).unwrap();
+            if machine.state() == &GraspState::Holding {
+                holding = true;
+                break;
+            }
+        }
+        assert!(holding, "expected the grasp to reach Holding");
+        machine.release().unwrap();
+        // tick at a wall-clock time far beyond the 10s grasp timeout
+        let mut now_ms = 60_000u64;
+        for _ in 0..40 {
+            t.positions = vec![0.8; 6];
+            let tick = machine.tick(now_ms, &t);
+            assert!(
+                tick.is_ok(),
+                "release must not fail with Timeout, got {tick:?}"
+            );
+            if machine.state() == &GraspState::Ready {
+                break;
+            }
+            now_ms += 50;
+        }
+        assert_eq!(
+            *machine.state(),
+            GraspState::Ready,
+            "release on a real clock should return to Ready"
+        );
     }
 }

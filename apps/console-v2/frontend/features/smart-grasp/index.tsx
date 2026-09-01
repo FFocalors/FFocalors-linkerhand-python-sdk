@@ -195,7 +195,8 @@ export function SmartGrasp({
   const isRunning = state.phase !== 'idle' && state.phase !== 'calibrated' && state.phase !== 'success' && state.phase !== 'aborted' && state.phase !== 'failed';
   const canAbort = controllerReady && canOperate && isRunning;
   // 释放 = 急停：任何运行/保持/成功/失败/中止状态均可立即回到张开姿态
-  const canRelease = controllerReady && canOperate && (isRunning || state.phase === 'holding' || state.phase === 'success' || state.phase === 'failed' || state.phase === 'aborted');
+  // （标定扫描中不可释放，与 v1 一致；标定中可用"中止"后释放）
+  const canRelease = controllerReady && canOperate && state.phase !== 'calibrating' && (isRunning || state.phase === 'holding' || state.phase === 'success' || state.phase === 'failed' || state.phase === 'aborted');
 
   const invoke = async (operation: () => Promise<void>, failure: string) => {
     setError(undefined);

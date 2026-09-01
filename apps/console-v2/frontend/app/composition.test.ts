@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createActionController, createDeviceController, LazyVisionRuntime } from './composition';
+import { createActionController, createDeviceController, graspController, LazyVisionRuntime } from './composition';
 import { mockRuntime } from '../shared/contracts/mock-runtime';
+import type { TauriGraspState } from '../shared/contracts/tauri-runtime';
 import type { ConnectionSnapshot, ConsolePorts, OperationSnapshot } from '../shared/contracts';
 import type { PosePreset, ProgrammedAction } from '../features/actions';
 import type { VisionRuntimeLike } from '../features/vision';
@@ -130,5 +131,30 @@ describe('runtime composition adapters', () => {
     await controller.playPose!({ kind: 'pose', id: 'loop-pose', name: '循环姿态', source: 'local', positions: [.5, .5, .5, .5, .5, .5] }, { mode: 'loop', speed: 1, direction: 'forward', loopCount: null });
     await controller.stop();
     expect((await controller.getState()).state).toBe('cancelled');
+  });
+
+  it('keeps the grasp calibration cache across page switches on the wire path', async () => {
+    // Regression: the composition-local grasp state must stay in sync with the
+    // backend wire broadcasts so getState() (used on page remount) does not
+    // return a stale "uncalibrated" snapshot after a grasp or navigation.
+    let wireListener: ((s: TauriGraspState) => void) | undefined;
+    const extras = {
+      calibrate: vi.fn(async () => undefined), completeCalibration: vi.fn(async () => undefined),
+      approach: vi.fn(async () => undefined), startGrasp: vi.fn(async () => undefined),
+      release: vi.fn(async () => undefined), abort: vi.fn(async () => undefined),
+      subscribe: vi.fn((listener: (s: TauriGraspState) => void) => { wireListener = listener; return () => { wireListener = undefined; }; }),
+    };
+    const controller = graspController(mockRuntime, false, extras);
+    expect((await controller.getState()).calibrated).toBe(false);
+    // backend completes no-load calibration and broadcasts "ready"
+    wireListener?.({ phase: 'ready', failure: undefined, tactileAvailable: true, rawTouch: null, degraded: false, joints: [] });
+    // after switching away and back, getState() must still see the cache
+    expect((await controller.getState()).calibrated).toBe(true);
+    expect((await controller.getState()).phase).toBe('calibrated');
+    // releasing / failed keep the session cache visible too
+    wireListener?.({ phase: 'releasing', failure: undefined, tactileAvailable: true, rawTouch: null, degraded: false, joints: [] });
+    expect((await controller.getState()).calibrated).toBe(true);
+    wireListener?.({ phase: 'failed', failure: { code: 'timeout', message: '抓取超时' }, tactileAvailable: true, rawTouch: null, degraded: false, joints: [] });
+    expect((await controller.getState()).calibrated).toBe(true);
   });
 });

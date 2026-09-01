@@ -212,7 +212,11 @@ export function createActionController(runtime: ConsolePorts, simulator: boolean
   };
 }
 
-function graspController(runtime: ConsolePorts, simulator: boolean): GraspController {
+export function graspController(
+  runtime: ConsolePorts,
+  simulator: boolean,
+  graspExtrasOverride?: typeof tauriRuntimeExtras.grasp,
+): GraspController {
   const JOINT_NAMES = ['拇指弯曲', '拇指横摆', '食指弯曲', '中指弯曲', '无名指弯曲', '小指弯曲'];
   const jointName = (i: number) => JOINT_NAMES[i] ?? `J${i + 1}`;
   const makeJoints = (count: number) => Array.from({ length: count }, (_, i) => ({
@@ -234,7 +238,7 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
   };
   const listeners = stateListeners<GraspControllerState>();
   const set = (next: Partial<GraspControllerState>) => { state = { ...state, ...next }; listeners.emit(state); };
-  const extras = simulator ? undefined : tauriRuntimeExtras.grasp;
+  const extras = simulator ? undefined : (graspExtrasOverride ?? tauriRuntimeExtras.grasp);
   /** Map the Tauri wire state into the feature-local state (phase + joints). */
   const mapRemote = (s: import('../shared/contracts/tauri-runtime').TauriGraspState): GraspControllerState => {
     const phaseMap: Record<string, GraspControllerState['phase']> = {
@@ -259,11 +263,28 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
       tactileAvailable: s.tactileAvailable,
       rawTouch: s.rawTouch ?? null,
       degraded: s.degraded,
-      calibrated: phaseMap[s.phase] === 'calibrated' || phaseMap[s.phase] === 'holding' || phaseMap[s.phase] === 'approaching' || phaseMap[s.phase] === 'closingCoarse' || phaseMap[s.phase] === 'closingFine' || phaseMap[s.phase] === 'preloading',
+      // The backend retains the session calibration in every non-idle state
+      // (even failed/aborted/releasing), so the UI cache must not look lost
+      // after a grasp, a release, or a page switch.
+      calibrated: [
+        'calibrated', 'holding', 'approaching', 'closingCoarse', 'closingFine',
+        'preloading', 'releasing', 'failed', 'aborted',
+      ].includes(phaseMap[s.phase] ?? 'idle'),
       joints,
       jointCount: joints.length,
     };
   };
+  // The composition owns a persistent wire subscription so the cached
+  // controller state (and therefore getState()) always mirrors the backend,
+  // even across page switches where the smart-grasp feature component is
+  // unmounted. Without this, returning to the page reads a stale local
+  // snapshot through getState() and the session calibration cache looks lost.
+  if (extras) {
+    extras.subscribe((s) => {
+      state = mapRemote(s);
+      listeners.emit(state);
+    });
+  }
   return {
     async calibrate() {
       if (extras) { await extras.calibrate(); return; }
@@ -334,9 +355,10 @@ function graspController(runtime: ConsolePorts, simulator: boolean): GraspContro
     },
     getState: async () => state,
     subscribe(listener) {
-      const remove = listeners.add(listener);
-      const remote = extras?.subscribe((s: import('../shared/contracts/tauri-runtime').TauriGraspState) => listener(mapRemote(s)));
-      return () => { remove(); remote?.(); };
+      // The wire channel is owned by the composition (see the permanent
+      // subscription above); feature-level subscribers only observe the
+      // cached state so getState() and subscribe() always agree.
+      return listeners.add(listener);
     },
   };
 }
